@@ -1,0 +1,37 @@
+plugins {
+    id 'application'
+    id 'org.openjfx.javafxplugin' version '0.1.0'
+}
+
+repositories {
+    mavenCentral()
+}
+
+ext {
+    jfxVersion = '21.0.9'
+    jacksonVer = '2.17.2'
+    opencvVer  = '4.7.0-1.5.9'   // ← 여기만 변경
+}
+
+dependencies {
+    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVer}"
+    implementation "org.bytedeco:opencv-platform:${opencvVer}"
+}
+
+javafx {
+    version = jfxVersion
+    modules = [ 'javafx.controls', 'javafx.graphics', 'javafx.base', 'javafx.swing']
+}
+
+application {
+    // Main.java 의 FQCN (패키지명 포함)
+    mainClass = 'app.Main'
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+}
