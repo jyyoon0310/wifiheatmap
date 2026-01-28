@@ -1,5 +1,7 @@
-package app;
+package app.engine;
 
+import app.model.Band;
+import app.model.Wall;
 import javafx.geometry.Point2D;
 import javafx.scene.image.PixelReader;
 import javafx.scene.image.PixelWriter;

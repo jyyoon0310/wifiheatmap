@@ -1,5 +1,8 @@
-package app;
+package app.dialog;
 
+import app.model.RadioConfig;
+import app.model.AP;
+import app.model.Band;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;

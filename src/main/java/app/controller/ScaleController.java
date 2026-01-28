@@ -1,4 +1,4 @@
-package app;
+package app.controller;
 
 import javafx.beans.property.DoubleProperty;
 import javafx.geometry.Point2D;

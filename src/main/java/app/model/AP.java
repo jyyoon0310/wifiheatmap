@@ -1,4 +1,4 @@
-package app;
+package app.model;
 
 import java.util.EnumMap;
 import java.util.Map;

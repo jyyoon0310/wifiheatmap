@@ -1,5 +1,8 @@
-package app;
+package app.controller;
 
+import app.dialog.ApEditorDialog;
+import app.model.Band;
+import app.model.AP;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Point2D;

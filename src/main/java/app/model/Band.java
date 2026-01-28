@@ -1,4 +1,4 @@
-package app;
+package app.model;
 
 public enum Band {
     GHZ_24("2.4 GHz", 2.4),

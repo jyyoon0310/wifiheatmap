@@ -1,5 +1,6 @@
-package app;
+package app.model;
 
+import app.engine.WifiMath;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Point2D;

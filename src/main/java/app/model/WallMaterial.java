@@ -1,4 +1,4 @@
-package app;
+package app.model;
 
 /**
  * Material preset with per-band attenuation (2.4GHz / 5GHz) and a display color.
@@ -71,7 +71,7 @@ public enum WallMaterial {
 
     /** 드롭다운 표시용: 예) 문(3dB/8dB)  -> (2.4GHz/5GHz) */
     public String labelWithAttn() {
-        return String.format("%s(%.0fdB/%.0fdB)", label, attn24Db, attn5Db);
+        return String.format("%s(%.0fdB/%.0fdB)", label, attn24Db, attn5Db); // d
     }
 
     /** 1차 반사 시 재질별 추가 손실(dB) */

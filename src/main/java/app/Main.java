@@ -1,5 +1,15 @@
 package app;
 
+import app.controller.ApController;
+import app.controller.ScaleController;
+import app.controller.ViewportController;
+import app.controller.WallDrawController;
+import app.engine.HeatmapGenerator;
+import app.engine.WifiMath;
+import app.model.AP;
+import app.model.Wall;
+import app.model.WallMaterial;
+import app.model.WifiEnvironment;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.beans.property.*;
@@ -32,8 +42,6 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;

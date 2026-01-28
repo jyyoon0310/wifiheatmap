@@ -1,4 +1,4 @@
-package app;
+package app.model;
 
 /**
  * Wall(선분) + 재질 기반 감쇠 모델.

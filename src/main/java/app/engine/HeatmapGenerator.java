@@ -1,5 +1,7 @@
-package app;
+package app.engine;
 
+import app.model.RadioConfig;
+import app.model.*;
 import javafx.geometry.Point2D;
 import javafx.scene.image.PixelWriter;
 import javafx.scene.image.WritableImage;

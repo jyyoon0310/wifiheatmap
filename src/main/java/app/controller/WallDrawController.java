@@ -1,5 +1,7 @@
-package app;
+package app.controller;
 
+import app.model.Wall;
+import app.model.WallMaterial;
 import javafx.geometry.Point2D;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;

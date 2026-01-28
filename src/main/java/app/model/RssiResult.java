@@ -1,4 +1,4 @@
-package app;
+package app.model;
 
 public class RssiResult {
     public final String ssid;
