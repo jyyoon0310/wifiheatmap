@@ -1,6 +1,10 @@
 package app.controller;
 
+import app.model.AP;
 import app.model.AppState;
+import app.model.Band;
+import app.model.Wall;
+import app.model.WallMaterial;
 import app.model.WifiEnvironment;
 import app.ui.MainWindow;
 import javafx.embed.swing.SwingFXUtils;
@@ -9,6 +13,8 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.image.Image;
 import javafx.scene.image.WritableImage;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.ScrollEvent;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
@@ -30,14 +36,14 @@ public class MainController {
 
     private final ViewportController viewportController;
 
-    // floorplan 원본(추후 벽 자동인식/스냅 등에 쓸 수 있음)
     private BufferedImage floorplanBI;
 
-    // (임시) 히트맵 이미지: 다음 단계에서 HeatmapController로 이동
     private WritableImage heatmapImage;
 
-    // (임시) 인터랙티브 상태: 다음 단계에서 각 Tool Controller로 이동
+    // SCALE 선분(확정된 2점)
     private final List<Point2D> calibPts = new ArrayList<>();
+
+    // WALL/SCALE 프리뷰 (첫 점 + 마우스 위치)
     private Point2D wallFirstPoint = null;
     private Point2D wallHoverPoint = null;
 
@@ -45,7 +51,6 @@ public class MainController {
         this.stage = stage;
         this.window = new MainWindow(stage);
 
-        // ViewportController는 CanvasView에서 꺼내서 연결
         this.viewportController = new ViewportController(
                 window.getCanvasView().getCanvasSP(),
                 window.getCanvasView().getViewportPane(),
@@ -53,12 +58,13 @@ public class MainController {
                 window.getCanvasView().getFloorGroup()
         );
 
+        // ✅ 시작은 VIEW
+        state.setTool(AppState.Tool.VIEW);
+
         wireUi();
     }
 
-    public Parent getRoot() {
-        return window.getRoot();
-    }
+    public Parent getRoot() { return window.getRoot(); }
 
     public void bindScene(Scene scene) {
         installSceneShortcuts(scene);
@@ -69,11 +75,12 @@ public class MainController {
     }
 
     private void wireUi() {
-        // TopToolbar
         window.getTopToolbar().setOnOpenFloorplan(this::openFloorplan);
+
         window.getTopToolbar().setOnGenerateHeatmap(() ->
                 showInfo("아직 HeatmapController 연결 전입니다.\n다음 단계에서 generateAsync로 붙입니다.")
         );
+
         window.getTopToolbar().setOnClearHeatmap(() -> {
             heatmapImage = null;
             window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
@@ -82,27 +89,39 @@ public class MainController {
         window.getTopToolbar().setOnToolChanged(tool -> {
             state.setTool(tool);
 
+            // 모드 들어갈 때 프리뷰 정리
             wallFirstPoint = null;
             wallHoverPoint = null;
-            if (tool != AppState.Tool.SCALE) calibPts.clear();
+
+            if (tool == AppState.Tool.SCALE) {
+                // SCALE 시작 시 확정선도 초기화(원하면 유지 가능. 지금은 혼동 방지)
+                calibPts.clear();
+            }
+
+            // VIEW로 들어가면 토글 상태도 정리(안정성)
+            if (tool == AppState.Tool.VIEW) {
+                try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
+            }
+
             window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
         });
 
-        // LeftPanel: 지금 LeftPanel은 scale만 바인딩 가능하게 만들어둔 상태
         window.getLeftPanel().bind(
                 state,
                 env,
                 this::applyScaleIfReady,
                 this::resetScalePoints
         );
+
+        installCanvasHandlers();
+
+        window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
     }
 
-    // ====== Scene shortcuts (원래 Main에 있던 Space 팬/줌 shortcut 같은 것들 다음 단계에서 추가) ======
     private void installSceneShortcuts(Scene scene) {
-        // 지금은 최소. (Space 팬 같은 건 Viewport/Canvas 이벤트로 붙일 예정)
+        // 아직 비움
     }
 
-    // ====== Floorplan open ======
     private void openFloorplan() {
         FileChooser fc = new FileChooser();
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg", "*.jpeg"));
@@ -117,7 +136,6 @@ public class MainController {
             Image fx = SwingFXUtils.toFXImage(floorplanBI, null);
             window.getCanvasView().getBaseImageView().setImage(fx);
 
-            // Canvas도 이미지 크기로 맞춰줌
             window.getCanvasView().getDrawCanvas().setWidth(fx.getWidth());
             window.getCanvasView().getDrawCanvas().setHeight(fx.getHeight());
 
@@ -126,39 +144,173 @@ public class MainController {
             wallFirstPoint = null;
             wallHoverPoint = null;
 
-            // Viewport 기준 크기 갱신 + 중앙정렬
             viewportController.setBaseContentSize(fx.getWidth(), fx.getHeight());
             viewportController.setZoom(1.0);
             viewportController.updateViewportSize();
             viewportController.centerViewport();
 
-            window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
+            // ✅ 파일 열면 VIEW + 토글 해제
+            state.setTool(AppState.Tool.VIEW);
+            try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
 
-            // 스케일 초기화(선택)
-            // state.setScaleMPerPx(Double.NaN); // 필요하면 켜라
+            window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
 
         } catch (Exception ex) {
             showError("이미지 로드 실패: " + ex.getMessage());
         }
     }
 
-    // ====== Scale apply/reset (현재 ScaleController 분리 전 임시) ======
+    // ====== Scale apply/reset ======
     private void applyScaleIfReady() {
-        // 아직 ScaleController를 여기 연결 안 했으니, 다음 단계에서 교체할 자리.
-        // 지금은 “스케일 값이 이미 세팅되었다고 가정”하는 형태로만 둠.
-
-        if (Double.isNaN(state.getScaleMPerPx())) {
-            showError("아직 스케일 계산 로직(ScaleController) 연결 전입니다.\n다음 단계에서 두 점 클릭 선분 방식으로 붙입니다.");
+        if (calibPts.size() != 2) {
+            showError("두 점을 먼저 클릭하세요.");
             return;
         }
+        double dPx = calibPts.get(0).distance(calibPts.get(1));
+        double realM = safeGetCalibRealMeters();
+        if (dPx <= 0 || realM <= 0) {
+            showError("거리 값이 올바르지 않습니다.");
+            return;
+        }
+        state.setScaleMPerPx(realM / dPx);
         showInfo(String.format("스케일 적용됨: 1px = %.5f m", state.getScaleMPerPx()));
+
+        // 적용 후 VIEW로 복귀 + 토글 해제 (요구사항)
+        state.setTool(AppState.Tool.VIEW);
+        try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
+
+        window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
     }
 
     private void resetScalePoints() {
-        showInfo("아직 스케일 점/선 관리(ScaleController) 연결 전입니다.\n다음 단계에서 reset이 실제로 동작하도록 붙입니다.");
+        calibPts.clear();
+        state.setScaleMPerPx(Double.NaN);
+        wallFirstPoint = null;
+        wallHoverPoint = null;
+
+        // 리셋은 그냥 VIEW로 복귀해도 UX 좋음
+        state.setTool(AppState.Tool.VIEW);
+        try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
+
+        window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
     }
 
-    // ====== Alerts ======
+    private void installCanvasHandlers() {
+        var canvas = window.getCanvasView().getDrawCanvas();
+        var sp = window.getCanvasView().getCanvasSP();
+
+        canvas.setOnMouseClicked(e -> {
+            double x = e.getX();
+            double y = e.getY();
+
+            if (e.getButton() == MouseButton.SECONDARY) return;
+
+            switch (state.getTool()) {
+                case SCALE -> {
+                    // ✅ 1클릭 시작 / 2클릭 확정
+                    if (wallFirstPoint == null) {
+                        wallFirstPoint = new Point2D(x, y);
+                        wallHoverPoint = wallFirstPoint;
+                        calibPts.clear();
+                        window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
+                        return;
+                    }
+
+                    Point2D end = new Point2D(x, y);
+                    if (wallFirstPoint.distance(end) >= 3.0) {
+                        calibPts.clear();
+                        calibPts.add(wallFirstPoint);
+                        calibPts.add(end);
+
+                        double dPx = wallFirstPoint.distance(end);
+                        double realM = safeGetCalibRealMeters();
+                        if (dPx > 0 && realM > 0) {
+                            state.setScaleMPerPx(realM / dPx);
+                        }
+                    }
+
+                    // ✅ 완료 후 VIEW 복귀 + 토글 해제
+                    wallFirstPoint = null;
+                    wallHoverPoint = null;
+                    state.setTool(AppState.Tool.VIEW);
+                    try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
+
+                    window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
+                }
+                case AP -> {
+                    addApAt(x, y);
+                    window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
+                }
+                case WALL -> {
+                    if (wallFirstPoint == null) {
+                        wallFirstPoint = new Point2D(x, y);
+                        wallHoverPoint = wallFirstPoint;
+                        window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
+                        return;
+                    }
+
+                    Point2D end = new Point2D(x, y);
+                    if (wallFirstPoint.distance(end) >= 3.0) {
+                        Wall w = new Wall();
+                        w.x1 = wallFirstPoint.getX();
+                        w.y1 = wallFirstPoint.getY();
+                        w.x2 = end.getX();
+                        w.y2 = end.getY();
+
+                        w.setMaterial(WallMaterial.CONCRETE_WALL);
+                        env.getWalls().add(w);
+                    }
+
+                    wallFirstPoint = null;
+                    wallHoverPoint = null;
+                    window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
+                }
+                default -> {
+                    // VIEW
+                }
+            }
+        });
+
+        canvas.setOnMouseMoved(e -> {
+            if ((state.getTool() == AppState.Tool.WALL || state.getTool() == AppState.Tool.SCALE) && wallFirstPoint != null) {
+                wallHoverPoint = new Point2D(e.getX(), e.getY());
+                window.getCanvasView().render(env, state, heatmapImage, calibPts, wallFirstPoint, wallHoverPoint);
+            }
+        });
+
+        sp.addEventFilter(ScrollEvent.SCROLL, e -> {
+            if (e.isControlDown() || e.isShortcutDown()) {
+                double factor = (e.getDeltaY() > 0) ? 1.10 : (1.0 / 1.10);
+                viewportController.zoomAt(factor, e.getSceneX(), e.getSceneY());
+                e.consume();
+            }
+        });
+    }
+
+    private void addApAt(double x, double y) {
+        AP ap = new AP();
+        ap.name = "AP-" + (env.getAps().size() + 1);
+        ap.x = x;
+        ap.y = y;
+        ap.enabled = true;
+
+        try {
+            ap.radios.get(Band.GHZ_24).ssid = ap.name + "_24G";
+            ap.radios.get(Band.GHZ_5).ssid = ap.name + "_5G";
+            ap.radios.get(Band.GHZ_6).ssid = ap.name + "_6G";
+        } catch (Exception ignored) { }
+
+        env.getAps().add(ap);
+    }
+
+    private double safeGetCalibRealMeters() {
+        try {
+            return state.getCalibRealMeters();
+        } catch (Exception ignored) {
+            return 5.0;
+        }
+    }
+
     private void showError(String msg) {
         new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR, msg, javafx.scene.control.ButtonType.OK).showAndWait();
     }

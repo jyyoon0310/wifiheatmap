@@ -52,13 +52,28 @@ public class Styles {
     }
 
     public static void styleToggle(ToggleButton t) {
-        t.setStyle("-fx-background-color: " + BG_PANEL + ";" +
-                "-fx-text-fill: " + TEXT_MAIN + ";" +
-                "-fx-background-radius: 8;" +
-                "-fx-border-color: " + BORDER_SOFT + ";" +
-                "-fx-border-radius: 8;" +
-                "-fx-padding: 6 10;" +
-                "-fx-font-size: 12px;");
+        applyToggleStyle(t, t.isSelected());
+        t.selectedProperty().addListener((o, ov, nv) -> applyToggleStyle(t, nv));
+    }
+
+    private static void applyToggleStyle(ToggleButton t, boolean selected) {
+        if (selected) {
+            t.setStyle("-fx-background-color: " + ACCENT + ";" +
+                    "-fx-text-fill: white;" +
+                    "-fx-background-radius: 8;" +
+                    "-fx-border-color: transparent;" +
+                    "-fx-border-radius: 8;" +
+                    "-fx-padding: 6 10;" +
+                    "-fx-font-size: 12px;");
+        } else {
+            t.setStyle("-fx-background-color: " + BG_PANEL + ";" +
+                    "-fx-text-fill: " + TEXT_MAIN + ";" +
+                    "-fx-background-radius: 8;" +
+                    "-fx-border-color: " + BORDER_SOFT + ";" +
+                    "-fx-border-radius: 8;" +
+                    "-fx-padding: 6 10;" +   // ✅ 여기 중요 (찌꺼기 제거)
+                    "-fx-font-size: 12px;");
+        }
     }
 
     /** Left-panel “card” container */

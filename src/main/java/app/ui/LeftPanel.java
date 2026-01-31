@@ -3,85 +3,96 @@ package app.ui;
 import app.model.AppState;
 import app.model.WifiEnvironment;
 import javafx.geometry.Insets;
-import javafx.scene.Node;
-import javafx.scene.control.*;
+import javafx.scene.Parent;
+import javafx.scene.control.Button;
+import javafx.scene.control.Label;
+import javafx.scene.control.TextField;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import javafx.stage.Stage;
 
 public class LeftPanel {
 
     private final VBox root = new VBox(14);
 
-    // 스케일 UI
-    private final TextField realMetersTf = new TextField();
+    // 스케일 입력
+    private final TextField realMetersField = new TextField("5");
     private final Button applyScaleBtn = new Button("적용");
     private final Button resetScaleBtn = new Button("보정 점 초기화");
-    private final Label scaleNowLbl = new Label();
 
-    public LeftPanel(Stage owner) {
+    // 외부에서 주입받을 핸들러(컨트롤러가 연결)
+    private Runnable onApplyScale = () -> {};
+    private Runnable onResetScale = () -> {};
+
+    public LeftPanel() {
         root.setPadding(new Insets(10));
         root.setStyle("-fx-background-color: " + Styles.BG_PANEL + ";");
 
-        Styles.styleTextField(realMetersTf);
-        realMetersTf.setPrefWidth(150);
-        realMetersTf.setMaxWidth(180);
-
-        Styles.styleAccentButton(applyScaleBtn);
-        Styles.styleFlatButton(resetScaleBtn);
-
-        scaleNowLbl.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 12px;");
-
+        // --- Scale card ---
         Label hint = new Label("두 점 클릭 후 실제거리 입력");
         hint.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 12px;");
+
+        Label distLbl = new Label("두 점 실제거리(m)");
+        distLbl.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 12px;");
+
+        Styles.styleTextField(realMetersField);
+        realMetersField.setPrefWidth(150);
+
+        Styles.styleAccentButton(applyScaleBtn);
+        applyScaleBtn.setOnAction(e -> onApplyScale.run());
+
+        Styles.styleFlatButton(resetScaleBtn);
+        resetScaleBtn.setOnAction(e -> onResetScale.run());
+
+        HBox row = new HBox(8, realMetersField, applyScaleBtn);
+        row.setFillHeight(true);
+        HBox.setHgrow(realMetersField, Priority.NEVER);
 
         VBox scaleCard = Styles.card(
                 "스케일 보정",
                 hint,
-                new VBox(6,
-                        labelSub("두 점 실제거리(m)"),
-                        row(realMetersTf, applyScaleBtn)
-                ),
-                resetScaleBtn,
-                scaleNowLbl
+                new VBox(6, distLbl, row),
+                resetScaleBtn
         );
 
         root.getChildren().addAll(scaleCard);
+
+        // TODO: 다음 단계에서 "벽 카드", "AP 카드"도 여기로 합류시키면 됨.
     }
 
-    public Node getNode() {
-        ScrollPane sp = new ScrollPane(root);
-        sp.setFitToWidth(true);
-        sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        sp.setPrefViewportWidth(360);
-        sp.setStyle("-fx-background: " + Styles.BG_PANEL + "; -fx-background-color: " + Styles.BG_PANEL + ";" +
-                "-fx-border-color: " + Styles.BORDER_SOFT + "; -fx-border-width: 0 1 0 0;");
-        return sp;
+    public Parent getRoot() {
+        return root;
     }
 
-    // Controller가 여기 바인딩해줌(LeftPanel은 로직 모름)
-    public void bind(AppState state, WifiEnvironment env,
-                     Runnable onApplyScale,
-                     Runnable onResetScale) {
+    /**
+     * MainController에서 상태/환경과 연결해줄 때 사용
+     * - 지금 단계에선 스케일 UI만 연결해둠
+     */
+    public void bind(AppState state,
+                     WifiEnvironment env,
+                     Runnable applyScale,
+                     Runnable resetScale) {
 
-        // 값 바인딩
-        realMetersTf.textProperty().bindBidirectional(state.calibRealMetersProperty(), new javafx.util.converter.NumberStringConverter());
-        scaleNowLbl.textProperty().bind(new javafx.beans.property.SimpleStringProperty("현재 m/px: ")
-                .concat(state.scaleMPerPxProperty().asString("%.5f")));
+        if (applyScale != null) this.onApplyScale = applyScale;
+        if (resetScale != null) this.onResetScale = resetScale;
 
-        applyScaleBtn.setOnAction(e -> { if (onApplyScale != null) onApplyScale.run(); });
-        resetScaleBtn.setOnAction(e -> { if (onResetScale != null) onResetScale.run(); });
+        // 숫자 입력값을 state에 반영 (엔터/포커스아웃 때도 반영하고 싶으면 리스너 추가하면 됨)
+        realMetersField.textProperty().addListener((o, ov, nv) -> {
+            try {
+                double v = Double.parseDouble(nv.trim());
+                state.setCalibRealMeters(v);
+            } catch (Exception ignored) {
+                // 입력 중엔 무시
+            }
+        });
+
+        // 초기값도 state에 1회 반영
+        try {
+            state.setCalibRealMeters(Double.parseDouble(realMetersField.getText().trim()));
+        } catch (Exception ignored) {}
     }
 
-    private static Label labelSub(String text) {
-        Label l = new Label(text);
-        l.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 12px;");
-        return l;
-    }
-
-    private static Node row(Node a, Node b) {
-        javafx.scene.layout.HBox h = new javafx.scene.layout.HBox(8, a, b);
-        h.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
-        return h;
+    public TextField getRealMetersField() {
+        return realMetersField;
     }
 }

@@ -1,8 +1,9 @@
 package app.ui;
 
+import javafx.geometry.Insets;
 import javafx.scene.Parent;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 
 public class MainWindow {
@@ -10,29 +11,40 @@ public class MainWindow {
     private final BorderPane root = new BorderPane();
 
     private final TopToolbar topToolbar = new TopToolbar();
-    private final LeftPanel leftPanel;
+    private final LeftPanel leftPanel = new LeftPanel();
     private final CanvasView canvasView = new CanvasView();
 
-    private final StackPane centerStack = new StackPane();
+    public MainWindow(Stage stage) {
+        root.setStyle("-fx-background-color: " + Styles.BG_APP + ";");
 
-    public MainWindow(Stage owner) {
-        this.leftPanel = new LeftPanel(owner);
-
-        root.setStyle("-fx-background-color: " + Styles.BG_APP + "; -fx-font-family: 'System'; -fx-text-fill: " + Styles.TEXT_MAIN + ";");
-
+        // Top
         root.setTop(topToolbar.getNode());
-        root.setLeft(leftPanel.getNode());
 
-        centerStack.setStyle("-fx-background-color: " + Styles.BG_APP + ";");
-        centerStack.getChildren().add(canvasView.getCanvasSP());
-        root.setCenter(centerStack);
+        // Left (scroll)
+        ScrollPane leftSP = new ScrollPane(leftPanel.getRoot());
+        leftSP.setFitToWidth(true);
+        leftSP.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        leftSP.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        leftSP.setPrefViewportWidth(360);
+
+        leftSP.setStyle(
+                "-fx-background: " + Styles.BG_PANEL + ";" +
+                        "-fx-background-color: " + Styles.BG_PANEL + ";" +
+                        "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
+                        "-fx-border-width: 0 1 0 0;"
+        );
+        root.setLeft(leftSP);
+
+        // Center
+        BorderPane.setMargin(canvasView.getRoot(), new Insets(0));
+        root.setCenter(canvasView.getRoot());
     }
 
     public Parent getRoot() { return root; }
 
     public TopToolbar getTopToolbar() { return topToolbar; }
-    public LeftPanel getLeftPanel() { return leftPanel; }
-    public CanvasView getCanvasView() { return canvasView; }
 
-    public StackPane getCenterStack() { return centerStack; }
+    public LeftPanel getLeftPanel() { return leftPanel; }
+
+    public CanvasView getCanvasView() { return canvasView; }
 }
