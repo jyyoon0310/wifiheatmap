@@ -135,14 +135,6 @@ public class CanvasView {
                 g.strokeOval(ap.x - rr, ap.y - rr, 2 * rr, 2 * rr);
             }
 
-            // selected 링
-            if (ap == selectedAp) {
-                g.setStroke(Color.DARKBLUE);
-                g.setLineWidth(3.0);
-                double rr = r + 10;
-                g.strokeOval(ap.x - rr, ap.y - rr, 2 * rr, 2 * rr);
-            }
-
             // 이름
             g.setFill(Color.BLACK);
             g.fillText(ap.name, ap.x + r + 4, ap.y - r - 2);
