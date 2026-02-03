@@ -31,7 +31,7 @@ public class ViewportController {
         this.zoomGroup = zoomGroup;
         this.floorGroup = floorGroup;
 
-        // ✅ 줌은 zoomGroup에만 적용 (중요)
+        // ✅ 줌은 zoomGroup에만 적용
         zoomGroup.scaleXProperty().bind(zoomScale);
         zoomGroup.scaleYProperty().bind(zoomScale);
 
@@ -61,11 +61,10 @@ public class ViewportController {
         double vpW = (vp != null) ? vp.getWidth() : 0;
         double vpH = (vp != null) ? vp.getHeight() : 0;
 
-        // ✅ ScrollPane이 “스크롤 가능한 컨텐츠 크기”로 인식해야 하는 값
         double scaledW = baseContentW * zoomScale.get();
         double scaledH = baseContentH * zoomScale.get();
 
-        // ✅ viewport보다 작으면 viewport만큼 키워서 중앙정렬/여백 유지
+        // viewport보다 작으면 viewport만큼 키워서 중앙정렬/여백 유지
         double w = Math.max(scaledW, vpW);
         double h = Math.max(scaledH, vpH);
 
@@ -216,6 +215,24 @@ public class ViewportController {
             canvasSP.setVvalue(denomY2 > 0 ? clamp01(newOffsetY / denomY2) : 0.0);
 
             clampPanToBounds();
+        });
+    }
+
+    // ✅ Fit(맞춤): viewport에 컨텐츠가 들어오도록 줌 자동 설정
+    public void fitToViewport(int paddingPx, double contentW, double contentH) {
+        Platform.runLater(() -> {
+            Bounds vp = canvasSP.getViewportBounds();
+            if (vp == null || vp.getWidth() <= 0 || vp.getHeight() <= 0) return;
+
+            double availW = Math.max(50, vp.getWidth() - paddingPx * 2.0);
+            double availH = Math.max(50, vp.getHeight() - paddingPx * 2.0);
+
+            double s = Math.min(availW / contentW, availH / contentH);
+            s = Math.max(0.25, Math.min(5.0, s));
+
+            zoomScale.set(s);
+            updateViewportSize();
+            centerViewport();
         });
     }
 }

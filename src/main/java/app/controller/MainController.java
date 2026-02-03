@@ -4,6 +4,7 @@ import app.model.AppState;
 import app.model.WifiEnvironment;
 import app.ui.MainWindow;
 import javafx.embed.swing.SwingFXUtils;
+import javafx.geometry.Bounds;
 import javafx.geometry.Point2D;
 import javafx.scene.Cursor;
 import javafx.scene.Parent;
@@ -74,6 +75,7 @@ public class MainController {
     }
 
     private void wireUi() {
+        // ===== TopToolbar 기본 =====
         window.getTopToolbar().setOnOpenFloorplan(this::openFloorplan);
 
         window.getTopToolbar().setOnGenerateHeatmap(() ->
@@ -103,7 +105,37 @@ public class MainController {
             render();
         });
 
-        // LeftPanel 바인딩 (scale apply/reset)
+        // ===== ✅ 줌 박스 연결 =====
+        try {
+            // 퍼센트 라벨 실시간 표시
+            window.getTopToolbar().bindZoomLabel(viewportController.zoomScaleProperty());
+
+            // +/- 는 "현재 화면 중앙" 기준으로 줌 (마우스 위치가 아니라 버튼이니까)
+            window.getTopToolbar().setOnZoomIn(() -> zoomAtViewportCenter(1.10));
+            window.getTopToolbar().setOnZoomOut(() -> zoomAtViewportCenter(1.0 / 1.10));
+
+            window.getTopToolbar().setOnZoom100(() -> {
+                viewportController.setZoom(1.0);
+                viewportController.updateViewportSize();
+                viewportController.centerViewport();
+            });
+
+            window.getTopToolbar().setOnZoomFit(() -> {
+                // 도면이 없으면 동작시키지 않음(캔버스 기본 900x650을 fit하면 헷갈림)
+                if (window.getCanvasView().getBaseImageView().getImage() == null) {
+                    showInfo("먼저 평면도를 열어주세요.");
+                    return;
+                }
+
+                double w = window.getCanvasView().getDrawCanvas().getWidth();
+                double h = window.getCanvasView().getDrawCanvas().getHeight();
+                viewportController.fitToViewport(20, w, h);
+            });
+        } catch (Exception ignored) {
+            // TopToolbar가 아직 줌 API가 없으면 여기서 터지니까 방어
+        }
+
+        // ===== LeftPanel 바인딩 (scale apply/reset) =====
         window.getLeftPanel().bind(
                 state,
                 env,
@@ -130,6 +162,19 @@ public class MainController {
 
         updateCursorByMode();
         render();
+    }
+
+    private void zoomAtViewportCenter(double factor) {
+        var sp = window.getCanvasView().getCanvasSP();
+        Bounds vp = sp.getViewportBounds();
+        if (vp == null) return;
+
+        // ScrollPane의 (0,0) local을 scene 좌표로 변환한 후 viewport 중앙을 더해서 sceneX/Y 구함
+        Point2D topLeftScene = sp.localToScene(0, 0);
+        double cx = topLeftScene.getX() + vp.getWidth() / 2.0;
+        double cy = topLeftScene.getY() + vp.getHeight() / 2.0;
+
+        viewportController.zoomAt(factor, cx, cy);
     }
 
     private void render() {

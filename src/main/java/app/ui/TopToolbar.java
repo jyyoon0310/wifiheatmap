@@ -1,9 +1,13 @@
 package app.ui;
 
 import app.model.AppState;
+import javafx.beans.binding.Bindings;
+import javafx.beans.property.DoubleProperty;
+import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
-import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 
 import java.util.function.Consumer;
 
@@ -16,17 +20,25 @@ public class TopToolbar {
     private Runnable onClearHeatmap;
     private Consumer<AppState.Tool> onToolChanged;
 
+    // ✅ 줌 액션 콜백
+    private Runnable onZoomFit;
+    private Runnable onZoom100;
+    private Runnable onZoomIn;
+    private Runnable onZoomOut;
+
     private final ToggleGroup toolGroup = new ToggleGroup();
     private final ToggleButton tScale = new ToggleButton("스케일");
     private final ToggleButton tAP = new ToggleButton("AP배치");
     private final ToggleButton tWall = new ToggleButton("벽그리기");
+
+    // ✅ 줌 UI
+    private final Label zoomLabel = new Label("100%");
 
     public TopToolbar() {
         Button open = new Button("평면도 열기");
         Styles.styleFlatButton(open);
         open.setOnAction(e -> { if (onOpenFloorplan != null) onOpenFloorplan.run(); });
 
-        // Toggle group wiring
         tScale.setToggleGroup(toolGroup);
         tAP.setToggleGroup(toolGroup);
         tWall.setToggleGroup(toolGroup);
@@ -35,25 +47,19 @@ public class TopToolbar {
         Styles.styleToggle(tAP);
         Styles.styleToggle(tWall);
 
-        // ✅ 기본: 아무것도 선택 안 함(VIEW)
         clearToolSelection();
 
-        // ✅ 재클릭(이미 선택된 버튼 다시 클릭) = 해제(VIEW)
-        installDeselectOnPress(tScale);
-        installDeselectOnPress(tAP);
-        installDeselectOnPress(tWall);
-
-        // ✅ 일반 선택 변경은 여기서 처리
-        toolGroup.selectedToggleProperty().addListener((obs, ov, nv) -> {
+        tScale.setOnAction(e -> {
             if (onToolChanged == null) return;
-
-            if (nv == null) {
-                onToolChanged.accept(AppState.Tool.VIEW);
-                return;
-            }
-            if (nv == tScale) onToolChanged.accept(AppState.Tool.SCALE);
-            else if (nv == tAP) onToolChanged.accept(AppState.Tool.AP);
-            else if (nv == tWall) onToolChanged.accept(AppState.Tool.WALL);
+            onToolChanged.accept(tScale.isSelected() ? AppState.Tool.SCALE : AppState.Tool.VIEW);
+        });
+        tAP.setOnAction(e -> {
+            if (onToolChanged == null) return;
+            onToolChanged.accept(tAP.isSelected() ? AppState.Tool.AP : AppState.Tool.VIEW);
+        });
+        tWall.setOnAction(e -> {
+            if (onToolChanged == null) return;
+            onToolChanged.accept(tWall.isSelected() ? AppState.Tool.WALL : AppState.Tool.VIEW);
         });
 
         Button gen = new Button("히트맵 생성");
@@ -64,12 +70,20 @@ public class TopToolbar {
         Styles.styleFlatButton(clear);
         clear.setOnAction(e -> { if (onClearHeatmap != null) onClearHeatmap.run(); });
 
+        // ===== ✅ Zoom box (오른쪽 정렬) =====
+        HBox spacer = new HBox();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        HBox zoomBox = buildZoomBox();
+
         bar.getItems().addAll(
                 open,
                 new Separator(),
                 tScale, tAP, tWall,
                 new Separator(),
-                gen, clear
+                gen, clear,
+                spacer,
+                zoomBox
         );
 
         bar.setStyle("-fx-background-color: " + Styles.BG_APP + ";" +
@@ -78,19 +92,37 @@ public class TopToolbar {
                 "-fx-padding: 8 10;");
     }
 
-    /**
-     * 핵심: 이미 선택된 토글을 다시 누르는 순간(MOUSE_PRESSED)에 선택을 풀어버리면
-     * ToggleGroup 기본 동작(선택 유지)을 100% 안정적으로 우회 가능.
-     */
-    private void installDeselectOnPress(ToggleButton btn) {
-        btn.addEventFilter(MouseEvent.MOUSE_PRESSED, e -> {
-            if (toolGroup.getSelectedToggle() == btn) {
-                // 이미 선택된 걸 다시 누름 -> 즉시 해제
-                clearToolSelection();
-                if (onToolChanged != null) onToolChanged.accept(AppState.Tool.VIEW);
-                e.consume();
-            }
-        });
+    private HBox buildZoomBox() {
+        Button fit = new Button("맞춤");
+        Styles.styleFlatButton(fit);
+        fit.setOnAction(e -> { if (onZoomFit != null) onZoomFit.run(); });
+
+        Button b100 = new Button("100%");
+        Styles.styleFlatButton(b100);
+        b100.setOnAction(e -> { if (onZoom100 != null) onZoom100.run(); });
+
+        Button minus = new Button("−");
+        Styles.styleFlatButton(minus);
+        minus.setOnAction(e -> { if (onZoomOut != null) onZoomOut.run(); });
+
+        Button plus = new Button("+");
+        Styles.styleFlatButton(plus);
+        plus.setOnAction(e -> { if (onZoomIn != null) onZoomIn.run(); });
+
+        zoomLabel.setMinWidth(64);
+        zoomLabel.setStyle(
+                "-fx-alignment: center;" +
+                        "-fx-padding: 6 10;" +
+                        "-fx-background-color: " + Styles.BG_PANEL + ";" +
+                        "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
+                        "-fx-border-radius: 10;" +
+                        "-fx-background-radius: 10;"
+        );
+
+        HBox box = new HBox(8, fit, b100, new Separator(), minus, zoomLabel, plus);
+        box.setPadding(new Insets(2, 0, 2, 0));
+        box.setStyle("-fx-alignment: center-right;");
+        return box;
     }
 
     public Node getNode() { return bar; }
@@ -100,7 +132,23 @@ public class TopToolbar {
     public void setOnClearHeatmap(Runnable r) { this.onClearHeatmap = r; }
     public void setOnToolChanged(Consumer<AppState.Tool> c) { this.onToolChanged = c; }
 
-    /** Controller가 강제로 VIEW로 돌릴 때: 토글 선택만 해제 */
+    // ✅ 줌 콜백 setter
+    public void setOnZoomFit(Runnable r) { this.onZoomFit = r; }
+    public void setOnZoom100(Runnable r) { this.onZoom100 = r; }
+    public void setOnZoomIn(Runnable r) { this.onZoomIn = r; }
+    public void setOnZoomOut(Runnable r) { this.onZoomOut = r; }
+
+    /** MainController에서 zoomScaleProperty 넘겨주면 라벨이 자동 갱신됨 */
+    public void bindZoomLabel(DoubleProperty zoomScaleProperty) {
+        zoomLabel.textProperty().bind(
+                Bindings.createStringBinding(() -> {
+                    double pct = zoomScaleProperty.get() * 100.0;
+                    int ip = (int) Math.round(pct);
+                    return ip + "%";
+                }, zoomScaleProperty)
+        );
+    }
+
     public void clearToolSelection() {
         toolGroup.selectToggle(null);
         tScale.setSelected(false);
