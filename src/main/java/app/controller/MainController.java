@@ -93,7 +93,7 @@ public class MainController {
             // 팬 중이면 종료
             stopPan();
 
-            // 툴 상태 정리(프리뷰/스케일선 등)
+            // 툴 상태 정리(프리뷰/스케일선/AP interaction 등)
             toolsController.onToolChanged(tool);
 
             // VIEW로 들어오면 토글 상태 정리(안전)
@@ -107,10 +107,8 @@ public class MainController {
 
         // ===== ✅ 줌 박스 연결 =====
         try {
-            // 퍼센트 라벨 실시간 표시
             window.getTopToolbar().bindZoomLabel(viewportController.zoomScaleProperty());
 
-            // +/- 는 "현재 화면 중앙" 기준으로 줌 (마우스 위치가 아니라 버튼이니까)
             window.getTopToolbar().setOnZoomIn(() -> zoomAtViewportCenter(1.10));
             window.getTopToolbar().setOnZoomOut(() -> zoomAtViewportCenter(1.0 / 1.10));
 
@@ -121,26 +119,21 @@ public class MainController {
             });
 
             window.getTopToolbar().setOnZoomFit(() -> {
-                // 도면이 없으면 동작시키지 않음(캔버스 기본 900x650을 fit하면 헷갈림)
                 if (window.getCanvasView().getBaseImageView().getImage() == null) {
                     showInfo("먼저 평면도를 열어주세요.");
                     return;
                 }
-
                 double w = window.getCanvasView().getDrawCanvas().getWidth();
                 double h = window.getCanvasView().getDrawCanvas().getHeight();
                 viewportController.fitToViewport(20, w, h);
             });
-        } catch (Exception ignored) {
-            // TopToolbar가 아직 줌 API가 없으면 여기서 터지니까 방어
-        }
+        } catch (Exception ignored) {}
 
         // ===== LeftPanel 바인딩 (scale apply/reset) =====
         window.getLeftPanel().bind(
                 state,
                 env,
                 () -> {
-                    // applyScaleIfReady 성공하면 VIEW 복귀 + 토글 해제까지
                     toolsController.applyScaleIfReady(() -> {
                         state.setTool(AppState.Tool.VIEW);
                         try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
@@ -169,7 +162,6 @@ public class MainController {
         Bounds vp = sp.getViewportBounds();
         if (vp == null) return;
 
-        // ScrollPane의 (0,0) local을 scene 좌표로 변환한 후 viewport 중앙을 더해서 sceneX/Y 구함
         Point2D topLeftScene = sp.localToScene(0, 0);
         double cx = topLeftScene.getX() + vp.getWidth() / 2.0;
         double cy = topLeftScene.getY() + vp.getHeight() / 2.0;
@@ -184,7 +176,9 @@ public class MainController {
                 heatmapImage,
                 toolsController.getCalibPts(),
                 toolsController.getFirstPoint(),
-                toolsController.getHoverPoint()
+                toolsController.getHoverPoint(),
+                toolsController.getHoverAp(),
+                toolsController.getSelectedAp()
         );
     }
 
@@ -194,6 +188,24 @@ public class MainController {
             if (e.getCode() == KeyCode.SPACE) {
                 spaceDown = true;
                 updateCursorByMode();
+                e.consume();
+                return;
+            }
+
+            // ✅ AP 삭제 등 (ToolsController가 true면 소비)
+            if (toolsController.onKeyPressed(e.getCode(), this::render)) {
+                e.consume();
+                return;
+            }
+
+            // ✅ ESC: VIEW 복귀
+            if (e.getCode() == KeyCode.ESCAPE) {
+                state.setTool(AppState.Tool.VIEW);
+                toolsController.onToolChanged(AppState.Tool.VIEW);
+                try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
+                stopPan();
+                updateCursorByMode();
+                render();
                 e.consume();
             }
         });
@@ -227,13 +239,11 @@ public class MainController {
 
             heatmapImage = null;
 
-            // viewport 갱신 + 중앙정렬
             viewportController.setBaseContentSize(fx.getWidth(), fx.getHeight());
             viewportController.setZoom(1.0);
             viewportController.updateViewportSize();
             viewportController.centerViewport();
 
-            // 파일 열면 VIEW + 토글 해제 + 툴상태 초기화
             state.setTool(AppState.Tool.VIEW);
             try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
             toolsController.onToolChanged(AppState.Tool.VIEW);
@@ -252,8 +262,15 @@ public class MainController {
         var canvas = window.getCanvasView().getDrawCanvas();
         var sp = window.getCanvasView().getCanvasSP();
 
-        // ===== VIEW Pan (우클릭 드래그 or Space+좌클릭 드래그) =====
+        // ✅ AP: press/drag/release 먼저 처리 (VIEW 팬보다 우선)
         canvas.setOnMousePressed(e -> {
+            if (state.getTool() == AppState.Tool.AP) {
+                toolsController.onMousePressed(e.getX(), e.getY(), e.getButton(), this::render);
+                e.consume();
+                return;
+            }
+
+            // ===== VIEW Pan (우클릭 드래그 or Space+좌클릭 드래그) =====
             if (state.getTool() != AppState.Tool.VIEW) return;
 
             boolean startPan =
@@ -279,6 +296,13 @@ public class MainController {
         });
 
         canvas.setOnMouseDragged(e -> {
+            // ✅ AP 드래그 이동
+            if (state.getTool() == AppState.Tool.AP) {
+                toolsController.onMouseDragged(e.getX(), e.getY(), this::render);
+                e.consume();
+                return;
+            }
+
             if (!panning) return;
 
             viewportController.panBy(
@@ -293,6 +317,12 @@ public class MainController {
         });
 
         canvas.setOnMouseReleased(e -> {
+            if (state.getTool() == AppState.Tool.AP) {
+                toolsController.onMouseReleased(this::render);
+                e.consume();
+                return;
+            }
+
             if (!panning) return;
             panning = false;
             updateCursorByMode();
@@ -317,7 +347,9 @@ public class MainController {
                     this::render,
                     () -> {
                         state.setTool(AppState.Tool.VIEW);
+                        toolsController.onToolChanged(AppState.Tool.VIEW);
                         try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
+                        updateCursorByMode();
                     }
             );
         });

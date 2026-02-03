@@ -16,18 +16,17 @@ import java.util.List;
 
 public class CanvasView {
 
-    // UI
     private final ImageView baseImageView;
 
     private final Canvas drawCanvas;
     private final GraphicsContext g;
 
     private final Group floorGroup;   // (image + drawCanvas)
-    private final Group zoomGroup;    // (floorGroup) -> scale 걸 그룹
+    private final Group zoomGroup;    // (floorGroup) -> scale/translate 걸 그룹
 
     private final StackPane viewportPane;
     private final ScrollPane canvasSP;
-    private final StackPane root;     // center root
+    private final StackPane root;
 
     public CanvasView() {
         baseImageView = new ImageView();
@@ -59,35 +58,22 @@ public class CanvasView {
 
     // ===== getters =====
     public StackPane getRoot() { return root; }
-
     public ImageView getBaseImageView() { return baseImageView; }
-
     public Canvas getDrawCanvas() { return drawCanvas; }
-
     public ScrollPane getCanvasSP() { return canvasSP; }
-
     public StackPane getViewportPane() { return viewportPane; }
-
     public Group getZoomGroup() { return zoomGroup; }
-
     public Group getFloorGroup() { return floorGroup; }
 
     // ===== render =====
-    /**
-     * Render everything.
-     * @param env wifi environment (aps/walls)
-     * @param state app state (tool, scale, etc.)
-     * @param heatmap heatmap image (nullable)
-     * @param calibPts scale two points (size 0~2)
-     * @param wallFirst first point for WALL/SCALE preview (nullable)
-     * @param wallHover hover point for WALL/SCALE preview (nullable)
-     */
     public void render(WifiEnvironment env,
                        AppState state,
                        WritableImage heatmap,
                        List<Point2D> calibPts,
                        Point2D wallFirst,
-                       Point2D wallHover) {
+                       Point2D wallHover,
+                       AP hoverAp,
+                       AP selectedAp) {
 
         g.clearRect(0, 0, drawCanvas.getWidth(), drawCanvas.getHeight());
 
@@ -128,13 +114,36 @@ public class CanvasView {
 
         // AP
         for (AP ap : env.getAps()) {
-            if (!ap.enabled) continue;
+            if (ap == null || !ap.enabled) continue;
+
             double r = 6;
+
+            // 기본 점
             g.setFill(Color.DODGERBLUE);
             g.fillOval(ap.x - r, ap.y - r, 2 * r, 2 * r);
+
+            // 기본 테두리
             g.setStroke(Color.WHITE);
             g.setLineWidth(2.0);
             g.strokeOval(ap.x - r, ap.y - r, 2 * r, 2 * r);
+
+            // hover 링
+            if (ap == hoverAp) {
+                g.setStroke(Color.DODGERBLUE);
+                g.setLineWidth(2.0);
+                double rr = r + 7;
+                g.strokeOval(ap.x - rr, ap.y - rr, 2 * rr, 2 * rr);
+            }
+
+            // selected 링
+            if (ap == selectedAp) {
+                g.setStroke(Color.DARKBLUE);
+                g.setLineWidth(3.0);
+                double rr = r + 10;
+                g.strokeOval(ap.x - rr, ap.y - rr, 2 * rr, 2 * rr);
+            }
+
+            // 이름
             g.setFill(Color.BLACK);
             g.fillText(ap.name, ap.x + r + 4, ap.y - r - 2);
         }
@@ -149,5 +158,15 @@ public class CanvasView {
                 g.strokeLine(a.getX(), a.getY(), b.getX(), b.getY());
             }
         }
+    }
+
+    // 기존 시그니처 유지용(호출부 남아있으면 깨지니까)
+    public void render(WifiEnvironment env,
+                       AppState state,
+                       WritableImage heatmap,
+                       List<Point2D> calibPts,
+                       Point2D wallFirst,
+                       Point2D wallHover) {
+        render(env, state, heatmap, calibPts, wallFirst, wallHover, null, null);
     }
 }
