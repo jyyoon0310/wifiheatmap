@@ -16,11 +16,11 @@ public class ToolsController {
     // SCALE 확정 선분(2점)
     private final List<Point2D> calibPts = new ArrayList<>();
 
-    // WALL/SCALE 프리뷰(첫 점 + hover)
+    // WALL/SCALE 프리뷰
     private Point2D firstPoint = null;
     private Point2D hoverPoint = null;
 
-    // ✅ AP는 별도 컨트롤러로 분리
+    // AP (캔버스 인터랙션)
     private final ApController apController;
 
     public ToolsController(WifiEnvironment env, AppState state) {
@@ -29,22 +29,22 @@ public class ToolsController {
         this.apController = new ApController(env);
     }
 
-    // ===== getters (MainController가 render에 넘김) =====
     public List<Point2D> getCalibPts() { return calibPts; }
     public Point2D getFirstPoint() { return firstPoint; }
     public Point2D getHoverPoint() { return hoverPoint; }
 
     public AP getHoverAp() { return apController.getHoverAp(); }
     public AP getSelectedAp() { return apController.getSelectedAp(); }
-    public boolean isApDragging() { return apController.isDragging(); }
+    public void clearApSelection() { apController.clearSelection(); }
 
-    // ===== tool change hook =====
+    /** MainController 더블클릭 편집용 */
+    public AP findApNear(double x, double y) { return apController.findApNear(x, y); }
+
     public void onToolChanged(AppState.Tool tool) {
-        // 모드 바뀔 때 프리뷰 정리
         firstPoint = null;
         hoverPoint = null;
 
-        // AP 쪽도 인터랙션 정리
+        // AP 인터랙션 정리
         apController.clearInteraction();
 
         if (tool == AppState.Tool.SCALE) {
@@ -52,16 +52,17 @@ public class ToolsController {
         }
     }
 
-    // ===== LeftPanel actions =====
-    public void applyScaleIfReady(Runnable afterStateChanged) {
-        if (calibPts.size() != 2) return;
+    /** ✅ 적용 버튼 눌렀을 때만 적용되게: 성공/실패 반환 */
+    public boolean applyScaleIfReady(Runnable afterStateChanged) {
+        if (calibPts.size() != 2) return false;
 
         double dPx = calibPts.get(0).distance(calibPts.get(1));
         double realM = safeGetCalibRealMeters();
-        if (dPx <= 0 || realM <= 0) return;
+        if (dPx <= 0 || realM <= 0) return false;
 
         state.setScaleMPerPx(realM / dPx);
         if (afterStateChanged != null) afterStateChanged.run();
+        return true;
     }
 
     public void resetScale(Runnable afterStateChanged) {
@@ -73,7 +74,7 @@ public class ToolsController {
         if (afterStateChanged != null) afterStateChanged.run();
     }
 
-    // ===== mouse input =====
+    // ===== AP drag route (AP툴에서만) =====
     public void onMousePressed(double x, double y, MouseButton button, Runnable requestRender) {
         if (state.getTool() == AppState.Tool.AP) {
             apController.onMousePressed(x, y, button, requestRender);
@@ -102,17 +103,18 @@ public class ToolsController {
         switch (state.getTool()) {
             case SCALE -> handleScaleClick(x, y, requestRender, requestReturnToViewAndClearToggle);
             case WALL  -> handleWallClick(x, y, requestRender);
-            case AP    -> apController.onMouseClicked(x, y, button, requestRender);
+            case AP    -> apController.onMouseClicked(x, y, button, requestRender); // ✅ AP툴에서만 생성
             default -> {}
         }
     }
 
     public void onMouseMoved(double x, double y, Runnable requestRender) {
-        if (state.getTool() == AppState.Tool.AP) {
+        // ✅ hover 링은 VIEW에서도 보여야 하니까 VIEW/AP에서 모두 갱신
+        if (state.getTool() == AppState.Tool.AP || state.getTool() == AppState.Tool.VIEW) {
             apController.onMouseMoved(x, y, requestRender);
-            return;
         }
 
+        // WALL/SCALE 프리뷰
         if ((state.getTool() == AppState.Tool.WALL || state.getTool() == AppState.Tool.SCALE) && firstPoint != null) {
             hoverPoint = new Point2D(x, y);
             if (requestRender != null) requestRender.run();
@@ -124,10 +126,6 @@ public class ToolsController {
             return apController.onKeyPressed(code, requestRender);
         }
         return false;
-    }
-
-    public void clearApSelection() {
-        apController.clearSelection();
     }
 
     // ===== internals =====
@@ -148,18 +146,13 @@ public class ToolsController {
             calibPts.clear();
             calibPts.add(firstPoint);
             calibPts.add(end);
-
-            double dPx = firstPoint.distance(end);
-            double realM = safeGetCalibRealMeters();
-            if (dPx > 0 && realM > 0) {
-                state.setScaleMPerPx(realM / dPx);
-            }
         }
 
         firstPoint = null;
         hoverPoint = null;
 
-        if (requestReturnToViewAndClearToggle != null) requestReturnToViewAndClearToggle.run();
+        // 스케일은 “적용 버튼”에서만 state.setScaleMPerPx 하기로 했으니 여기선 안 함
+
         if (requestRender != null) requestRender.run();
     }
 
@@ -189,10 +182,7 @@ public class ToolsController {
     }
 
     private double safeGetCalibRealMeters() {
-        try {
-            return state.getCalibRealMeters();
-        } catch (Exception ignored) {
-            return 5.0;
-        }
+        try { return state.getCalibRealMeters(); }
+        catch (Exception ignored) { return 5.0; }
     }
 }

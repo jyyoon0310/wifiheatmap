@@ -3,7 +3,6 @@ package app.controller;
 import app.model.AP;
 import app.model.Band;
 import app.model.WifiEnvironment;
-import javafx.geometry.Point2D;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseButton;
 
@@ -11,7 +10,6 @@ public class ApController {
 
     private final WifiEnvironment env;
 
-    // 상태
     private AP hoverAp = null;
     private AP selectedAp = null;
 
@@ -19,8 +17,8 @@ public class ApController {
     private double dragOffsetX = 0.0;
     private double dragOffsetY = 0.0;
 
-    // 히트 테스트 반경(px)
-    private static final double HIT_R = 10.0;
+    // hit-test 반경(px)
+    public static final double HIT_R = 10.0;
 
     public ApController(WifiEnvironment env) {
         this.env = env;
@@ -33,11 +31,31 @@ public class ApController {
     public void clearInteraction() {
         hoverAp = null;
         dragging = false;
-        dragOffsetX = dragOffsetY = 0.0;
+        dragOffsetX = 0.0;
+        dragOffsetY = 0.0;
     }
 
     public void clearSelection() {
         selectedAp = null;
+    }
+
+    public AP findApNear(double x, double y) {
+        AP best = null;
+        double bestD2 = HIT_R * HIT_R;
+
+        for (AP ap : env.getAps()) {
+            if (ap == null || !ap.enabled) continue;
+
+            double dx = ap.x - x;
+            double dy = ap.y - y;
+            double d2 = dx * dx + dy * dy;
+
+            if (d2 <= bestD2) {
+                bestD2 = d2;
+                best = ap;
+            }
+        }
+        return best;
     }
 
     public void onMouseMoved(double x, double y, Runnable requestRender) {
@@ -55,13 +73,12 @@ public class ApController {
         if (hit != null) {
             selectedAp = hit;
             dragging = true;
-
             dragOffsetX = hit.x - x;
             dragOffsetY = hit.y - y;
 
             if (requestRender != null) requestRender.run();
         } else {
-            // 빈 곳 누르면 드래그 시작 X
+            // 빈 곳 press는 생성 X (생성은 click에서만)
             dragging = false;
         }
     }
@@ -82,9 +99,9 @@ public class ApController {
     }
 
     /**
-     * 클릭 처리:
-     * - AP 위 클릭: 선택(드래그는 press에서 이미 처리됨)
-     * - 빈 곳 클릭: AP 생성 + 선택
+     * AP툴에서만 동작:
+     * - AP 위 클릭: 선택
+     * - 빈 곳 클릭: 새 AP 생성 + 선택
      */
     public void onMouseClicked(double x, double y, MouseButton button, Runnable requestRender) {
         if (button != MouseButton.PRIMARY) return;
@@ -96,7 +113,6 @@ public class ApController {
             return;
         }
 
-        // 빈 곳이면 생성
         AP ap = addApAt(x, y);
         selectedAp = ap;
         if (requestRender != null) requestRender.run();
@@ -114,25 +130,6 @@ public class ApController {
             }
         }
         return false;
-    }
-
-    // ===== internals =====
-
-    private AP findApNear(double x, double y) {
-        AP best = null;
-        double bestD2 = HIT_R * HIT_R;
-
-        for (AP ap : env.getAps()) {
-            if (ap == null || !ap.enabled) continue;
-            double dx = ap.x - x;
-            double dy = ap.y - y;
-            double d2 = dx * dx + dy * dy;
-            if (d2 <= bestD2) {
-                bestD2 = d2;
-                best = ap;
-            }
-        }
-        return best;
     }
 
     private AP addApAt(double x, double y) {

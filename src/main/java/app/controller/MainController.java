@@ -1,5 +1,7 @@
 package app.controller;
 
+import app.dialog.ApEditorDialog;
+import app.model.AP;
 import app.model.AppState;
 import app.model.WifiEnvironment;
 import app.ui.MainWindow;
@@ -58,9 +60,7 @@ public class MainController {
 
         this.toolsController = new ToolsController(env, state);
 
-        // 시작은 VIEW
         state.setTool(AppState.Tool.VIEW);
-
         wireUi();
     }
 
@@ -75,7 +75,6 @@ public class MainController {
     }
 
     private void wireUi() {
-        // ===== TopToolbar 기본 =====
         window.getTopToolbar().setOnOpenFloorplan(this::openFloorplan);
 
         window.getTopToolbar().setOnGenerateHeatmap(() ->
@@ -90,13 +89,9 @@ public class MainController {
         window.getTopToolbar().setOnToolChanged(tool -> {
             state.setTool(tool);
 
-            // 팬 중이면 종료
             stopPan();
-
-            // 툴 상태 정리(프리뷰/스케일선/AP interaction 등)
             toolsController.onToolChanged(tool);
 
-            // VIEW로 들어오면 토글 상태 정리(안전)
             if (tool == AppState.Tool.VIEW) {
                 try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
             }
@@ -105,7 +100,7 @@ public class MainController {
             render();
         });
 
-        // ===== ✅ 줌 박스 연결 =====
+        // 줌 박스
         try {
             window.getTopToolbar().bindZoomLabel(viewportController.zoomScaleProperty());
 
@@ -129,23 +124,44 @@ public class MainController {
             });
         } catch (Exception ignored) {}
 
-        // ===== LeftPanel 바인딩 (scale apply/reset) =====
+        // LeftPanel: scale apply/reset
         window.getLeftPanel().bind(
                 state,
                 env,
                 () -> {
-                    toolsController.applyScaleIfReady(() -> {
+                    boolean ok = toolsController.applyScaleIfReady(() -> {
                         state.setTool(AppState.Tool.VIEW);
+                        toolsController.onToolChanged(AppState.Tool.VIEW);
                         try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
                     });
+
+                    if (!ok) {
+                        showError("스케일 선분(두 점)을 먼저 확정하세요.");
+                        stopPan();
+                        updateCursorByMode();
+                        render();
+                        return;
+                    }
+
+                    double mPerPx = state.getScaleMPerPx();
+                    double inchPerPx = mPerPx * 39.37007874015748;
+                    showInfo(String.format(
+                            "스케일 적용됨\n1px = %.6f m (%.6f inch)",
+                            mPerPx, inchPerPx
+                    ));
+
+                    stopPan();
                     updateCursorByMode();
                     render();
                 },
                 () -> {
                     toolsController.resetScale(() -> {
                         state.setTool(AppState.Tool.VIEW);
+                        toolsController.onToolChanged(AppState.Tool.VIEW);
                         try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
                     });
+
+                    stopPan();
                     updateCursorByMode();
                     render();
                 }
@@ -182,7 +198,6 @@ public class MainController {
         );
     }
 
-    // ====== Scene shortcuts ======
     private void installSceneShortcuts(Scene scene) {
         scene.setOnKeyPressed(e -> {
             if (e.getCode() == KeyCode.SPACE) {
@@ -192,13 +207,11 @@ public class MainController {
                 return;
             }
 
-            // ✅ AP 삭제 등 (ToolsController가 true면 소비)
             if (toolsController.onKeyPressed(e.getCode(), this::render)) {
                 e.consume();
                 return;
             }
 
-            // ✅ ESC: VIEW 복귀
             if (e.getCode() == KeyCode.ESCAPE) {
                 state.setTool(AppState.Tool.VIEW);
                 toolsController.onToolChanged(AppState.Tool.VIEW);
@@ -219,7 +232,6 @@ public class MainController {
         });
     }
 
-    // ====== Floorplan open ======
     private void openFloorplan() {
         FileChooser fc = new FileChooser();
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg", "*.jpeg"));
@@ -257,12 +269,10 @@ public class MainController {
         }
     }
 
-    // ====== Canvas handlers ======
     private void installCanvasHandlers() {
         var canvas = window.getCanvasView().getDrawCanvas();
         var sp = window.getCanvasView().getCanvasSP();
 
-        // ✅ AP: press/drag/release 먼저 처리 (VIEW 팬보다 우선)
         canvas.setOnMousePressed(e -> {
             if (state.getTool() == AppState.Tool.AP) {
                 toolsController.onMousePressed(e.getX(), e.getY(), e.getButton(), this::render);
@@ -270,7 +280,6 @@ public class MainController {
                 return;
             }
 
-            // ===== VIEW Pan (우클릭 드래그 or Space+좌클릭 드래그) =====
             if (state.getTool() != AppState.Tool.VIEW) return;
 
             boolean startPan =
@@ -296,7 +305,6 @@ public class MainController {
         });
 
         canvas.setOnMouseDragged(e -> {
-            // ✅ AP 드래그 이동
             if (state.getTool() == AppState.Tool.AP) {
                 toolsController.onMouseDragged(e.getX(), e.getY(), this::render);
                 e.consume();
@@ -329,16 +337,26 @@ public class MainController {
             e.consume();
         });
 
-        // ===== 툴 클릭 =====
         canvas.setOnMouseClicked(e -> {
-            // 팬 드래그 직후 클릭 이벤트 무시
             if (panDragged) {
                 panDragged = false;
                 e.consume();
                 return;
             }
 
-            // VIEW는 툴 입력 없음
+            // ✅ 더블클릭 편집: VIEW/AP에서만
+            if (e.getButton() == MouseButton.PRIMARY
+                    && e.getClickCount() == 2
+                    && (state.getTool() == AppState.Tool.AP || state.getTool() == AppState.Tool.VIEW)) {
+
+                AP hit = toolsController.findApNear(e.getX(), e.getY());
+                if (hit != null) {
+                    openApEditor(hit);
+                    e.consume();
+                    return;
+                }
+            }
+
             if (state.getTool() == AppState.Tool.VIEW) return;
 
             toolsController.onMouseClicked(
@@ -356,7 +374,6 @@ public class MainController {
 
         canvas.setOnMouseMoved(e -> toolsController.onMouseMoved(e.getX(), e.getY(), this::render));
 
-        // Ctrl/Cmd + 휠 = 줌
         sp.addEventFilter(ScrollEvent.SCROLL, e -> {
             if (e.isControlDown() || e.isShortcutDown()) {
                 double factor = (e.getDeltaY() > 0) ? 1.10 : (1.0 / 1.10);
@@ -364,6 +381,18 @@ public class MainController {
                 e.consume();
             }
         });
+    }
+
+    private void openApEditor(AP ap) {
+        ApEditorDialog.Result r = ApEditorDialog.show(stage, ap, this::render);
+
+        if (r == ApEditorDialog.Result.DELETE) {
+            env.getAps().remove(ap);
+            toolsController.clearApSelection();
+            render();
+        } else if (r == ApEditorDialog.Result.OK) {
+            render();
+        }
     }
 
     private void updateCursorByMode() {

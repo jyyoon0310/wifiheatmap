@@ -118,16 +118,11 @@ public class CanvasView {
 
             double r = 6;
 
-            // 기본 점
+            // ✅ 기본은 "파란 점"만 (테두리/링 없음)
             g.setFill(Color.DODGERBLUE);
             g.fillOval(ap.x - r, ap.y - r, 2 * r, 2 * r);
 
-            // 기본 테두리
-            g.setStroke(Color.WHITE);
-            g.setLineWidth(2.0);
-            g.strokeOval(ap.x - r, ap.y - r, 2 * r, 2 * r);
-
-            // hover 링
+            // ✅ hover 링만 표시 (VIEW 포함)
             if (ap == hoverAp) {
                 g.setStroke(Color.DODGERBLUE);
                 g.setLineWidth(2.0);
