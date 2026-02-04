@@ -164,6 +164,11 @@ public class MainController {
                     stopPan();
                     updateCursorByMode();
                     render();
+                },
+                this::render,
+                () -> {
+                    toolsController.clearApSelection();
+                    toolsController.clearApInteraction();
                 }
         );
 
@@ -186,6 +191,9 @@ public class MainController {
     }
 
     private void render() {
+        AP selectedAp = toolsController.getSelectedAp();
+        window.getLeftPanel().setSelectedAp(selectedAp);
+
         window.getCanvasView().render(
                 env,
                 state,
@@ -194,7 +202,7 @@ public class MainController {
                 toolsController.getFirstPoint(),
                 toolsController.getHoverPoint(),
                 toolsController.getHoverAp(),
-                toolsController.getSelectedAp()
+                selectedAp
         );
     }
 
@@ -389,6 +397,7 @@ public class MainController {
         if (r == ApEditorDialog.Result.DELETE) {
             env.getAps().remove(ap);
             toolsController.clearApSelection();
+            toolsController.clearApInteraction();
             render();
         } else if (r == ApEditorDialog.Result.OK) {
             render();

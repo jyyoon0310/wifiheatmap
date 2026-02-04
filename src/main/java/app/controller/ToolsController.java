@@ -36,6 +36,7 @@ public class ToolsController {
     public AP getHoverAp() { return apController.getHoverAp(); }
     public AP getSelectedAp() { return apController.getSelectedAp(); }
     public void clearApSelection() { apController.clearSelection(); }
+    public void clearApInteraction() { apController.clearInteraction(); }
 
     /** MainController 더블클릭 편집용 */
     public AP findApNear(double x, double y) { return apController.findApNear(x, y); }
