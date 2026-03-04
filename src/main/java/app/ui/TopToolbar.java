@@ -8,6 +8,7 @@ import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.util.StringConverter;
 
 import java.util.function.Consumer;
 
@@ -18,7 +19,12 @@ public class TopToolbar {
     private Runnable onOpenFloorplan;
     private Runnable onGenerateHeatmap;
     private Runnable onClearHeatmap;
+    private Runnable onStartSolver;
+    private Runnable onStopSolver;
+    private Runnable onResetSolver;
     private Consumer<AppState.Tool> onToolChanged;
+    private Consumer<AppState.HeatmapSolverMode> onHeatmapSolverModeChanged;
+    private Consumer<AppState.HeatmapModel> onHeatmapModelChanged;
 
     // ✅ 줌 액션 콜백
     private Runnable onZoomFit;
@@ -30,6 +36,14 @@ public class TopToolbar {
     private final ToggleButton tScale = new ToggleButton("스케일");
     private final ToggleButton tAP = new ToggleButton("AP배치");
     private final ToggleButton tWall = new ToggleButton("벽그리기");
+    private final ToggleButton tSolver = new ToggleButton("Solver");
+    private final ComboBox<AppState.HeatmapModel> heatmapModelCombo = new ComboBox<>();
+    private final ComboBox<AppState.HeatmapSolverMode> solverModeCombo = new ComboBox<>();
+    private final Button solverStartBtn = new Button("Solver 시작");
+    private final Button solverStopBtn = new Button("Solver 정지");
+    private final Button solverResetBtn = new Button("Solver 리셋");
+    private boolean suppressHeatmapModelNotify = false;
+    private boolean suppressSolverNotify = false;
 
     // ✅ 줌 UI
     private final Label zoomLabel = new Label("100%");
@@ -42,10 +56,12 @@ public class TopToolbar {
         tScale.setToggleGroup(toolGroup);
         tAP.setToggleGroup(toolGroup);
         tWall.setToggleGroup(toolGroup);
+        tSolver.setToggleGroup(toolGroup);
 
         Styles.styleToggle(tScale);
         Styles.styleToggle(tAP);
         Styles.styleToggle(tWall);
+        Styles.styleToggle(tSolver);
 
         clearToolSelection();
 
@@ -61,6 +77,10 @@ public class TopToolbar {
             if (onToolChanged == null) return;
             onToolChanged.accept(tWall.isSelected() ? AppState.Tool.WALL : AppState.Tool.VIEW);
         });
+        tSolver.setOnAction(e -> {
+            if (onToolChanged == null) return;
+            onToolChanged.accept(tSolver.isSelected() ? AppState.Tool.SOLVER : AppState.Tool.VIEW);
+        });
 
         Button gen = new Button("히트맵 생성");
         Styles.styleAccentButton(gen);
@@ -69,6 +89,116 @@ public class TopToolbar {
         Button clear = new Button("히트맵 클리어");
         Styles.styleFlatButton(clear);
         clear.setOnAction(e -> { if (onClearHeatmap != null) onClearHeatmap.run(); });
+
+        // 현재는 Legacy 히트맵만 사용하고, 파동 시각화는 Solver 오버레이로 처리.
+        heatmapModelCombo.getItems().setAll(AppState.HeatmapModel.LEGACY);
+        heatmapModelCombo.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(AppState.HeatmapModel mode) {
+                if (mode == null) return "";
+                return "모델: Legacy(고정)";
+            }
+
+            @Override
+            public AppState.HeatmapModel fromString(String string) {
+                return null;
+            }
+        });
+        heatmapModelCombo.setCellFactory(list -> new ListCell<>() {
+            @Override
+            protected void updateItem(AppState.HeatmapModel item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    return;
+                }
+                setText("Legacy(거리/벽감쇠)");
+            }
+        });
+        heatmapModelCombo.setButtonCell(new ListCell<>() {
+            @Override
+            protected void updateItem(AppState.HeatmapModel item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? "" : heatmapModelCombo.getConverter().toString(item));
+            }
+        });
+        heatmapModelCombo.getSelectionModel().select(AppState.HeatmapModel.LEGACY);
+        heatmapModelCombo.setDisable(true);
+        heatmapModelCombo.setOnAction(e -> {
+            if (suppressHeatmapModelNotify) return;
+            if (onHeatmapModelChanged != null) {
+                onHeatmapModelChanged.accept(heatmapModelCombo.getValue());
+            }
+        });
+        heatmapModelCombo.setStyle(
+                "-fx-background-color: " + Styles.BG_PANEL + ";" +
+                        "-fx-text-fill: " + Styles.TEXT_MAIN + ";" +
+                        "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
+                        "-fx-border-radius: 8;" +
+                        "-fx-background-radius: 8;" +
+                        "-fx-padding: 1 4;" +
+                        "-fx-font-size: 12px;"
+        );
+        Styles.installComboPopupStyle(heatmapModelCombo);
+
+        solverModeCombo.getItems().setAll(AppState.HeatmapSolverMode.values());
+        solverModeCombo.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(AppState.HeatmapSolverMode mode) {
+                if (mode == null) return "";
+                return mode == AppState.HeatmapSolverMode.GPU ? "Solver: GPU(실험)" : "Solver: CPU";
+            }
+
+            @Override
+            public AppState.HeatmapSolverMode fromString(String string) {
+                return null;
+            }
+        });
+        solverModeCombo.setCellFactory(list -> new ListCell<>() {
+            @Override
+            protected void updateItem(AppState.HeatmapSolverMode item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    return;
+                }
+                setText(item == AppState.HeatmapSolverMode.GPU ? "GPU (실험)" : "CPU");
+            }
+        });
+        solverModeCombo.setButtonCell(new ListCell<>() {
+            @Override
+            protected void updateItem(AppState.HeatmapSolverMode item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? "" : solverModeCombo.getConverter().toString(item));
+            }
+        });
+        solverModeCombo.getSelectionModel().select(AppState.HeatmapSolverMode.CPU);
+        solverModeCombo.setOnAction(e -> {
+            if (suppressSolverNotify) return;
+            if (onHeatmapSolverModeChanged != null) {
+                onHeatmapSolverModeChanged.accept(solverModeCombo.getValue());
+            }
+        });
+        solverModeCombo.setStyle(
+                "-fx-background-color: " + Styles.BG_PANEL + ";" +
+                        "-fx-text-fill: " + Styles.TEXT_MAIN + ";" +
+                        "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
+                        "-fx-border-radius: 8;" +
+                        "-fx-background-radius: 8;" +
+                        "-fx-padding: 1 4;" +
+                        "-fx-font-size: 12px;"
+        );
+        Styles.installComboPopupStyle(solverModeCombo);
+
+        Styles.styleAccentButton(solverStartBtn);
+        Styles.styleFlatButton(solverStopBtn);
+        Styles.styleFlatButton(solverResetBtn);
+        solverStopBtn.setDisable(true);
+
+        solverStartBtn.setOnAction(e -> { if (onStartSolver != null) onStartSolver.run(); });
+        solverStopBtn.setOnAction(e -> { if (onStopSolver != null) onStopSolver.run(); });
+        solverResetBtn.setOnAction(e -> { if (onResetSolver != null) onResetSolver.run(); });
+        setSolverToolActive(false);
 
         // ===== ✅ Zoom box (오른쪽 정렬) =====
         HBox spacer = new HBox();
@@ -79,9 +209,10 @@ public class TopToolbar {
         bar.getItems().addAll(
                 open,
                 new Separator(),
-                tScale, tAP, tWall,
+                tScale, tAP, tWall, tSolver,
                 new Separator(),
-                gen, clear,
+                heatmapModelCombo, gen, clear, solverModeCombo,
+                solverStartBtn, solverStopBtn, solverResetBtn,
                 spacer,
                 zoomBox
         );
@@ -130,7 +261,46 @@ public class TopToolbar {
     public void setOnOpenFloorplan(Runnable r) { this.onOpenFloorplan = r; }
     public void setOnGenerateHeatmap(Runnable r) { this.onGenerateHeatmap = r; }
     public void setOnClearHeatmap(Runnable r) { this.onClearHeatmap = r; }
+    public void setOnStartSolver(Runnable r) { this.onStartSolver = r; }
+    public void setOnStopSolver(Runnable r) { this.onStopSolver = r; }
+    public void setOnResetSolver(Runnable r) { this.onResetSolver = r; }
     public void setOnToolChanged(Consumer<AppState.Tool> c) { this.onToolChanged = c; }
+    public void setOnHeatmapModelChanged(Consumer<AppState.HeatmapModel> c) {
+        this.onHeatmapModelChanged = c;
+    }
+    public void setOnHeatmapSolverModeChanged(Consumer<AppState.HeatmapSolverMode> c) {
+        this.onHeatmapSolverModeChanged = c;
+    }
+
+    public void setHeatmapModel(AppState.HeatmapModel mode) {
+        AppState.HeatmapModel next = (mode == null) ? AppState.HeatmapModel.LEGACY : mode;
+        suppressHeatmapModelNotify = true;
+        heatmapModelCombo.getSelectionModel().select(next);
+        suppressHeatmapModelNotify = false;
+    }
+
+    public void setHeatmapSolverMode(AppState.HeatmapSolverMode mode) {
+        AppState.HeatmapSolverMode next = (mode == null) ? AppState.HeatmapSolverMode.CPU : mode;
+        suppressSolverNotify = true;
+        solverModeCombo.getSelectionModel().select(next);
+        suppressSolverNotify = false;
+    }
+
+    public void setSolverRunning(boolean running) {
+        solverStartBtn.setDisable(running);
+        solverStopBtn.setDisable(!running);
+    }
+
+    public void setSolverToolActive(boolean active) {
+        solverModeCombo.setManaged(active);
+        solverModeCombo.setVisible(active);
+        solverStartBtn.setManaged(active);
+        solverStartBtn.setVisible(active);
+        solverStopBtn.setManaged(active);
+        solverStopBtn.setVisible(active);
+        solverResetBtn.setManaged(active);
+        solverResetBtn.setVisible(active);
+    }
 
     // ✅ 줌 콜백 setter
     public void setOnZoomFit(Runnable r) { this.onZoomFit = r; }
@@ -154,5 +324,6 @@ public class TopToolbar {
         tScale.setSelected(false);
         tAP.setSelected(false);
         tWall.setSelected(false);
+        tSolver.setSelected(false);
     }
 }

@@ -7,6 +7,7 @@ import javafx.scene.input.MouseButton;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 public class ToolsController {
 
@@ -22,6 +23,12 @@ public class ToolsController {
 
     // AP (캔버스 인터랙션)
     private final ApController apController;
+    private Wall selectedWall = null;
+    private Wall hoverWall = null;
+
+    public static final double WALL_HIT_R = 8.0;
+    private static final double WALL_SNAP_ANGLE_DEG = 6.0;
+    private static final double WALL_ENDPOINT_SNAP_R = 10.0;
 
     public ToolsController(WifiEnvironment env, AppState state) {
         this.env = env;
@@ -37,9 +44,39 @@ public class ToolsController {
     public AP getSelectedAp() { return apController.getSelectedAp(); }
     public void clearApSelection() { apController.clearSelection(); }
     public void clearApInteraction() { apController.clearInteraction(); }
+    public Wall getSelectedWall() { return selectedWall; }
+    public void clearWallSelection() { selectedWall = null; }
+    public Wall getHoverWall() { return hoverWall; }
+    public void setSelectedWall(Wall wall, Runnable requestRender) {
+        selectedWall = wall;
+        hoverWall = wall;
+        if (requestRender != null) requestRender.run();
+    }
 
     /** MainController 더블클릭 편집용 */
     public AP findApNear(double x, double y) { return apController.findApNear(x, y); }
+    public Wall findWallNear(double x, double y) {
+        Wall best = null;
+        double bestD = WALL_HIT_R;
+        for (Wall w : env.getWalls()) {
+            if (w == null) continue;
+            double d = distancePointToSegment(x, y, w.x1, w.y1, w.x2, w.y2);
+            if (d <= bestD) {
+                bestD = d;
+                best = w;
+            }
+        }
+        return best;
+    }
+
+    public void selectWallNear(double x, double y, Runnable requestRender) {
+        Wall hit = findWallNear(x, y);
+        if (hit != selectedWall) {
+            selectedWall = hit;
+            hoverWall = hit;
+            if (requestRender != null) requestRender.run();
+        }
+    }
 
     public void onToolChanged(AppState.Tool tool) {
         firstPoint = null;
@@ -97,13 +134,14 @@ public class ToolsController {
     public void onMouseClicked(double x, double y,
                                MouseButton button,
                                Runnable requestRender,
-                               Runnable requestReturnToViewAndClearToggle) {
+                               Runnable requestReturnToViewAndClearToggle,
+                               Consumer<Wall> onWallCreated) {
 
         if (button == MouseButton.SECONDARY) return;
 
         switch (state.getTool()) {
             case SCALE -> handleScaleClick(x, y, requestRender, requestReturnToViewAndClearToggle);
-            case WALL  -> handleWallClick(x, y, requestRender);
+            case WALL  -> handleWallClick(x, y, requestRender, onWallCreated);
             case AP    -> apController.onMouseClicked(x, y, button, requestRender); // ✅ AP툴에서만 생성
             default -> {}
         }
@@ -115,16 +153,41 @@ public class ToolsController {
             apController.onMouseMoved(x, y, requestRender);
         }
 
+        // 벽 hover는 VIEW/WALL에서 표시
+        if (state.getTool() == AppState.Tool.VIEW || state.getTool() == AppState.Tool.WALL) {
+            Wall hit = findWallNear(x, y);
+            if (hit != hoverWall) {
+                hoverWall = hit;
+                if (requestRender != null) requestRender.run();
+            }
+        }
+
         // WALL/SCALE 프리뷰
         if ((state.getTool() == AppState.Tool.WALL || state.getTool() == AppState.Tool.SCALE) && firstPoint != null) {
-            hoverPoint = new Point2D(x, y);
+            Point2D raw = new Point2D(x, y);
+            if (state.getTool() == AppState.Tool.WALL) {
+                Point2D snappedEnd = snapWallEndpoint(raw);
+                hoverPoint = (snappedEnd != null) ? snappedEnd : snapWallPoint(firstPoint, raw);
+            } else {
+                hoverPoint = raw;
+            }
             if (requestRender != null) requestRender.run();
         }
     }
 
     public boolean onKeyPressed(KeyCode code, Runnable requestRender) {
-        if (state.getTool() == AppState.Tool.AP) {
-            return apController.onKeyPressed(code, requestRender);
+        if (state.getTool() == AppState.Tool.AP && apController.onKeyPressed(code, requestRender)) {
+            return true;
+        }
+
+        if (code == KeyCode.DELETE || code == KeyCode.BACK_SPACE) {
+            if (selectedWall != null) {
+                env.getWalls().remove(selectedWall);
+                selectedWall = null;
+                hoverWall = null;
+                if (requestRender != null) requestRender.run();
+                return true;
+            }
         }
         return false;
     }
@@ -157,15 +220,17 @@ public class ToolsController {
         if (requestRender != null) requestRender.run();
     }
 
-    private void handleWallClick(double x, double y, Runnable requestRender) {
+    private void handleWallClick(double x, double y, Runnable requestRender, Consumer<Wall> onWallCreated) {
         if (firstPoint == null) {
-            firstPoint = new Point2D(x, y);
+            Point2D snappedStart = snapWallEndpoint(new Point2D(x, y));
+            firstPoint = (snappedStart != null) ? snappedStart : new Point2D(x, y);
             hoverPoint = firstPoint;
             if (requestRender != null) requestRender.run();
             return;
         }
 
-        Point2D end = new Point2D(x, y);
+        Point2D snappedEnd = snapWallEndpoint(new Point2D(x, y));
+        Point2D end = (snappedEnd != null) ? snappedEnd : snapWallPoint(firstPoint, new Point2D(x, y));
         if (firstPoint.distance(end) >= 3.0) {
             Wall w = new Wall();
             w.x1 = firstPoint.getX();
@@ -174,12 +239,71 @@ public class ToolsController {
             w.y2 = end.getY();
             w.setMaterial(WallMaterial.CONCRETE_WALL);
             env.getWalls().add(w);
+            selectedWall = w;
+            hoverWall = w;
+            if (onWallCreated != null) onWallCreated.accept(w);
         }
 
         firstPoint = null;
         hoverPoint = null;
 
         if (requestRender != null) requestRender.run();
+    }
+
+    private Point2D snapWallEndpoint(Point2D raw) {
+        return snapWallEndpoint(raw.getX(), raw.getY());
+    }
+
+    private Point2D snapWallEndpoint(double x, double y) {
+        Point2D best = null;
+        double bestD = WALL_ENDPOINT_SNAP_R;
+        for (Wall w : env.getWalls()) {
+            if (w == null) continue;
+            double d1 = Math.hypot(x - w.x1, y - w.y1);
+            if (d1 <= bestD) {
+                bestD = d1;
+                best = new Point2D(w.x1, w.y1);
+            }
+            double d2 = Math.hypot(x - w.x2, y - w.y2);
+            if (d2 <= bestD) {
+                bestD = d2;
+                best = new Point2D(w.x2, w.y2);
+            }
+        }
+        return best;
+    }
+
+    private static Point2D snapWallPoint(Point2D start, Point2D rawEnd) {
+        double dx = rawEnd.getX() - start.getX();
+        double dy = rawEnd.getY() - start.getY();
+        if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) return rawEnd;
+
+        double angle = Math.toDegrees(Math.atan2(Math.abs(dy), Math.abs(dx))); // 0: horizontal, 90: vertical
+        if (angle <= WALL_SNAP_ANGLE_DEG) {
+            return new Point2D(rawEnd.getX(), start.getY()); // horizontal snap
+        }
+        if (angle >= 90.0 - WALL_SNAP_ANGLE_DEG) {
+            return new Point2D(start.getX(), rawEnd.getY()); // vertical snap
+        }
+        return rawEnd;
+    }
+
+    private static double distancePointToSegment(double px, double py,
+                                                 double x1, double y1,
+                                                 double x2, double y2) {
+        double vx = x2 - x1;
+        double vy = y2 - y1;
+        double len2 = vx * vx + vy * vy;
+        if (len2 <= 1e-9) {
+            double dx = px - x1;
+            double dy = py - y1;
+            return Math.hypot(dx, dy);
+        }
+        double t = ((px - x1) * vx + (py - y1) * vy) / len2;
+        t = Math.max(0.0, Math.min(1.0, t));
+        double cx = x1 + t * vx;
+        double cy = y1 + t * vy;
+        return Math.hypot(px - cx, py - cy);
     }
 
     private double safeGetCalibRealMeters() {

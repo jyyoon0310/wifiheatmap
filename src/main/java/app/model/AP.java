@@ -8,6 +8,7 @@ public class AP {
     public String name = "AP-1";
 
     public double x, y;
+    public double heightM = 1.0;
 
     // 물리 AP 전체 on/off
     public boolean enabled = true;

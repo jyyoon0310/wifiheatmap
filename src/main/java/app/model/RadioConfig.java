@@ -9,7 +9,7 @@ public class RadioConfig {
     public String ssid;
 
     public double txPowerDbm = 18;
-    public double antennaGain = 2;
+    public double antennaGain = 5;
 
     public String mode = "ax";
     public int channel = 1;
@@ -24,5 +24,41 @@ public class RadioConfig {
         if (band == Band.GHZ_24) { mode = "n";  channel = 1;  channelWidth = 20; security = "WPA2"; txPowerDbm = 18; }
         if (band == Band.GHZ_5)  { mode = "ax"; channel = 36; channelWidth = 80; security = "WPA2"; txPowerDbm = 18; }
         if (band == Band.GHZ_6)  { mode = "ax"; channel = 1;  channelWidth = 80; security = "WPA3"; txPowerDbm = 18; }
+    }
+
+    public double centerFreqGhz() {
+        return centerFreqGhz(band, channel);
+    }
+
+    /**
+     * 채널 중심주파수 + 대역폭 절반(상단 edge)을 대표 주파수로 사용해
+     * 대역폭 증가 시 추가 감쇠가 반영되도록 한다.
+     */
+    public double effectiveFreqGhzForLoss() {
+        double center = centerFreqGhz();
+        double halfBwGhz = Math.max(20, channelWidth) / 2000.0;
+        return center + halfBwGhz;
+    }
+
+    /**
+     * 대역폭 증가에 따른 수신 난이도(노이즈 대역 증가)를 간단히 dB 패널티로 반영.
+     * 20MHz를 기준으로 10*log10(BW/20).
+     */
+    public double bandwidthPenaltyDb() {
+        double bw = Math.max(20.0, channelWidth);
+        return 10.0 * Math.log10(bw / 20.0);
+    }
+
+    public static double centerFreqGhz(Band band, int channel) {
+        if (band == null) return 2.4;
+
+        return switch (band) {
+            case GHZ_24 -> {
+                if (channel == 14) yield 2.484;
+                yield 2.412 + 0.005 * (channel - 1);
+            }
+            case GHZ_5 -> (5000.0 + 5.0 * channel) / 1000.0;
+            case GHZ_6 -> (5950.0 + 5.0 * channel) / 1000.0;
+        };
     }
 }

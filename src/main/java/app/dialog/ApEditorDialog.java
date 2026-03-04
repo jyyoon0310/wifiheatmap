@@ -36,8 +36,10 @@ public class ApEditorDialog {
 
         Spinner<Double> sx = new Spinner<>(0.0, 100000.0, ap.x, 1.0);
         Spinner<Double> sy = new Spinner<>(0.0, 100000.0, ap.y, 1.0);
+        Spinner<Double> sh = new Spinner<>(0.1, 30.0, ap.heightM, 0.1);
         sx.setEditable(true);
         sy.setEditable(true);
+        sh.setEditable(true);
 
         int tr = 0;
         top.add(new Label("AP 이름"), 0, tr);
@@ -47,6 +49,8 @@ public class ApEditorDialog {
         top.add(sx, 1, tr++);
         top.add(new Label("Y(px)"), 0, tr);
         top.add(sy, 1, tr++);
+        top.add(new Label("높이(m)"), 0, tr);
+        top.add(sh, 1, tr++);
 
         root.setTop(top);
 
@@ -77,11 +81,13 @@ public class ApEditorDialog {
             if (bt == ButtonType.OK) {
                 commitSpinner(sx);
                 commitSpinner(sy);
+                commitSpinner(sh);
 
                 ap.name = apName.getText().trim().isEmpty() ? ap.name : apName.getText().trim();
                 ap.enabled = apEnabled.isSelected();
                 ap.x = sx.getValue();
                 ap.y = sy.getValue();
+                ap.heightM = sh.getValue();
 
                 if (onChanged != null) onChanged.run();
                 return Result.OK;

@@ -2,6 +2,7 @@ package app.engine;
 
 import app.model.Band;
 import app.model.Wall;
+import app.model.WallMaterial;
 import javafx.geometry.Point2D;
 import javafx.scene.image.PixelReader;
 import javafx.scene.image.PixelWriter;
@@ -23,6 +24,14 @@ public final class WifiMath {
     // ===== 기하 유틸 =====
     // 부동소수점 비교 오차 허용치
     private static final double EPS = 1e-9;
+    // 벽 감쇠를 부드럽게 만드는 전이 거리(px)
+    private static final double WALL_SOFT_PX = 8.0;
+    // 반사점이 벽 끝점에 너무 가까우면 반사로 인정하지 않음(최소치)
+    private static final double REFLECTION_ENDPOINT_MARGIN_MIN_PX = 3.0;
+    // 경로 차단 판정 허용오차(px): 작을수록 엄격
+    private static final double PATH_INTERSECTION_TOL_PX = 1.5;
+    // 광속(m/s)
+    private static final double C_MPS = 299_792_458.0;
 
     private static int orient(Point2D a, Point2D b, Point2D c) {
         // cross((b-a),(c-a))
@@ -184,13 +193,166 @@ public final class WifiMath {
         for (Wall w : walls) {
             if (w == null) continue;
             if (ignoreWall != null && w == ignoreWall) continue;
-            if (segmentsIntersect(a, b,
-                    new Point2D(w.x1, w.y1),
-                    new Point2D(w.x2, w.y2))) {
-                sum += w.attenuationDb(band);
+            Point2D c = new Point2D(w.x1, w.y1);
+            Point2D d = new Point2D(w.x2, w.y2);
+            double dist = segmentDistance(a, b, c, d);
+            if (dist <= WALL_SOFT_PX) {
+                double t = 1.0 - (dist / WALL_SOFT_PX);
+                double wgt = smoothstep(t);
+                sum += w.attenuationDb(band) * wgt;
             }
         }
         return sum;
+    }
+
+    /**
+     * 반사점 계산(이미지 소스 방식): apMirror->rx 직선과 벽 선분의 교점
+     */
+    public static Point2D reflectionPoint(Point2D ap, Point2D rx, Wall wall) {
+        if (ap == null || rx == null || wall == null) return null;
+        Point2D w1 = new Point2D(wall.x1, wall.y1);
+        Point2D w2 = new Point2D(wall.x2, wall.y2);
+        Point2D apMirror = reflectPointOverLine(ap, w1, w2);
+        return segmentIntersectionPoint(apMirror, rx, w1, w2);
+    }
+
+    /**
+     * 벽 법선과 입사 벡터의 cos(theta) (theta: 입사각, 법선 기준)
+     */
+    public static double incidenceCosine(Point2D incidentFrom, Point2D onWall, Wall wall) {
+        if (incidentFrom == null || onWall == null || wall == null) return 1.0;
+        double wx = wall.x2 - wall.x1;
+        double wy = wall.y2 - wall.y1;
+        double wlen = Math.hypot(wx, wy);
+        if (wlen < EPS) return 1.0;
+        double nx = -wy / wlen;
+        double ny = wx / wlen;
+
+        double vx = incidentFrom.getX() - onWall.getX();
+        double vy = incidentFrom.getY() - onWall.getY();
+        double vlen = Math.hypot(vx, vy);
+        if (vlen < EPS) return 1.0;
+        vx /= vlen;
+        vy /= vlen;
+
+        double cos = Math.abs(nx * vx + ny * vy);
+        if (!Double.isFinite(cos)) return 1.0;
+        return Math.max(0.0, Math.min(1.0, cos));
+    }
+
+    /**
+     * Fresnel 반사 손실(dB). WallMaterial에 ITU-R P.2040 파라미터가 없으면 fallback.
+     */
+    public static double fresnelReflectionLossDb(WallMaterial mat, double freqGhz, double cosThetaI) {
+        if (mat == null || !mat.hasPermittivityModel()) {
+            return (mat == null) ? 8.0 : mat.reflectionLossDb();
+        }
+        if (!Double.isFinite(freqGhz) || freqGhz <= 0.0) {
+            return mat.reflectionLossDb();
+        }
+
+        double epsR = mat.epsilonReal(freqGhz);
+        double sigma = mat.conductivity(freqGhz);
+        if (!Double.isFinite(epsR) || !Double.isFinite(sigma)) {
+            return mat.reflectionLossDb();
+        }
+
+        // ITU-R P.2040: eps'' = 17.98 * sigma / f(GHz)
+        double epsImag = 17.98 * sigma / freqGhz;
+        Complex eps = new Complex(epsR, -epsImag);
+
+        double cosI = Math.max(0.0, Math.min(1.0, cosThetaI));
+        double sin2 = Math.max(0.0, 1.0 - cosI * cosI);
+
+        Complex sin2C = new Complex(sin2, 0.0);
+        Complex sqrtTerm = Complex.sqrt(eps.sub(sin2C));
+        Complex cosC = new Complex(cosI, 0.0);
+
+        Complex rs = cosC.sub(sqrtTerm).div(cosC.add(sqrtTerm));
+        Complex rp = eps.mul(cosC).sub(sqrtTerm).div(eps.mul(cosC).add(sqrtTerm));
+
+        double Rs = rs.abs2();
+        double Rp = rp.abs2();
+        double R = 0.5 * (Rs + Rp);
+        if (!Double.isFinite(R)) return mat.reflectionLossDb();
+
+        R = Math.max(1e-6, Math.min(1.0, R));
+        return -10.0 * Math.log10(R);
+    }
+
+    /**
+     * ITU-R P.526 knife-edge 회절 손실(dB)
+     */
+    public static double knifeEdgeLossDb(double hM, double d1M, double d2M, double freqGhz) {
+        if (!Double.isFinite(hM) || !Double.isFinite(d1M) || !Double.isFinite(d2M) || !Double.isFinite(freqGhz)) {
+            return 0.0;
+        }
+        if (d1M <= 0.0 || d2M <= 0.0 || freqGhz <= 0.0) return 0.0;
+
+        double lambda = (C_MPS / 1.0e9) / freqGhz;
+        double v = hM * Math.sqrt(2.0 * (d1M + d2M) / (lambda * d1M * d2M));
+        if (v <= -0.78) return 0.0;
+
+        double t = v - 0.1;
+        double jv = 6.9 + 20.0 * Math.log10(Math.sqrt(t * t + 1.0) + t);
+        return Math.max(0.0, jv);
+    }
+
+    private static double segmentDistance(Point2D a, Point2D b, Point2D c, Point2D d) {
+        if (segmentsIntersect(a, b, c, d)) return 0.0;
+        double d1 = pointToSegmentDistance(a, c, d);
+        double d2 = pointToSegmentDistance(b, c, d);
+        double d3 = pointToSegmentDistance(c, a, b);
+        double d4 = pointToSegmentDistance(d, a, b);
+        return Math.min(Math.min(d1, d2), Math.min(d3, d4));
+    }
+
+    private static double pointToSegmentDistance(Point2D p, Point2D a, Point2D b) {
+        Point2D c = closestPointOnSegment(p, a, b);
+        return p.distance(c);
+    }
+
+    private static double smoothstep(double t) {
+        t = Math.max(0.0, Math.min(1.0, t));
+        return t * t * (3.0 - 2.0 * t);
+    }
+
+    private static double sideOfLine(Point2D a, Point2D b, Point2D p) {
+        return (b.getX() - a.getX()) * (p.getY() - a.getY())
+                - (b.getY() - a.getY()) * (p.getX() - a.getX());
+    }
+
+    public static boolean isSegmentBlocked(Point2D a,
+                                           Point2D b,
+                                           java.util.List<Wall> walls,
+                                           Wall ignoreWall,
+                                           Point2D ignorePoint,
+                                           double tolPx) {
+        if (a == null || b == null || walls == null) return false;
+        for (Wall w : walls) {
+            if (w == null) continue;
+            WallMaterial mat = w.getMaterial();
+            if (mat == WallMaterial.DOOR || mat == WallMaterial.WINDOW) continue; // 문/창문은 감쇠만 적용하고 통과 허용
+            boolean isIgnoredWall = (ignoreWall != null && w == ignoreWall);
+            Point2D w1 = new Point2D(w.x1, w.y1);
+            Point2D w2 = new Point2D(w.x2, w.y2);
+            double dist = segmentDistance(a, b, w1, w2);
+            if (dist > tolPx) continue;
+
+            if (isIgnoredWall && ignorePoint != null) {
+                double dWall = pointToSegmentDistance(ignorePoint, w1, w2);
+                double dSeg = pointToSegmentDistance(ignorePoint, a, b);
+                if (dWall <= tolPx && dSeg <= tolPx) {
+                    continue;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    public static double pathIntersectionTolPx() {
+        return PATH_INTERSECTION_TOL_PX;
     }
 
     /**
@@ -262,12 +424,21 @@ public final class WifiMath {
         Point2D w1 = new Point2D(wall.x1, wall.y1);
         Point2D w2 = new Point2D(wall.x2, wall.y2);
 
+        // AP/RX가 벽의 서로 다른 쪽에 있으면(벽이 막는 경우) 반사 제외
+        double s1 = sideOfLine(w1, w2, ap);
+        double s2 = sideOfLine(w1, w2, rx);
+        if (s1 * s2 < -EPS) return null;
+
         // AP를 벽의 연장 직선에 대해 반사시킨 가상 AP'
         Point2D apMirror = reflectPointOverLine(ap, w1, w2);
 
         // apMirror -> rx 직선과 벽 선분(w1-w2)의 교점이 반사점
         Point2D p = segmentIntersectionPoint(apMirror, rx, w1, w2);
         if (p == null) return null;
+        double endpointMarginPx = reflectionEndpointMarginPx(wall, scaleMPerPx);
+        if (Math.min(p.distance(w1), p.distance(w2)) < endpointMarginPx) return null;
+        if (isSegmentBlocked(ap, p, walls, wall, p, PATH_INTERSECTION_TOL_PX)) return null;
+        if (isSegmentBlocked(p, rx, walls, wall, p, PATH_INTERSECTION_TOL_PX)) return null;
 
         // 실제 경로 길이(AP->p + p->rx)
         double d1m = ap.distance(p) * scaleMPerPx;
@@ -326,6 +497,16 @@ public final class WifiMath {
         return new Path(lenM, wallLossDb, diffLossDb, corner, null);
     }
 
+    private static double reflectionEndpointMarginPx(Wall wall, double scaleMPerPx) {
+        double wallLenPx = Math.hypot(wall.x2 - wall.x1, wall.y2 - wall.y1);
+        double byLength = wallLenPx * 0.20; // 벽 길이의 20%
+        double byMeters = 0.0;
+        if (Double.isFinite(scaleMPerPx) && scaleMPerPx > 1e-9) {
+            byMeters = 0.40 / scaleMPerPx; // 0.4m
+        }
+        return Math.max(REFLECTION_ENDPOINT_MARGIN_MIN_PX, Math.max(byLength, byMeters));
+    }
+
     // ===== 색상 매핑 및 픽셀 유틸 =====
 
     /**
@@ -356,6 +537,35 @@ public final class WifiMath {
         double b = stops[i][3] + u * (stops[i + 1][3] - stops[i][3]);
 
         return new Color(r / 255.0, g / 255.0, b / 255.0, 0.55);
+    }
+
+    // ===== 내부 복소수 유틸 =====
+    private static final class Complex {
+        final double re;
+        final double im;
+
+        Complex(double re, double im) {
+            this.re = re;
+            this.im = im;
+        }
+
+        Complex add(Complex o) { return new Complex(re + o.re, im + o.im); }
+        Complex sub(Complex o) { return new Complex(re - o.re, im - o.im); }
+        Complex mul(Complex o) { return new Complex(re * o.re - im * o.im, re * o.im + im * o.re); }
+        Complex div(Complex o) {
+            double den = o.re * o.re + o.im * o.im;
+            if (den < EPS) return new Complex(0.0, 0.0);
+            return new Complex((re * o.re + im * o.im) / den, (im * o.re - re * o.im) / den);
+        }
+        double abs2() { return re * re + im * im; }
+
+        static Complex sqrt(Complex z) {
+            double r = Math.hypot(z.re, z.im);
+            double u = Math.sqrt(Math.max(0.0, (r + z.re) / 2.0));
+            double v = Math.sqrt(Math.max(0.0, (r - z.re) / 2.0));
+            if (z.im < 0) v = -v;
+            return new Complex(u, v);
+        }
     }
 
     /**

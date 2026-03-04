@@ -13,6 +13,7 @@ public class MainWindow {
     private final TopToolbar topToolbar = new TopToolbar();
     private final LeftPanel leftPanel = new LeftPanel();
     private final CanvasView canvasView = new CanvasView();
+    private final BottomBar bottomBar = new BottomBar();
 
     public MainWindow(Stage stage) {
         root.setStyle("-fx-background-color: " + Styles.BG_APP + ";");
@@ -38,6 +39,9 @@ public class MainWindow {
         // Center
         BorderPane.setMargin(canvasView.getRoot(), new Insets(0));
         root.setCenter(canvasView.getRoot());
+
+        // Bottom
+        root.setBottom(bottomBar.getNode());
     }
 
     public Parent getRoot() { return root; }
@@ -47,4 +51,6 @@ public class MainWindow {
     public LeftPanel getLeftPanel() { return leftPanel; }
 
     public CanvasView getCanvasView() { return canvasView; }
+
+    public BottomBar getBottomBar() { return bottomBar; }
 }
