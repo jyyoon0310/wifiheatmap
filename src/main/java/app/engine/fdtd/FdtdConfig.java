@@ -57,4 +57,12 @@ public final class FdtdConfig {
     public double frequencyGhz() {
         return frequencyHz / 1.0e9;
     }
+
+    /** totalSteps만 변경한 복사본을 반환한다. */
+    public FdtdConfig withTotalSteps(int newTotalSteps) {
+        return new FdtdConfig(band, frequencyHz, dxMeters, newTotalSteps, pmlCells,
+                rampTimeSeconds, sourceAmplitude, rmsCycles,
+                referenceMode, customReference, wallPreset,
+                showMaterialGrid, showPmlGrid);
+    }
 }

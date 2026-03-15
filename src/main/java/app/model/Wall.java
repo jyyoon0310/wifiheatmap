@@ -31,8 +31,6 @@ public class Wall {
         if (material == null) material = WallMaterial.CUSTOM;
         this.material = material;
 
-        // NOTE: For now we initialize both bands from the preset's defaultAttenuationDb().
-        // (After WallMaterial is updated to expose 2.4/5 separately, we will map them here.)
         this.attenuationDb24 = material.defaultAttenuation24Db();
         this.attenuationDb5  = material.defaultAttenuation5Db();
         this.attenuationDb   = this.attenuationDb24; // legacy

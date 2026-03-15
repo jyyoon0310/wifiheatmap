@@ -79,15 +79,34 @@ public final class FdtdHeatmapGenerator {
                 widthPx, heightPx, scaleMPerPx, cfg, walls
         );
 
-        long totalPlan = (long) cfg.totalSteps * sources.size();
+        // 도메인 크기 기반 최소 시뮬레이션 스텝 자동 계산
+        double dtEstimate = 0.90 * cfg.dxMeters / (C0 * Math.sqrt(2.0));
+        double diagonalM = Math.sqrt(
+                Math.pow(grid.mapNx * cfg.dxMeters, 2) +
+                Math.pow(grid.mapNy * cfg.dxMeters, 2)
+        );
+        double period = 1.0 / cfg.frequencyHz;
+        double minSimTime = cfg.rampTimeSeconds
+                + diagonalM / C0           // 파동이 도메인 대각선을 횡단하는 시간
+                + 10.0 * period            // 정상 상태 안정화
+                + cfg.rmsCycles * period;  // RMS 축적 윈도우
+        int minSteps = (int) Math.ceil(minSimTime / dtEstimate);
+        FdtdConfig effectiveCfg = cfg;
+        if (minSteps > cfg.totalSteps) {
+            effectiveCfg = cfg.withTotalSteps(minSteps);
+            System.out.printf("[FDTD] totalSteps 자동 조정: %d → %d (도메인 대각선=%.1fm, 최소 시뮬시간=%.1fns)%n",
+                    cfg.totalSteps, minSteps, diagonalM, minSimTime * 1.0e9);
+        }
+
+        long totalPlan = (long) effectiveCfg.totalSteps * sources.size();
         // 파장/파수 정보 로그:
         // lambda = c / f [m], k = 2*pi/lambda [rad/m]
-        double lambda = C0 / cfg.frequencyHz;
+        double lambda = C0 / effectiveCfg.frequencyHz;
         double k = 2.0 * Math.PI / lambda;
         System.out.printf(
                 "[FDTD] freq=%.3fGHz (lambda=%.4fm, k=%.3frad/m) dx=%.4fm steps=%d pml=%d ramp=%.3fns ref=%s wallPreset=%s%n",
-                cfg.frequencyGhz(), lambda, k, cfg.dxMeters, cfg.totalSteps, cfg.pmlCells, cfg.rampTimeSeconds * 1.0e9,
-                cfg.referenceMode, cfg.wallPreset
+                effectiveCfg.frequencyGhz(), lambda, k, effectiveCfg.dxMeters, effectiveCfg.totalSteps, effectiveCfg.pmlCells,
+                effectiveCfg.rampTimeSeconds * 1.0e9, effectiveCfg.referenceMode, effectiveCfg.wallPreset
         );
 
         double[][] strongestDb = new double[grid.mapNx][grid.mapNy];
@@ -100,7 +119,7 @@ public final class FdtdHeatmapGenerator {
             int sx = grid.toGridX(src.xPx);
             int sy = grid.toGridY(src.yPx);
 
-            TezFdtdSolver solver = new TezFdtdSolver(grid, cfg, sx, sy);
+            TezFdtdSolver solver = new TezFdtdSolver(grid, effectiveCfg, sx, sy);
             double dtNs = solver.dtSeconds() * 1.0e9;
             System.out.printf(
                     "[FDTD] source %d/%d (%s) grid=(%d,%d), dt=%.6fns (courant<=%.6fns)%n",
@@ -108,16 +127,17 @@ public final class FdtdHeatmapGenerator {
             );
 
             int sourceIndex = s;
+            FdtdConfig finalCfg = effectiveCfg;
             TezFdtdSolver.Result result = solver.run((step, simTimeNs) -> {
                 if (progressCallback == null) return;
-                long done = (long) sourceIndex * cfg.totalSteps + step;
+                long done = (long) sourceIndex * finalCfg.totalSteps + step;
                 String msg = String.format("FDTD %d/%d source, step %d/%d",
-                        sourceIndex + 1, sources.size(), step, cfg.totalSteps);
+                        sourceIndex + 1, sources.size(), step, finalCfg.totalSteps);
                 progressCallback.accept(new FdtdProgress(
                         sourceIndex + 1,
                         sources.size(),
                         step,
-                        cfg.totalSteps,
+                        finalCfg.totalSteps,
                         done,
                         totalPlan,
                         simTimeNs,
@@ -125,11 +145,11 @@ public final class FdtdHeatmapGenerator {
                 ));
             });
 
-            accumulateStrongestFromSource(grid, cfg, src, sx, sy, result.rmsEz(), strongestDb);
+            accumulateStrongestFromSource(grid, effectiveCfg, src, sx, sy, result.rmsEz(), strongestDb);
         }
 
         WritableImage out = renderRssiLikeImage(
-                strongestDb, grid, widthPx, heightPx, legendMinDbm, legendMaxDbm, cfg
+                strongestDb, grid, widthPx, heightPx, legendMinDbm, legendMaxDbm, effectiveCfg
         );
         if (smoothRadiusPx > 0) {
             out = WifiMath.boxBlur(out, smoothRadiusPx);
@@ -144,7 +164,7 @@ public final class FdtdHeatmapGenerator {
                                                int sy,
                                                double[][] rmsEz,
                                                double[][] strongestDb) {
-        double ref = resolveReference(cfg.referenceMode, cfg.customReference, rmsEz, grid, sx, sy);
+        double ref = resolveReference(cfg.referenceMode, cfg.customReference, cfg.frequencyHz, rmsEz, grid, sx, sy);
         ref = Math.max(ref, 1.0e-12);
 
         // RSSI-like anchor:
@@ -224,8 +244,11 @@ public final class FdtdHeatmapGenerator {
                                              int heightPx,
                                              FdtdMaterialGrid grid,
                                              FdtdConfig cfg) {
-        int rInPx = Math.max(3, (int) Math.round((0.08 / grid.scaleMPerPx)));
-        int rOutPx = Math.max(rInPx + 1, (int) Math.round((0.20 / grid.scaleMPerPx)));
+        double lambdaDbg = C0 / Math.max(1.0, cfg.frequencyHz);
+        double rInMDbg = Math.max(0.05, 0.5 * lambdaDbg);
+        double rOutMDbg = Math.max(rInMDbg + grid.dxMeters, 1.5 * lambdaDbg);
+        int rInPx = Math.max(3, (int) Math.round(rInMDbg / grid.scaleMPerPx));
+        int rOutPx = Math.max(rInPx + 1, (int) Math.round(rOutMDbg / grid.scaleMPerPx));
         for (SourceSnapshot src : sources) {
             int cx = clamp((int) Math.round(src.xPx), 0, widthPx - 1);
             int cy = clamp((int) Math.round(src.yPx), 0, heightPx - 1);
@@ -240,6 +263,7 @@ public final class FdtdHeatmapGenerator {
 
     private static double resolveReference(FdtdReferenceMode mode,
                                            double customRef,
+                                           double frequencyHz,
                                            double[][] rms,
                                            FdtdMaterialGrid grid,
                                            int sx,
@@ -258,9 +282,12 @@ public final class FdtdHeatmapGenerator {
             return max;
         }
 
-        // AP_NEAR_RING: 소스 주변 링(약 0.08m~0.20m) RMS 평균
-        int rIn = Math.max(2, (int) Math.round(0.08 / grid.dxMeters));
-        int rOut = Math.max(rIn + 1, (int) Math.round(0.20 / grid.dxMeters));
+        // AP_NEAR_RING: 파장 기반 참조 링 (0.5λ ~ 1.5λ)
+        double lambdaM = C0 / Math.max(1.0, frequencyHz);
+        double rInM = Math.max(0.05, 0.5 * lambdaM);
+        double rOutM = Math.max(rInM + grid.dxMeters, 1.5 * lambdaM);
+        int rIn = Math.max(2, (int) Math.round(rInM / grid.dxMeters));
+        int rOut = Math.max(rIn + 1, (int) Math.round(rOutM / grid.dxMeters));
         double sum = 0.0;
         int count = 0;
         for (int x = Math.max(grid.pmlCells, sx - rOut); x <= Math.min(grid.pmlCells + grid.mapNx - 1, sx + rOut); x++) {

@@ -78,8 +78,9 @@ public final class TezFdtdSolver {
         this.dy = grid.dxMeters;
 
         // Courant 안정조건(2D, dx=dy): dt <= dx / (c * sqrt(2))
+        // 0.90: 수치 분산 억제를 위한 보수적 안전 계수 (표준 권장값)
         double dtMax = dx / (C0 * Math.sqrt(2.0));
-        this.dt = 0.99 * dtMax;
+        this.dt = 0.90 * dtMax;
 
         this.ez = new double[nx][ny];
         this.ezx = new double[nx][ny];
@@ -160,7 +161,11 @@ public final class TezFdtdSolver {
     private void buildPmlProfiles() {
         int pml = grid.pmlCells;
         double m = 3.5;      // polynomial grading order
-        double r0 = 1.0e-8;  // target reflection coefficient
+        // PML 셀 수에 따른 현실적 타겟 반사율 설정
+        double r0;
+        if (pml <= 8)       r0 = 1.0e-3;
+        else if (pml <= 12) r0 = 1.0e-5;
+        else                r0 = 1.0e-6;
 
         // sigma_max ≈ -((m+1) ln(r0)) * eps0 * c / (2 * pml * dx)
         double sigmaEmax = -((m + 1.0) * Math.log(r0)) * (EPS0 * C0) / (2.0 * Math.max(1, pml) * dx);
@@ -277,7 +282,9 @@ public final class TezFdtdSolver {
         }
 
         // CW source: Ez += A * sin(2π f t) * ramp
-        double src = cfg.sourceAmplitude * Math.sin(2.0 * Math.PI * cfg.frequencyHz * t) * ramp;
+        // 셀 면적으로 정규화하여 해상도(dx) 변경 시에도 일관된 전계 강도 유지
+        double normalizedAmp = cfg.sourceAmplitude / (dx * dy);
+        double src = normalizedAmp * Math.sin(2.0 * Math.PI * cfg.frequencyHz * t) * ramp;
 
         // split-field 일관성을 위해 Ezx/Ezy에 절반씩 주입
         ezx[sourceX][sourceY] += 0.5 * src;

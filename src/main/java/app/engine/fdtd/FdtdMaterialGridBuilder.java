@@ -69,11 +69,21 @@ public final class FdtdMaterialGridBuilder {
                 int y1 = clamp((int) Math.round((w.y2 * safeScale) / dx) + pml, 0, ny - 1);
 
                 int radius = Math.max(0, (int) Math.round(0.5 * props.thicknessM / dx));
-                rasterLine(x0, y0, x1, y1, (x, y) -> paintDisk(
-                        x, y, radius, nx, ny, pml,
-                        props.epsR, props.muR, props.sigma, props.code,
-                        epsR, muR, sigma, materialCode
-                ));
+                int finalRadius = radius;
+                rasterLine(x0, y0, x1, y1, (x, y) -> {
+                    if (finalRadius > 0) {
+                        paintDisk(x, y, finalRadius, nx, ny, pml,
+                                props.epsR, props.muR, props.sigma, props.code,
+                                epsR, muR, sigma, materialCode);
+                    } else {
+                        // radius==0: 최소 1셀 두께 보장 — 중심 + 4방향 이웃
+                        paintSingleCell(x, y, nx, ny, pml, props.epsR, props.muR, props.sigma, props.code, epsR, muR, sigma, materialCode);
+                        paintSingleCell(x + 1, y, nx, ny, pml, props.epsR, props.muR, props.sigma, props.code, epsR, muR, sigma, materialCode);
+                        paintSingleCell(x - 1, y, nx, ny, pml, props.epsR, props.muR, props.sigma, props.code, epsR, muR, sigma, materialCode);
+                        paintSingleCell(x, y + 1, nx, ny, pml, props.epsR, props.muR, props.sigma, props.code, epsR, muR, sigma, materialCode);
+                        paintSingleCell(x, y - 1, nx, ny, pml, props.epsR, props.muR, props.sigma, props.code, epsR, muR, sigma, materialCode);
+                    }
+                });
             }
         }
 
@@ -182,6 +192,17 @@ public final class FdtdMaterialGridBuilder {
                 materialCode[x][y] = code;
             }
         }
+    }
+
+    private static void paintSingleCell(int x, int y, int nx, int ny, int pml,
+                                          double eps, double mu, double sig, int code,
+                                          double[][] epsR, double[][] muR,
+                                          double[][] sigma, int[][] materialCode) {
+        if (x < pml || x >= nx - pml || y < pml || y >= ny - pml) return;
+        epsR[x][y] = eps;
+        muR[x][y] = mu;
+        sigma[x][y] = sig;
+        materialCode[x][y] = code;
     }
 
     private static int clamp(int v, int lo, int hi) {

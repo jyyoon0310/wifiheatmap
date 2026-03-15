@@ -79,6 +79,7 @@ public class MainController {
     private double solverFpsEma = Double.NaN;
     private Task<WritableImage> fdtdHeatmapTask;
     private boolean fdtdRegeneratePending = false;
+    private Task<WritableImage> legacyHeatmapTask;
 
     public MainController(Stage stage) {
         this.stage = stage;
@@ -406,6 +407,10 @@ public class MainController {
             heatmapImage = null;
             solverOverlayImage = null;
             fdtdSolver = null;
+            if (legacyHeatmapTask != null) {
+                legacyHeatmapTask.cancel();
+                legacyHeatmapTask = null;
+            }
             if (fdtdHeatmapTask != null) {
                 fdtdHeatmapTask.cancel();
                 fdtdHeatmapTask = null;
@@ -445,26 +450,52 @@ public class MainController {
             return;
         }
 
+        // 이미 실행 중인 Legacy 태스크가 있으면 취소하고 새로 시작
+        if (legacyHeatmapTask != null && legacyHeatmapTask.isRunning()) {
+            legacyHeatmapTask.cancel();
+        }
+
         int w = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getWidth()));
         int h = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getHeight()));
 
-        HeatmapGenerator generator = new HeatmapGenerator(env, state.getHeatmapSolverMode());
-        heatmapImage = generator.generate(
-                w,
-                h,
-                8,
-                state.legendMinProperty().get(),
-                state.legendMaxProperty().get(),
-                state.getSmoothRadiusPx()
-        );
-        if (state.getHeatmapSolverMode() == AppState.HeatmapSolverMode.GPU
-                && generator.gpuFallbackLastRun()
-                && !gpuFallbackWarned) {
-            gpuFallbackWarned = true;
-            showInfo("GPU 솔버를 찾지 못해 CPU로 계산했습니다.\n" +
-                    "GPU 백엔드를 ServiceLoader로 추가하면 자동으로 사용됩니다.");
-        }
-        render();
+        AppState.HeatmapSolverMode solverMode = state.getHeatmapSolverMode();
+        double legendMin = state.legendMinProperty().get();
+        double legendMax = state.legendMaxProperty().get();
+        int smoothRadius = state.getSmoothRadiusPx();
+
+        HeatmapGenerator generator = new HeatmapGenerator(env, solverMode);
+
+        legacyHeatmapTask = new Task<>() {
+            @Override
+            protected WritableImage call() {
+                return generator.generate(w, h, 8, legendMin, legendMax, smoothRadius);
+            }
+        };
+
+        legacyHeatmapTask.setOnSucceeded(e -> {
+            heatmapImage = legacyHeatmapTask.getValue();
+            legacyHeatmapTask = null;
+            if (solverMode == AppState.HeatmapSolverMode.GPU
+                    && generator.gpuFallbackLastRun()
+                    && !gpuFallbackWarned) {
+                gpuFallbackWarned = true;
+                showInfo("GPU 솔버를 찾지 못해 CPU로 계산했습니다.\n" +
+                        "GPU 백엔드를 ServiceLoader로 추가하면 자동으로 사용됩니다.");
+            }
+            render();
+        });
+
+        legacyHeatmapTask.setOnFailed(e -> {
+            Throwable ex = legacyHeatmapTask.getException();
+            legacyHeatmapTask = null;
+            showError("히트맵 생성 실패: " + (ex == null ? "unknown" : ex.getMessage()));
+        });
+
+        legacyHeatmapTask.setOnCancelled(e -> legacyHeatmapTask = null);
+
+        Thread worker = new Thread(legacyHeatmapTask, "legacy-heatmap-worker");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private void generateHeatmapFdtdAsync(int widthPx, int heightPx) {
@@ -726,7 +757,6 @@ public class MainController {
                 return;
             }
 
-            if (!panning) return;
         });
 
         canvas.setOnMouseReleased(e -> {

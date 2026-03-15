@@ -510,7 +510,8 @@ public final class WifiMath {
     // ===== 색상 매핑 및 픽셀 유틸 =====
 
     /**
-     * RSSI(dBm) → 강(빨강) ~ 중(노랑) ~ 약(초록) 색상 매핑
+     * RSSI(dBm) → 8단계 컬러맵.
+     * deep navy(약) → blue → cyan → green → yellow → orange → red → dark red(강)
      */
     public static Color rssiToColor(double rssi, double vmin, double vmax) {
         double t = (rssi - vmin) / (vmax - vmin);
@@ -518,13 +519,18 @@ public final class WifiMath {
 
         // [t, R, G, B]
         double[][] stops = {
-                {0.00, 0,   160, 0},    // Green
-                {0.50, 255, 235, 0},    // Yellow
-                {1.00, 230, 40,  20}    // Red
+                {0.000,  10,   8,  80},   // deep navy
+                {0.140,  32,  52, 170},   // blue
+                {0.280,  43, 160, 255},   // cyan-blue
+                {0.420,  64, 232, 200},   // cyan-green
+                {0.560,  80, 230,  80},   // green
+                {0.700, 230, 255,  56},   // yellow
+                {0.850, 255, 168,  20},   // orange
+                {1.000, 230,  40,  20}    // red
         };
 
         int i = 0;
-        while (i < stops.length - 1 && t > stops[i + 1][0]) {
+        while (i < stops.length - 2 && t > stops[i + 1][0]) {
             i++;
         }
 

@@ -24,8 +24,8 @@ public class HeatmapGenerator {
     private final WifiEnvironment env;
     private final AppState.HeatmapSolverMode solverMode;
     private static final GpuHeatmapSolver GPU_SOLVER = loadGpuSolver();
-    private boolean usedGpuLastRun = false;
-    private boolean gpuFallbackLastRun = false;
+    private volatile boolean usedGpuLastRun = false;
+    private volatile boolean gpuFallbackLastRun = false;
 
     // ===== Reflection(1-bounce) 튜닝 =====
     private static final int MAX_REFLECTION_WALLS = 12;
