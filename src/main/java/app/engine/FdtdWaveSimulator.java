@@ -500,7 +500,8 @@ public class FdtdWaveSimulator {
                 double mu = MU0 * Math.max(1.0e-6, muRavg);
                 double s = sigmaMy[j] * dtSeconds / (2.0 * mu);
                 bHx[i][j] = (1.0 - s) / (1.0 + s);
-                cHx[i][j] = (dtSeconds / (mu * dxMeters)) / (1.0 + s);
+                // updateH에서 diff를 /dxMeters로 나누므로 여기서는 dt/mu만 (dx 중복 방지)
+                cHx[i][j] = (dtSeconds / mu) / (1.0 + s);
             }
         }
 
@@ -510,7 +511,8 @@ public class FdtdWaveSimulator {
                 double mu = MU0 * Math.max(1.0e-6, muRavg);
                 double s = sigmaMx[i] * dtSeconds / (2.0 * mu);
                 bHy[i][j] = (1.0 - s) / (1.0 + s);
-                cHy[i][j] = (dtSeconds / (mu * dxMeters)) / (1.0 + s);
+                // updateH에서 diff를 /dxMeters로 나누므로 여기서는 dt/mu만 (dx 중복 방지)
+                cHy[i][j] = (dtSeconds / mu) / (1.0 + s);
             }
         }
     }
