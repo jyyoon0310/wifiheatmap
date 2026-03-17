@@ -6,6 +6,9 @@ import app.model.WifiEnvironment;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseButton;
 
+import java.util.HashSet;
+import java.util.Set;
+
 public class ApController {
 
     private final WifiEnvironment env;
@@ -134,7 +137,7 @@ public class ApController {
 
     private AP addApAt(double x, double y) {
         AP ap = new AP();
-        ap.name = "AP-" + (env.getAps().size() + 1);
+        ap.name = nextApName();
         ap.x = x;
         ap.y = y;
         ap.enabled = true;
@@ -147,5 +150,19 @@ public class ApController {
 
         env.getAps().add(ap);
         return ap;
+    }
+
+    private String nextApName() {
+        Set<String> used = new HashSet<>();
+        for (AP existing : env.getAps()) {
+            if (existing == null || existing.name == null) continue;
+            used.add(existing.name.trim());
+        }
+
+        int idx = 1;
+        while (used.contains("AP-" + idx)) {
+            idx++;
+        }
+        return "AP-" + idx;
     }
 }

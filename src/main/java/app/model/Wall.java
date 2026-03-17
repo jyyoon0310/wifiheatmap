@@ -61,7 +61,8 @@ public class Wall {
     /** Returns attenuation for the given band (defaults to 2.4GHz if null). */
     public double attenuationDb(Band band) {
         if (band == null) return attenuationDb24;
-        return (band == Band.GHZ_5) ? attenuationDb5 : attenuationDb24;
+        if (band == Band.GHZ_5 || band == Band.GHZ_6) return attenuationDb5;
+        return attenuationDb24;
     }
 
     @Override

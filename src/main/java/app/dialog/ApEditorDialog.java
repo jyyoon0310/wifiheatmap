@@ -126,42 +126,29 @@ public class ApEditorDialog {
 
         TextField ssid = new TextField(rc.ssid);
 
-        Slider txSlider = new Slider(0, 40, rc.txPowerDbm);
-        txSlider.setShowTickMarks(true);
-        txSlider.setMajorTickUnit(10);
-        txSlider.setBlockIncrement(1);
-        Label txVal = new Label(String.format("%.0f dBm", txSlider.getValue()));
-        txSlider.valueProperty().addListener((o, ov, nv) -> txVal.setText(String.format("%.0f dBm", nv.doubleValue())));
+        Label txVal = new Label(String.format("%.0f dBm (고정)", RadioConfig.FIXED_TX_POWER_DBM));
 
         Spinner<Double> gain = new Spinner<>(0.0, 15.0, rc.antennaGain, 0.5);
         gain.setEditable(true);
 
-        ComboBox<String> mode = new ComboBox<>();
         ComboBox<Integer> channel = new ComboBox<>();
         ComboBox<Integer> width = new ComboBox<>();
-        ComboBox<String> security = new ComboBox<>();
-
-        security.getItems().setAll("Open", "WPA2", "WPA3");
 
         // 밴드별 옵션
         if (rc.band == Band.GHZ_24) {
-            mode.getItems().setAll("b", "g", "n", "ax");
             channel.getItems().setAll(1,2,3,4,5,6,7,8,9,10,11);
             width.getItems().setAll(20, 40);
         } else if (rc.band == Band.GHZ_5) {
-            mode.getItems().setAll("a", "n", "ac", "ax");
             channel.getItems().setAll(36, 40, 44, 48, 149, 153, 157, 161);
             width.getItems().setAll(20, 40, 80);
         } else {
-            mode.getItems().setAll("ax");
             channel.getItems().setAll(1, 5, 9, 13, 17);
             width.getItems().setAll(20, 40, 80);
         }
 
-        selectOrFirst(mode, rc.mode);
         selectOrFirstInt(channel, rc.channel);
         selectOrFirstInt(width, rc.channelWidth);
-        security.getSelectionModel().select(rc.security == null ? "WPA2" : rc.security);
+        rc.txPowerDbm = RadioConfig.FIXED_TX_POWER_DBM;
 
         // 실시간 반영
         radioEnabled.selectedProperty().addListener((o, ov, nv) -> {
@@ -171,18 +158,8 @@ public class ApEditorDialog {
 
         ssid.textProperty().addListener((o, ov, nv) -> rc.ssid = nv);
 
-        txSlider.valueProperty().addListener((o, ov, nv) -> {
-            rc.txPowerDbm = Math.round(nv.doubleValue());
-            if (onChanged != null) onChanged.run();
-        });
-
         gain.valueProperty().addListener((o, ov, nv) -> {
             rc.antennaGain = nv;
-            if (onChanged != null) onChanged.run();
-        });
-
-        mode.valueProperty().addListener((o, ov, nv) -> {
-            rc.mode = nv;
             if (onChanged != null) onChanged.run();
         });
 
@@ -196,27 +173,15 @@ public class ApEditorDialog {
             if (onChanged != null) onChanged.run();
         });
 
-        security.valueProperty().addListener((o, ov, nv) -> {
-            rc.security = nv;
-            if (onChanged != null) onChanged.run();
-        });
-
         int r = 0;
         gp.add(radioEnabled, 0, r++, 2, 1);
         gp.add(new Label("SSID"), 0, r); gp.add(ssid, 1, r++);
-        gp.add(new Label("Tx Power"), 0, r); gp.add(new HBox(10, txSlider, txVal), 1, r++);
+        gp.add(new Label("Tx Power"), 0, r); gp.add(txVal, 1, r++);
         gp.add(new Label("Gain(dBi)"), 0, r); gp.add(gain, 1, r++);
-        gp.add(new Label("Mode"), 0, r); gp.add(mode, 1, r++);
         gp.add(new Label("Channel"), 0, r); gp.add(channel, 1, r++);
         gp.add(new Label("Width"), 0, r); gp.add(width, 1, r++);
-        gp.add(new Label("Security"), 0, r); gp.add(security, 1, r++);
 
         return gp;
-    }
-
-    private static void selectOrFirst(ComboBox<String> cb, String value) {
-        if (value != null && cb.getItems().contains(value)) cb.getSelectionModel().select(value);
-        else if (!cb.getItems().isEmpty()) cb.getSelectionModel().select(0);
     }
 
     private static void selectOrFirstInt(ComboBox<Integer> cb, Integer value) {

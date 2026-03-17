@@ -24,14 +24,45 @@ public final class WifiMath {
     // ===== 기하 유틸 =====
     // 부동소수점 비교 오차 허용치
     private static final double EPS = 1e-9;
-    // 벽 감쇠를 부드럽게 만드는 전이 거리(px)
-    private static final double WALL_SOFT_PX = 8.0;
+    // 벽을 매우 비스듬히 통과할 때(벽면과 거의 평행) 손실이 과도하게 커지는 것을 방지하는 하한/상한.
+    // - cos(theta_n): 진행 방향과 벽 법선의 코사인(1=수직입사, 0=접선입사)
+    // - Beer-Lambert 관점에서 벽 내부 경로길이 ~ 1/cos(theta_n)
+    private static final double MIN_COS_THETA_N = 0.45;
+    private static final double MAX_OBLIQUE_PATH_RATIO = 1.8;
+    // 같은 지점에서 여러 벽이 겹쳐 카운트되는 경우(벽 분할/코너)에 대한 교차점 병합 반경
+    private static final double WALL_CROSS_DEDUP_PX = 2.0;
+    // AP/Rx가 벽과 거의 맞닿은 경우 교차 감쇠를 완화하는 반경/하한 가중치
+    private static final double CROSS_ENDPOINT_RELAX_PX = 5.0;
+    private static final double CROSS_ENDPOINT_MIN_WEIGHT = 0.45;
     // 반사점이 벽 끝점에 너무 가까우면 반사로 인정하지 않음(최소치)
     private static final double REFLECTION_ENDPOINT_MARGIN_MIN_PX = 3.0;
     // 경로 차단 판정 허용오차(px): 작을수록 엄격
     private static final double PATH_INTERSECTION_TOL_PX = 1.5;
+    // AP 근접 구간에서는 단말 AGC/포화 및 안테나 패턴 요인으로 밴드별 RSSI 차이가 압축되는 경향이 있다.
+    // 이를 반영하기 위한 "근접 밴드 보정" 유효 거리 구간(m).
+    private static final double NEAR_BAND_COMP_START_M = 1.0;
+    private static final double NEAR_BAND_COMP_END_M = 4.0;
+    // 간단 MU-MIMO/TxBF 근사 이득(LOS에서만). 밴드가 높을수록 상대 이득이 조금 더 크다고 가정.
+    private static final double BF_GAIN_24_DB = 0.8;
+    private static final double BF_GAIN_5_DB = 2.8;
+    private static final double BF_GAIN_6_DB = 3.5;
+    private static final double BF_RISE_START_M = 0.8;
+    private static final double BF_RISE_TAU_M = 0.9;
+    private static final double BF_FAR_DECAY_START_M = 12.0;
+    private static final double BF_FAR_DECAY_TAU_M = 8.0;
     // 광속(m/s)
     private static final double C_MPS = 299_792_458.0;
+    // 벽 경계 Soft Transition: 수신점이 벽 선분에 이만큼(px) 가까우면 감쇠를 부드럽게 적용
+    // (교차 판정 통과 후에만 적용 → 벽 반대편 누출 없음)
+    private static final double WALL_BOUNDARY_SOFT_PX = 12.0;
+
+    /**
+     * Smoothstep 보간 (t ∈ [0,1]): 경계에서 0, 경계 밖에서 1로 부드럽게 전환
+     * t=0 → 0 (벽 바로 위), t=1 → 1 (충분히 멀리)
+     */
+    private static double smoothstep(double t) {
+        return t * t * (3.0 - 2.0 * t);
+    }
 
     private static int orient(Point2D a, Point2D b, Point2D c) {
         // cross((b-a),(c-a))
@@ -187,22 +218,133 @@ public final class WifiMath {
                                        java.util.List<Wall> walls,
                                        Wall ignoreWall,
                                        Band band) {
-        double sum = 0.0;
+        if (walls == null || walls.isEmpty()) return 0.0;
+
         Point2D a = new Point2D(ax, ay);
         Point2D b = new Point2D(bx, by);
+        java.util.ArrayList<Point2D> crossPoints = new java.util.ArrayList<>();
+        java.util.ArrayList<Double> crossLossDb = new java.util.ArrayList<>();
+
         for (Wall w : walls) {
             if (w == null) continue;
             if (ignoreWall != null && w == ignoreWall) continue;
             Point2D c = new Point2D(w.x1, w.y1);
             Point2D d = new Point2D(w.x2, w.y2);
-            double dist = segmentDistance(a, b, c, d);
-            if (dist <= WALL_SOFT_PX) {
-                double t = 1.0 - (dist / WALL_SOFT_PX);
-                double wgt = smoothstep(t);
-                sum += w.attenuationDb(band) * wgt;
+            if (!segmentsIntersect(a, b, c, d)) continue;
+
+            // 평행/겹침 등으로 단일 교차점이 정의되지 않으면 "관통"으로 보지 않는다.
+            Point2D cross = segmentIntersectionPoint(a, b, c, d);
+            if (cross == null) continue;
+
+            // 벽을 실제로 "관통"할 때만 감쇠 적용.
+            // 기본 감쇠값(attenuationDb)은 수직입사 기준(normal incidence)으로 해석하고,
+            // 비스듬한 입사는 Beer-Lambert의 유효 경로길이 증가(≈ 1/cos(theta_n))로 보정한다.
+            double obliqueScale = wallObliqueScale(a, b, c, d);
+            double endpointWeight = endpointRelaxWeight(a, b, cross);
+
+            // 벽 경계 Soft Transition: 수신점(b)이 벽 선분에 가까울수록 감쇠를 서서히 적용.
+            // 교차 판정(segmentsIntersect)을 통과한 뒤에만 실행되므로 벽 반대편 누출 없음.
+            double wx = w.x2 - w.x1, wy = w.y2 - w.y1;
+            double wlen = Math.hypot(wx, wy);
+            double boundaryWeight = 1.0;
+            if (wlen > EPS) {
+                // 수신점 b의 벽 선분까지 수직 거리(px)
+                double perpDist = Math.abs((bx - w.x1) * wy - (by - w.y1) * wx) / wlen;
+                boundaryWeight = smoothstep(Math.min(1.0, perpDist / WALL_BOUNDARY_SOFT_PX));
+            }
+
+            double lossDb = w.attenuationDb(band) * obliqueScale * endpointWeight * boundaryWeight;
+
+            int idx = findCrossingCluster(crossPoints, cross, WALL_CROSS_DEDUP_PX);
+            if (idx >= 0) {
+                // 같은 교차점(코너/분할벽)에서는 중복 합산 대신 더 큰 손실 하나만 유지
+                if (lossDb > crossLossDb.get(idx)) crossLossDb.set(idx, lossDb);
+            } else {
+                crossPoints.add(cross);
+                crossLossDb.add(lossDb);
             }
         }
+
+        double sum = 0.0;
+        for (int i = 0; i < crossLossDb.size(); i++) {
+            sum += crossLossDb.get(i);
+        }
         return sum;
+    }
+
+    /**
+     * 모든 활성 Band에 대한 wallLoss를 한 번의 교차점 계산으로 일괄 반환.
+     * 동일 경로(ax,ay)→(bx,by)에서 Band별로 attenuationDb만 다르므로,
+     * 교차 벽 탐색 및 각도/경계 보정을 1회만 수행하고 Band별 감쇠를 별도 합산한다.
+     *
+     * @param bands  계산할 Band 목록 (null 항목 허용, 그 경우 해당 인덱스는 0.0 반환)
+     * @return bands 인덱스와 1:1 대응하는 wallLoss(dB) 배열
+     */
+    public static double[] wallLossAlongAllBands(double ax, double ay,
+                                                  double bx, double by,
+                                                  java.util.List<Wall> walls,
+                                                  Band[] bands) {
+        double[] result = new double[bands.length];
+        if (walls == null || walls.isEmpty()) return result;
+
+        Point2D a = new Point2D(ax, ay);
+        Point2D b = new Point2D(bx, by);
+
+        // 교차 벽별로 (교차점, 공통 스케일, Band별 기본 감쇠) 수집
+        java.util.ArrayList<Point2D> crossPoints = new java.util.ArrayList<>();
+        // 교차점별로 Band수 크기의 손실 배열 저장
+        java.util.ArrayList<double[]> crossLossPerBand = new java.util.ArrayList<>();
+
+        double wx_full = bx - ax, wy_full = by - ay; // 수신점 방향 벡터 (boundaryWeight용)
+
+        for (Wall w : walls) {
+            if (w == null) continue;
+            Point2D c = new Point2D(w.x1, w.y1);
+            Point2D d = new Point2D(w.x2, w.y2);
+            if (!segmentsIntersect(a, b, c, d)) continue;
+
+            Point2D cross = segmentIntersectionPoint(a, b, c, d);
+            if (cross == null) continue;
+
+            double obliqueScale = wallObliqueScale(a, b, c, d);
+            double endpointWeight = endpointRelaxWeight(a, b, cross);
+
+            double wx = w.x2 - w.x1, wy = w.y2 - w.y1;
+            double wlen = Math.hypot(wx, wy);
+            double boundaryWeight = 1.0;
+            if (wlen > EPS) {
+                double perpDist = Math.abs((bx - w.x1) * wy - (by - w.y1) * wx) / wlen;
+                boundaryWeight = smoothstep(Math.min(1.0, perpDist / WALL_BOUNDARY_SOFT_PX));
+            }
+
+            double commonScale = obliqueScale * endpointWeight * boundaryWeight;
+
+            // Band별 손실 계산
+            double[] lossPerBand = new double[bands.length];
+            for (int bi = 0; bi < bands.length; bi++) {
+                lossPerBand[bi] = w.attenuationDb(bands[bi]) * commonScale;
+            }
+
+            int idx = findCrossingCluster(crossPoints, cross, WALL_CROSS_DEDUP_PX);
+            if (idx >= 0) {
+                // 같은 교차점: Band별로 더 큰 손실 유지
+                double[] existing = crossLossPerBand.get(idx);
+                for (int bi = 0; bi < bands.length; bi++) {
+                    if (lossPerBand[bi] > existing[bi]) existing[bi] = lossPerBand[bi];
+                }
+            } else {
+                crossPoints.add(cross);
+                crossLossPerBand.add(lossPerBand);
+            }
+        }
+
+        // 교차점별 합산
+        for (double[] lossPerBand : crossLossPerBand) {
+            for (int bi = 0; bi < bands.length; bi++) {
+                result[bi] += lossPerBand[bi];
+            }
+        }
+        return result;
     }
 
     /**
@@ -298,6 +440,94 @@ public final class WifiMath {
         return Math.max(0.0, jv);
     }
 
+    /**
+     * UTD wedge diffraction loss (Luebbers heuristic, simplified).
+     *
+     * 벽의 끝점(코너)를 쐐기(wedge)로 모델링하여 회절 손실을 계산.
+     * Knife-Edge 모델보다 정확한 코너 회절을 제공.
+     *
+     * 참고: Hindawi - Heuristic UTD Coefficients for Three-Dimensional Diffraction
+     *       (International Journal of Antennas and Propagation, 2018)
+     *
+     * @param hM          코너의 LOS 수직거리 (m) - 음수면 shadow boundary 안쪽
+     * @param d1M         소스→코너 거리 (m)
+     * @param d2M         코너→관측점 거리 (m)
+     * @param freqGhz     주파수 (GHz)
+     * @param wedgeAngleN 외각 = n*π (실내 직각 코너: n=1.5, 평면벽 끝: n=2.0)
+     * @return 회절 손실 (dB, 양수 = 감쇠)
+     */
+    public static double utdWedgeDiffractionLossDb(double hM, double d1M, double d2M,
+                                                     double freqGhz, double wedgeAngleN) {
+        if (!Double.isFinite(hM) || !Double.isFinite(d1M) || !Double.isFinite(d2M)
+                || !Double.isFinite(freqGhz) || !Double.isFinite(wedgeAngleN)) {
+            return 0.0;
+        }
+        if (d1M <= 0.0 || d2M <= 0.0 || freqGhz <= 0.0 || wedgeAngleN <= 0.0) return 0.0;
+
+        double lambda = (C_MPS / 1.0e9) / freqGhz;
+        double k = 2.0 * Math.PI / lambda;  // 파수
+
+        // n 파라미터 (외각 = nπ)
+        double n = Math.max(1.0, Math.min(3.0, wedgeAngleN));
+
+        // Distance parameter L (Luebbers)
+        double L = (d1M * d2M) / (d1M + d2M);
+
+        // 입사/회절 각도를 Knife-Edge 높이에서 근사
+        // Fresnel 파라미터 v를 통해 유효 각도 추정
+        double v = hM * Math.sqrt(2.0 * (d1M + d2M) / (lambda * d1M * d2M));
+
+        // UTD 보정: n 파라미터와 Fresnel transition function을 이용한 회절 계수
+        // Luebbers 간략 모델: Knife-Edge 기반에 wedge angle 보정 적용
+
+        // 기본 Knife-Edge 손실
+        double keDb;
+        if (v <= -0.78) {
+            keDb = 0.0;
+        } else {
+            double t = v - 0.1;
+            keDb = 6.9 + 20.0 * Math.log10(Math.sqrt(t * t + 1.0) + t);
+            keDb = Math.max(0.0, keDb);
+        }
+
+        // UTD wedge 보정 계수:
+        // n=2.0 (평면벽 끝, 180°): KE와 동일 → 보정 없음
+        // n=1.5 (직각 코너, 270°): 회절이 약간 더 강함 (손실 감소)
+        // n=1.0 (날카로운 쐐기, 180°-: 회절 약함 (손실 증가)
+        //
+        // 보정 공식: UTD_loss = KE_loss * wedgeCorrection
+        // wedgeCorrection ≈ (2.0 / n) × Fresnel_transition_factor
+        double wedgeCorrection;
+        if (n >= 1.99 && n <= 2.01) {
+            // 반무한 평면 (half-plane): UTD = KE, 보정 없음
+            wedgeCorrection = 1.0;
+        } else {
+            // Luebbers 근사: 쐐기 각도에 따른 회절 계수 보정
+            // n < 2: 더 많은 회절 (실내 코너 뒤쪽으로 신호 전달)
+            // Fresnel transition: F(x) ≈ 1 for large x, ≈ √(πx)·e^(jπ/4) for small x
+            double kLa = k * L;  // 이 값이 클수록 Fresnel 영역에서 먼 곳
+            double fresnelFactor;
+            if (kLa > 10.0) {
+                fresnelFactor = 1.0;  // 고주파 극한
+            } else {
+                // Fresnel transition function 근사: F(x) ≈ 1 - exp(-√(π·x))
+                fresnelFactor = 1.0 - Math.exp(-Math.sqrt(Math.PI * Math.max(0.0, kLa)));
+            }
+
+            // 실내 직각 코너(n=1.5)에서는 회절이 KE보다 약 2-3dB 더 강함
+            // n이 작을수록(더 뾰족) 회절 손실이 더 큼
+            double angleRatio = 2.0 / n;
+            wedgeCorrection = 1.0 / (angleRatio * fresnelFactor + (1.0 - fresnelFactor));
+            // clamp: 0.5~1.5 사이
+            wedgeCorrection = Math.max(0.5, Math.min(1.5, wedgeCorrection));
+        }
+
+        double utdLossDb = keDb * wedgeCorrection;
+
+        // 최종 clamp: 0~40 dB
+        return Math.max(0.0, Math.min(40.0, utdLossDb));
+    }
+
     private static double segmentDistance(Point2D a, Point2D b, Point2D c, Point2D d) {
         if (segmentsIntersect(a, b, c, d)) return 0.0;
         double d1 = pointToSegmentDistance(a, c, d);
@@ -312,9 +542,42 @@ public final class WifiMath {
         return p.distance(c);
     }
 
-    private static double smoothstep(double t) {
-        t = Math.max(0.0, Math.min(1.0, t));
-        return t * t * (3.0 - 2.0 * t);
+    private static double wallObliqueScale(Point2D a, Point2D b, Point2D c, Point2D d) {
+        double rx = b.getX() - a.getX();
+        double ry = b.getY() - a.getY();
+        double rLen = Math.hypot(rx, ry);
+        if (rLen < EPS) return 1.0;
+
+        double wx = d.getX() - c.getX();
+        double wy = d.getY() - c.getY();
+        double wLen = Math.hypot(wx, wy);
+        if (wLen < EPS) return 1.0;
+
+        // 벽 법선 n = (-wy, wx) / |w|
+        double nx = -wy / wLen;
+        double ny = wx / wLen;
+
+        // cos(theta_n): 진행방향과 벽 법선 사이 각의 코사인
+        double cosThetaN = Math.abs((rx * nx + ry * ny) / rLen);
+        if (!Double.isFinite(cosThetaN)) return 1.0;
+        cosThetaN = Math.max(MIN_COS_THETA_N, Math.min(1.0, cosThetaN));
+
+        // 유효 벽 내부 경로길이 비율(수직입사 대비)
+        return Math.min(MAX_OBLIQUE_PATH_RATIO, 1.0 / cosThetaN);
+    }
+
+    private static int findCrossingCluster(java.util.List<Point2D> points, Point2D p, double tolPx) {
+        for (int i = 0; i < points.size(); i++) {
+            if (points.get(i).distance(p) <= tolPx) return i;
+        }
+        return -1;
+    }
+
+    private static double endpointRelaxWeight(Point2D a, Point2D b, Point2D cross) {
+        double dEnd = Math.min(a.distance(cross), b.distance(cross));
+        if (!Double.isFinite(dEnd) || dEnd >= CROSS_ENDPOINT_RELAX_PX) return 1.0;
+        double t = Math.max(0.0, Math.min(1.0, dEnd / CROSS_ENDPOINT_RELAX_PX));
+        return CROSS_ENDPOINT_MIN_WEIGHT + (1.0 - CROSS_ENDPOINT_MIN_WEIGHT) * t;
     }
 
     private static double sideOfLine(Point2D a, Point2D b, Point2D p) {
@@ -497,6 +760,38 @@ public final class WifiMath {
         return new Path(lenM, wallLossDb, diffLossDb, corner, null);
     }
 
+    /**
+     * 2차 회절(corner1 → corner2): AP → corner1 → corner2 → RX 경로
+     *
+     * @param ap          AP 위치
+     * @param rx          수신점 위치
+     * @param corner1     1차 회절 코너
+     * @param corner2     2차 회절 코너
+     * @param walls       전체 벽 목록
+     * @param scaleMPerPx 픽셀 → 미터 변환 스케일
+     * @param diffLossDb  두 코너의 knife-edge 손실 합(dB)
+     * @param band        주파수 밴드
+     * @return Path 객체 (경로 길이, 벽 손실, 회절 추가 손실 포함), 유효하지 않으면 null
+     */
+    public static Path buildDoubleCornerDiffraction(Point2D ap,
+                                                    Point2D rx,
+                                                    Point2D corner1,
+                                                    Point2D corner2,
+                                                    java.util.List<Wall> walls,
+                                                    double scaleMPerPx,
+                                                    double diffLossDb,
+                                                    Band band) {
+        double lenM = (ap.distance(corner1) + corner1.distance(corner2) + corner2.distance(rx)) * scaleMPerPx;
+
+        // 3개 세그먼트(ap→c1, c1→c2, c2→rx)의 벽 관통 감쇠 합산
+        double wl1 = wallLossAlong(ap.getX(), ap.getY(), corner1.getX(), corner1.getY(), walls, (Wall) null, band);
+        double wl2 = wallLossAlong(corner1.getX(), corner1.getY(), corner2.getX(), corner2.getY(), walls, (Wall) null, band);
+        double wl3 = wallLossAlong(corner2.getX(), corner2.getY(), rx.getX(), rx.getY(), walls, (Wall) null, band);
+        double wallLossDb = wl1 + wl2 + wl3;
+
+        return new Path(lenM, wallLossDb, diffLossDb, corner1, null);
+    }
+
     private static double reflectionEndpointMarginPx(Wall wall, double scaleMPerPx) {
         double wallLenPx = Math.hypot(wall.x2 - wall.x1, wall.y2 - wall.y1);
         double byLength = wallLenPx * 0.20; // 벽 길이의 20%
@@ -670,6 +965,44 @@ public final class WifiMath {
         return dst;
     }
 
+    // ===== Bicubic (Catmull-Rom) 보간 =====
+
+    /**
+     * 1D Catmull-Rom spline 보간.
+     * p0, p1, p2, p3: 4개 제어점 값
+     * t: p1~p2 구간 내 보간 위치 [0, 1]
+     *
+     * p(t) = 0.5 * ((2·p1) + (-p0+p2)·t + (2·p0 - 5·p1 + 4·p2 - p3)·t² + (-p0 + 3·p1 - 3·p2 + p3)·t³)
+     */
+    public static double catmullRom(double p0, double p1, double p2, double p3, double t) {
+        double t2 = t * t;
+        double t3 = t2 * t;
+        return 0.5 * ((2.0 * p1)
+                + (-p0 + p2) * t
+                + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+                + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
+    }
+
+    /**
+     * 2D Bicubic Catmull-Rom 보간 (separable).
+     * grid4x4[row][col]: 4×4 이웃 격자점 값 (row=0..3, col=0..3)
+     *   - grid4x4[1][1] ~ grid4x4[2][2]가 보간 대상 셀의 4 꼭짓점
+     *   - grid4x4[0][*], grid4x4[3][*] 등은 외곽 패딩(clamp 처리된)
+     * tx, ty: 셀 내 보간 위치 [0, 1]
+     *
+     * 1) Y 방향으로 4줄 각각 Catmull-Rom → 4개 중간값
+     * 2) X 방향으로 1줄 Catmull-Rom → 최종값
+     */
+    public static double bicubicCatmullRom(double[][] grid4x4, double tx, double ty) {
+        // 각 행을 X 방향으로 보간
+        double c0 = catmullRom(grid4x4[0][0], grid4x4[0][1], grid4x4[0][2], grid4x4[0][3], tx);
+        double c1 = catmullRom(grid4x4[1][0], grid4x4[1][1], grid4x4[1][2], grid4x4[1][3], tx);
+        double c2 = catmullRom(grid4x4[2][0], grid4x4[2][1], grid4x4[2][2], grid4x4[2][3], tx);
+        double c3 = catmullRom(grid4x4[3][0], grid4x4[3][1], grid4x4[3][2], grid4x4[3][3], tx);
+        // Y 방향으로 보간
+        return catmullRom(c0, c1, c2, c3, ty);
+    }
+
     // ===== 경로손실 모델 =====
 
     /**
@@ -681,8 +1014,9 @@ public final class WifiMath {
      * - n    : 경로손실 지수 (1.6 ~ 4 정도)
      */
     public static double pathLossDb(double dMeters, double fGhz, double n) {
-        // d는 최소 0.1m 정도로 바닥 깔기 (너 nearFieldFloorM도 별도로 쓰고 있으니 이건 보호용)
-        double d = Math.max(dMeters, 0.1);
+        // d0=1m 기준 로그-거리 모델을 사용하므로, d<1m 구간은 1m로 캡핑한다.
+        // (근거리에서 비현실적으로 RSSI가 과도하게 높아지는 현상 방지)
+        double d = Math.max(dMeters, 1.0);
 
         double fMHz = fGhz * 1000.0;
 
@@ -692,5 +1026,52 @@ public final class WifiMath {
 
         // 로그-거리 경로손실 모델: PL(d) = PL0 + 10 n log10(d / d0), d0 = 1m
         return pl0 + 10.0 * n * Math.log10(d / 1.0);
+    }
+
+    /**
+     * 근접 밴드 보정(dB).
+     *
+     * - 동일 EIRP 가정의 로그거리/FSPL 모델은 근거리에서 5/6GHz가 2.4GHz 대비 과도하게 약하게 예측되는 경우가 있다.
+     * - 실측 환경에서 AP 바로 앞(약 1~2m 내)에서는 단말 AGC/수신 체인 특성으로 밴드 간 RSSI가 압축되어 비슷하게 보이기도 한다.
+     * - 이를 반영해 d<=1m에서는 2.4 기준 주파수 차이를 100% 보정하고, 4m에서 0으로 선형 감쇠한다.
+     */
+    public static double nearFieldBandCompensationDb(double dMeters, double fGhz) {
+        if (!Double.isFinite(dMeters) || !Double.isFinite(fGhz)) return 0.0;
+        double freq = Math.max(2.4, fGhz);
+        double freqDeltaDb = 20.0 * Math.log10(freq / 2.4);
+        if (freqDeltaDb <= 0.0) return 0.0;
+
+        if (dMeters <= NEAR_BAND_COMP_START_M) return freqDeltaDb;
+        if (dMeters >= NEAR_BAND_COMP_END_M) return 0.0;
+
+        double t = (NEAR_BAND_COMP_END_M - dMeters) / (NEAR_BAND_COMP_END_M - NEAR_BAND_COMP_START_M);
+        t = Math.max(0.0, Math.min(1.0, t));
+        return freqDeltaDb * t;
+    }
+
+    /**
+     * LOS 구간 빔포밍 근사 이득(dB).
+     * - 실제 CSI 기반 빔포밍은 아니며, mouse-RSSI/heatmap에서 체감 오차를 줄이기 위한 단순 파라미터 모델.
+     * - NLOS(벽 관통 포함)에서는 이득을 0으로 둔다.
+     */
+    public static double beamformingGainDb(Band band, double dMeters, boolean los) {
+        if (!los || !Double.isFinite(dMeters) || band == null) return 0.0;
+
+        double maxGain = switch (band) {
+            case GHZ_24 -> BF_GAIN_24_DB;
+            case GHZ_5 -> BF_GAIN_5_DB;
+            case GHZ_6 -> BF_GAIN_6_DB;
+        };
+        if (maxGain <= 0.0) return 0.0;
+
+        double x = Math.max(0.0, dMeters - BF_RISE_START_M);
+        double rise = 1.0 - Math.exp(-x / BF_RISE_TAU_M);
+
+        double far = 1.0;
+        if (dMeters > BF_FAR_DECAY_START_M) {
+            far = Math.exp(-(dMeters - BF_FAR_DECAY_START_M) / BF_FAR_DECAY_TAU_M);
+        }
+
+        return maxGain * rise * far;
     }
 }

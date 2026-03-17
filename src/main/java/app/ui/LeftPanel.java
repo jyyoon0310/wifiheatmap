@@ -1,7 +1,4 @@
 package app.ui;
-
-import app.engine.fdtd.FdtdReferenceMode;
-import app.engine.fdtd.FdtdWallPreset;
 import app.model.AP;
 import app.model.AppState;
 import app.model.Band;
@@ -46,7 +43,6 @@ public class LeftPanel {
     // RSSI 표시
     private final VBox rssiCard;
     private final VBox rssiRows = new VBox(4);
-    private final CheckBox showPathsCheck = new CheckBox("전파 경로 표시");
 
     // 스케일 입력
     private final VBox scaleCard;
@@ -62,22 +58,22 @@ public class LeftPanel {
     private final Label apCoordLabel = new Label("-");
 
     private final TextField ssid24Field = new TextField();
-    private final Spinner<Double> tx24Spinner = createDoubleSpinner(0.0, 40.0, 18.0, 1.0);
-    private final Spinner<Double> gain24Spinner = createDoubleSpinner(0.0, 15.0, 5.0, 0.5);
+    private final Spinner<Double> tx24Spinner = createDoubleSpinner(0.0, 40.0, RadioConfig.FIXED_TX_POWER_DBM, 1.0);
+    private final Spinner<Double> gain24Spinner = createDoubleSpinner(0.0, 15.0, RadioConfig.DEFAULT_ANTENNA_GAIN_DBI, 0.5);
     private final ComboBox<Integer> ch24Combo = createIntCombo(channels24());
     private final ComboBox<Integer> bw24Combo = createIntCombo(20, 40);
     private final CheckBox enabled24Check = new CheckBox("활성화");
 
     private final TextField ssid5Field = new TextField();
-    private final Spinner<Double> tx5Spinner = createDoubleSpinner(0.0, 40.0, 18.0, 1.0);
-    private final Spinner<Double> gain5Spinner = createDoubleSpinner(0.0, 15.0, 5.0, 0.5);
+    private final Spinner<Double> tx5Spinner = createDoubleSpinner(0.0, 40.0, RadioConfig.FIXED_TX_POWER_DBM, 1.0);
+    private final Spinner<Double> gain5Spinner = createDoubleSpinner(0.0, 15.0, RadioConfig.DEFAULT_ANTENNA_GAIN_DBI, 0.5);
     private final ComboBox<Integer> ch5Combo = createIntCombo(channels5());
     private final ComboBox<Integer> bw5Combo = createIntCombo(20, 40, 80, 160);
     private final CheckBox enabled5Check = new CheckBox("활성화");
 
     private final TextField ssid6Field = new TextField();
-    private final Spinner<Double> tx6Spinner = createDoubleSpinner(0.0, 40.0, 18.0, 1.0);
-    private final Spinner<Double> gain6Spinner = createDoubleSpinner(0.0, 15.0, 5.0, 0.5);
+    private final Spinner<Double> tx6Spinner = createDoubleSpinner(0.0, 40.0, RadioConfig.FIXED_TX_POWER_DBM, 1.0);
+    private final Spinner<Double> gain6Spinner = createDoubleSpinner(0.0, 15.0, RadioConfig.DEFAULT_ANTENNA_GAIN_DBI, 0.5);
     private final ComboBox<Integer> ch6Combo = createIntCombo(channels6());
     private final ComboBox<Integer> bw6Combo = createIntCombo(20, 40, 80, 160, 320);
     private final CheckBox enabled6Check = new CheckBox("활성화");
@@ -103,20 +99,6 @@ public class LeftPanel {
     private final ComboBox<String> solverBandCombo = new ComboBox<>();
     private final CheckBox solverOverlayCheck = new CheckBox("오버레이 표시");
 
-    // FDTD 히트맵 설정 (거리 기반 모델 대체/옵션)
-    private final ComboBox<String> fdtdFreqCombo = new ComboBox<>();
-    private final TextField fdtdDxField = new TextField("0.01");
-    private final TextField fdtdStepsField = new TextField("5000");
-    private final ComboBox<Integer> fdtdPmlCombo = createIntCombo(8, 12, 16, 20);
-    private final ComboBox<FdtdWallPreset> fdtdWallPresetCombo = new ComboBox<>();
-    private final TextField fdtdRampNsField = new TextField("25");
-    private final TextField fdtdSourceAmpField = new TextField("1.0");
-    private final TextField fdtdRmsCyclesField = new TextField("30");
-    private final ComboBox<FdtdReferenceMode> fdtdRefModeCombo = new ComboBox<>();
-    private final TextField fdtdRefCustomField = new TextField("1.0");
-    private final CheckBox fdtdShowMaterialCheck = new CheckBox("material grid 표시");
-    private final CheckBox fdtdShowPmlCheck = new CheckBox("PML 경계 표시");
-
     private final Label solverStateLabel = new Label("대기");
     private final Label solverStatsLabel = new Label("step 0 / time 0 ns / fps -");
 
@@ -127,8 +109,8 @@ public class LeftPanel {
     private Runnable onClearApSelection = () -> {};
     private Runnable onWallChanged = () -> {};
     private Runnable onClearWallSelection = () -> {};
-    private Runnable onShowPathsChanged = () -> {};
     private Runnable onSolverConfigChanged = () -> {};
+    private Runnable onSolverOverlayChanged = () -> {};
     private Consumer<Wall> onSelectWall = (w) -> {};
 
     private WifiEnvironment envRef;
@@ -162,12 +144,9 @@ public class LeftPanel {
         row.setFillHeight(true);
         HBox.setHgrow(realMetersField, Priority.NEVER);
 
-        showPathsCheck.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 12px;");
-        showPathsCheck.selectedProperty().addListener((o, ov, nv) -> onShowPathsChanged.run());
         rssiCard = Styles.card(
                 "RSSI (Mouse)",
-                rssiRows,
-                showPathsCheck
+                rssiRows
         );
         rssiRows.setPadding(new Insets(2, 0, 0, 0));
         updateRssiRows(List.of());
@@ -183,86 +162,6 @@ public class LeftPanel {
         styleIntCombo(solverSubStepsCombo);
         styleIntCombo(solverRenderSkipCombo);
         styleTextCombo(solverBandCombo);
-        styleTextCombo(fdtdFreqCombo);
-        styleIntCombo(fdtdPmlCombo);
-        Styles.styleTextField(fdtdDxField);
-        Styles.styleTextField(fdtdStepsField);
-        Styles.styleTextField(fdtdRampNsField);
-        Styles.styleTextField(fdtdSourceAmpField);
-        Styles.styleTextField(fdtdRmsCyclesField);
-        Styles.styleTextField(fdtdRefCustomField);
-
-        fdtdWallPresetCombo.getItems().setAll(FdtdWallPreset.values());
-        fdtdWallPresetCombo.getSelectionModel().select(FdtdWallPreset.FROM_WALL);
-        fdtdWallPresetCombo.setConverter(new StringConverter<>() {
-            @Override public String toString(FdtdWallPreset object) {
-                return object == null ? "" : object.label();
-            }
-            @Override public FdtdWallPreset fromString(String string) { return null; }
-        });
-        fdtdWallPresetCombo.setButtonCell(new ListCell<>() {
-            @Override protected void updateItem(FdtdWallPreset item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? "" : item.label());
-            }
-        });
-        fdtdWallPresetCombo.setCellFactory(list -> new ListCell<>() {
-            @Override protected void updateItem(FdtdWallPreset item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? "" : item.label());
-            }
-        });
-        fdtdWallPresetCombo.setMaxWidth(Double.MAX_VALUE);
-        fdtdWallPresetCombo.setStyle(
-                "-fx-background-color: " + Styles.BG_APP + ";" +
-                "-fx-text-fill: " + Styles.TEXT_MAIN + ";" +
-                "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
-                "-fx-border-radius: 8;" +
-                "-fx-background-radius: 8;" +
-                "-fx-padding: 1 2;" +
-                "-fx-font-size: 12px;"
-        );
-        Styles.installComboPopupStyle(fdtdWallPresetCombo);
-
-        fdtdRefModeCombo.getItems().setAll(FdtdReferenceMode.values());
-        fdtdRefModeCombo.getSelectionModel().select(FdtdReferenceMode.AP_NEAR_RING);
-        fdtdRefModeCombo.setConverter(new StringConverter<>() {
-            @Override public String toString(FdtdReferenceMode object) {
-                return object == null ? "" : object.label();
-            }
-            @Override public FdtdReferenceMode fromString(String string) { return null; }
-        });
-        fdtdRefModeCombo.setButtonCell(new ListCell<>() {
-            @Override protected void updateItem(FdtdReferenceMode item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? "" : item.label());
-            }
-        });
-        fdtdRefModeCombo.setCellFactory(list -> new ListCell<>() {
-            @Override protected void updateItem(FdtdReferenceMode item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? "" : item.label());
-            }
-        });
-        fdtdRefModeCombo.setMaxWidth(Double.MAX_VALUE);
-        fdtdRefModeCombo.setStyle(
-                "-fx-background-color: " + Styles.BG_APP + ";" +
-                "-fx-text-fill: " + Styles.TEXT_MAIN + ";" +
-                "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
-                "-fx-border-radius: 8;" +
-                "-fx-background-radius: 8;" +
-                "-fx-padding: 1 2;" +
-                "-fx-font-size: 12px;"
-        );
-        Styles.installComboPopupStyle(fdtdRefModeCombo);
-
-        fdtdFreqCombo.getItems().setAll("2.4GHz", "5GHz");
-        fdtdFreqCombo.getSelectionModel().select("2.4GHz");
-        fdtdShowMaterialCheck.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
-        fdtdShowPmlCheck.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
-        fdtdRefCustomField.disableProperty().bind(
-                fdtdRefModeCombo.valueProperty().isNotEqualTo(FdtdReferenceMode.CUSTOM)
-        );
 
         solverOverlayCheck.setSelected(true);
         solverOverlayCheck.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 12px;");
@@ -276,31 +175,16 @@ public class LeftPanel {
         solverRenderSkipCombo.getSelectionModel().select(Integer.valueOf(2));
 
         solverBandCombo.valueProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        solverCellCombo.valueProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        solverSubStepsCombo.valueProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        solverRenderSkipCombo.valueProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        solverOverlayCheck.selectedProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        fdtdFreqCombo.valueProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        fdtdDxField.textProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        fdtdStepsField.textProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        fdtdPmlCombo.valueProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        fdtdWallPresetCombo.valueProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        fdtdRampNsField.textProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        fdtdSourceAmpField.textProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        fdtdRmsCyclesField.textProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        fdtdRefModeCombo.valueProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        fdtdRefCustomField.textProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        fdtdShowMaterialCheck.selectedProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
-        fdtdShowPmlCheck.selectedProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
+        solverOverlayCheck.selectedProperty().addListener((o, ov, nv) -> onSolverOverlayChanged.run());
 
         solverCard = Styles.card(
                 "Solver",
                 new Label("모델: 2D 파동 Solver 오버레이"),
                 new Label("표시: Power (time-avg |u|^2)"),
                 new VBox(4, new Label("표시 밴드"), solverBandCombo),
-                new VBox(4, new Label("격자 크기(px)"), solverCellCombo),
-                new VBox(4, new Label("Sub-steps / frame"), solverSubStepsCombo),
-                new VBox(4, new Label("Render every N frame"), solverRenderSkipCombo),
+                new Label("격자 크기(px): 4 (고정)"),
+                new Label("Sub-steps/frame: 자동"),
+                new Label("Render every N frame: 자동"),
                 solverOverlayCheck,
                 solverStateLabel,
                 solverStatsLabel
@@ -418,6 +302,13 @@ public class LeftPanel {
                 "-fx-font-size: 12px;"
         );
         Styles.installComboPopupStyle(wallMaterialCombo);
+        wallMaterialCombo.valueProperty().addListener((o, ov, nv) -> {
+            if (nv == null) return;
+            if (nv != WallMaterial.CUSTOM) {
+                wall24Field.setText(String.format("%.1f", nv.defaultAttenuation24Db()));
+                wall5Field.setText(String.format("%.1f", nv.defaultAttenuation5Db()));
+            }
+        });
 
         wallDetailsCard = Styles.card(
                 "Wall Details",
@@ -613,15 +504,15 @@ public class LeftPanel {
     }
 
     public int getSolverCellPx() {
-        return comboValue(solverCellCombo, 4);
+        return 4;
     }
 
     public int getSolverSubSteps() {
-        return comboValue(solverSubStepsCombo, 2);
+        return 2;
     }
 
     public int getSolverRenderSkip() {
-        return comboValue(solverRenderSkipCombo, 2);
+        return 2;
     }
 
     public Band getSolverDisplayBand() {
@@ -631,61 +522,6 @@ public class LeftPanel {
         if (v.startsWith("5")) return Band.GHZ_5;
         if (v.startsWith("6")) return Band.GHZ_6;
         return null;
-    }
-
-    public Band getFdtdBand() {
-        String v = fdtdFreqCombo.getValue();
-        return (v != null && v.startsWith("5")) ? Band.GHZ_5 : Band.GHZ_24;
-    }
-
-    public double getFdtdFreqGhz() {
-        return getFdtdBand() == Band.GHZ_5 ? 5.0 : 2.4;
-    }
-
-    public double getFdtdDxMeters() {
-        return Math.max(0.002, parseDoubleOr(fdtdDxField.getText(), 0.01));
-    }
-
-    public int getFdtdSteps() {
-        return Math.max(200, parseIntOr(fdtdStepsField.getText(), 5000));
-    }
-
-    public int getFdtdPmlCells() {
-        return Math.max(8, comboValue(fdtdPmlCombo, 12));
-    }
-
-    public FdtdWallPreset getFdtdWallPreset() {
-        FdtdWallPreset v = fdtdWallPresetCombo.getValue();
-        return v == null ? FdtdWallPreset.FROM_WALL : v;
-    }
-
-    public double getFdtdRampNs() {
-        return Math.max(0.0, parseDoubleOr(fdtdRampNsField.getText(), 25.0));
-    }
-
-    public double getFdtdSourceAmplitude() {
-        return Math.max(1.0e-6, parseDoubleOr(fdtdSourceAmpField.getText(), 1.0));
-    }
-
-    public int getFdtdRmsCycles() {
-        return Math.max(1, parseIntOr(fdtdRmsCyclesField.getText(), 30));
-    }
-
-    public FdtdReferenceMode getFdtdReferenceMode() {
-        FdtdReferenceMode v = fdtdRefModeCombo.getValue();
-        return (v == null) ? FdtdReferenceMode.AP_NEAR_RING : v;
-    }
-
-    public double getFdtdCustomReference() {
-        return Math.max(1.0e-12, parseDoubleOr(fdtdRefCustomField.getText(), 1.0));
-    }
-
-    public boolean isFdtdShowMaterialGrid() {
-        return fdtdShowMaterialCheck.isSelected();
-    }
-
-    public boolean isFdtdShowPmlGrid() {
-        return fdtdShowPmlCheck.isSelected();
     }
 
     public boolean isSolverOverlayEnabled() {
@@ -702,16 +538,20 @@ public class LeftPanel {
         if (onSolverConfigChanged != null) this.onSolverConfigChanged = onSolverConfigChanged;
     }
 
+    public void setOnSolverOverlayChanged(Runnable onSolverOverlayChanged) {
+        if (onSolverOverlayChanged != null) this.onSolverOverlayChanged = onSolverOverlayChanged;
+    }
+
     public void setRssiResults(List<RssiResult> rows) {
         updateRssiRows(rows == null ? List.of() : rows);
     }
 
     public boolean isShowPathsEnabled() {
-        return showPathsCheck.isSelected();
+        return false;
     }
 
     public void setOnShowPathsChanged(Runnable onShowPathsChanged) {
-        if (onShowPathsChanged != null) this.onShowPathsChanged = onShowPathsChanged;
+        // 전파 경로 표시 기능 제거: no-op
     }
 
     private void applySectionVisibility() {
@@ -750,7 +590,7 @@ public class LeftPanel {
         t.setStyle("-fx-text-fill: " + Styles.TEXT_MAIN + "; -fx-font-size: 12px; -fx-font-weight: 600;");
         Label ssidLabel = new Label("SSID");
         ssidLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
-        Label txLabel = new Label("Tx(dBm)");
+        Label txLabel = new Label("Tx(dBm, 고정 17)");
         txLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
         Label gainLabel = new Label("Gain(dBi)");
         gainLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
@@ -763,6 +603,8 @@ public class LeftPanel {
 
         ssid.setMaxWidth(Double.MAX_VALUE);
         tx.setMaxWidth(Double.MAX_VALUE);
+        tx.setDisable(true);
+        tx.setEditable(false);
         gain.setMaxWidth(Double.MAX_VALUE);
         channel.setMaxWidth(Double.MAX_VALUE);
         bandwidth.setMaxWidth(Double.MAX_VALUE);
@@ -943,11 +785,16 @@ public class LeftPanel {
         if (currentWall == null) return;
 
         WallMaterial selected = wallMaterialCombo.getValue();
-        if (selected != null) currentWall.setMaterial(selected);
+        if (selected == null) selected = currentWall.getMaterial();
 
-        double a24 = parseDoubleOr(wall24Field.getText(), currentWall.attenuationDb24);
-        double a5 = parseDoubleOr(wall5Field.getText(), currentWall.attenuationDb5);
-        currentWall.setAttenuationDb(a24, a5);
+        if (selected != null && selected != WallMaterial.CUSTOM) {
+            // 프리셋 재질 선택 시에는 프리셋 재질 상태를 유지한다.
+            currentWall.setMaterial(selected);
+        } else {
+            double a24 = parseDoubleOr(wall24Field.getText(), currentWall.attenuationDb24);
+            double a5 = parseDoubleOr(wall5Field.getText(), currentWall.attenuationDb5);
+            currentWall.setAttenuationDb(a24, a5);
+        }
 
         onWallChanged.run();
     }
@@ -981,8 +828,8 @@ public class LeftPanel {
 
         if (rc == null) {
             ssid.clear();
-            tx.getValueFactory().setValue(0.0);
-            gain.getValueFactory().setValue(0.0);
+            tx.getValueFactory().setValue(RadioConfig.FIXED_TX_POWER_DBM);
+            gain.getValueFactory().setValue(RadioConfig.DEFAULT_ANTENNA_GAIN_DBI);
             selectComboValue(channel, defaultChannel(band));
             selectComboValue(bandwidth, defaultBandwidth(band));
             enabled.setSelected(false);
@@ -991,7 +838,7 @@ public class LeftPanel {
 
         enabled.setSelected(rc.enabled);
         ssid.setText(rc.ssid == null ? "" : rc.ssid);
-        tx.getValueFactory().setValue(rc.txPowerDbm);
+        tx.getValueFactory().setValue(RadioConfig.FIXED_TX_POWER_DBM);
         gain.getValueFactory().setValue(rc.antennaGain);
         selectComboValue(channel, rc.channel);
         selectComboValue(bandwidth, rc.channelWidth);
@@ -1003,7 +850,7 @@ public class LeftPanel {
 
         rc.enabled = getEnabledCheck(band).isSelected();
         rc.ssid = ssidField.getText() == null ? "" : ssidField.getText().trim();
-        rc.txPowerDbm = spinnerValue(txSpinner);
+        rc.txPowerDbm = RadioConfig.FIXED_TX_POWER_DBM;
         rc.antennaGain = spinnerValue(gainSpinner);
         rc.channel = comboValue(getChannelCombo(band), defaultChannel(band));
         rc.channelWidth = comboValue(getBandwidthCombo(band), defaultBandwidth(band));

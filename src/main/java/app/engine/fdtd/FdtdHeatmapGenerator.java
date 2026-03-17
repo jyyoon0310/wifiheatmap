@@ -148,10 +148,12 @@ public final class FdtdHeatmapGenerator {
         ref = Math.max(ref, 1.0e-12);
 
         // RSSI-like anchor:
-        // AP의 tx/gain에서 1m FSPL과 BW 패널티를 뺀 뒤 relDb를 더한다.
+        // AP의 tx/gain에서 1m FSPL만 뺀 뒤 relDb를 더한다.
+        // (RSSI 전력맵에서는 BW 패널티를 직접 차감하지 않음)
+        double nearCompAt1m = WifiMath.nearFieldBandCompensationDb(1.0, cfg.frequencyGhz());
         double anchorDbm = src.txPowerDbm + src.antennaGainDbi
-                - WifiMath.pathLossDb(1.0, cfg.frequencyGhz(), pathLossN)
-                - src.bandwidthPenaltyDb;
+                + nearCompAt1m
+                - WifiMath.pathLossDb(1.0, cfg.frequencyGhz(), pathLossN);
 
         for (int mx = 0; mx < grid.mapNx; mx++) {
             int gx = mx + grid.pmlCells;

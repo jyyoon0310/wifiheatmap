@@ -1,5 +1,6 @@
 package app.ui;
 
+import javafx.animation.PauseTransition;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -12,6 +13,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.paint.Color;
+import javafx.util.Duration;
 
 import java.util.function.DoubleConsumer;
 
@@ -26,6 +28,7 @@ public class BottomBar {
     private final HBox root = new HBox(10);
     private final Spinner<Double> clientHeightSpinner = new Spinner<>(0.1, 5.0, 1.0, 0.1);
     private final Button applyBtn = new Button("적용");
+    private final Label heatmapStatusLabel = new Label();
     private final Label currentRssiLabel = new Label("- dBm");
     private final Label legendMinLabel = new Label("-96 dBm");
     private final Label legendMaxLabel = new Label("-10 dBm");
@@ -33,6 +36,7 @@ public class BottomBar {
     private final Region legendBg = new Region();
     private final Pane markerLayer = new Pane();
     private final Region markerLine = new Region();
+    private final PauseTransition statusClearTimer = new PauseTransition(Duration.seconds(3));
 
     private double legendMinDbm = -96.0;
     private double legendMaxDbm = -10.0;
@@ -52,6 +56,17 @@ public class BottomBar {
         Styles.styleSpinner(clientHeightSpinner);
         Styles.styleAccentButton(applyBtn);
         currentRssiLabel.setStyle("-fx-text-fill: #2FD44A;" + RSSI_LABEL_BASE_STYLE);
+
+        // 히트맵 생성 진행률 라벨
+        heatmapStatusLabel.setStyle(
+                "-fx-text-fill: #34D1FF;" +
+                "-fx-font-size: 13px;" +
+                "-fx-font-weight: 600;" +
+                "-fx-font-family: " + FONT_STACK + ";"
+        );
+        heatmapStatusLabel.setVisible(false);
+        heatmapStatusLabel.setManaged(false);
+        statusClearTimer.setOnFinished(e -> clearHeatmapStatus());
 
         HBox legendLabels = new HBox();
         legendLabels.setAlignment(Pos.CENTER);
@@ -105,7 +120,7 @@ public class BottomBar {
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        root.getChildren().addAll(label, clientHeightSpinner, applyBtn, spacer, currentRssiLabel, legendPane);
+        root.getChildren().addAll(label, clientHeightSpinner, applyBtn, spacer, heatmapStatusLabel, currentRssiLabel, legendPane);
         root.setPadding(new Insets(8, 10, 8, 10));
         root.setStyle(
                 "-fx-alignment: center-left;" +
@@ -205,5 +220,41 @@ public class BottomBar {
         markerLine.setVisible(true);
         markerLine.setPrefHeight(Math.max(18, h - 4));
         markerLine.resizeRelocate(x - 1, 2, 2, Math.max(18, h - 4));
+    }
+
+    /** 히트맵 생성 진행률 표시 (0~100) */
+    public void setHeatmapProgress(double percent) {
+        statusClearTimer.stop();
+        heatmapStatusLabel.setText(String.format("히트맵 생성중... %.0f%%", Math.min(100.0, percent)));
+        heatmapStatusLabel.setStyle(
+                "-fx-text-fill: #34D1FF;" +
+                "-fx-font-size: 13px;" +
+                "-fx-font-weight: 600;" +
+                "-fx-font-family: " + FONT_STACK + ";"
+        );
+        heatmapStatusLabel.setVisible(true);
+        heatmapStatusLabel.setManaged(true);
+    }
+
+    /** 히트맵 생성 완료 메시지 표시 → 3초 뒤 자동 숨김 */
+    public void setHeatmapComplete(double elapsedSec) {
+        heatmapStatusLabel.setText(String.format("히트맵 생성 완료 (%.1f초)", elapsedSec));
+        heatmapStatusLabel.setStyle(
+                "-fx-text-fill: #2FD44A;" +
+                "-fx-font-size: 13px;" +
+                "-fx-font-weight: 600;" +
+                "-fx-font-family: " + FONT_STACK + ";"
+        );
+        heatmapStatusLabel.setVisible(true);
+        heatmapStatusLabel.setManaged(true);
+        statusClearTimer.playFromStart();
+    }
+
+    /** 히트맵 상태 라벨 숨김 */
+    public void clearHeatmapStatus() {
+        statusClearTimer.stop();
+        heatmapStatusLabel.setText("");
+        heatmapStatusLabel.setVisible(false);
+        heatmapStatusLabel.setManaged(false);
     }
 }

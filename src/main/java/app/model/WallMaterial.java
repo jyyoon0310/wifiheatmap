@@ -111,6 +111,7 @@ public enum WallMaterial {
 
     public double attenuationDb(Band band) {
         if (band == null) return attn24Db;
-        return (band == Band.GHZ_5) ? attn5Db : attn24Db;
+        if (band == Band.GHZ_5 || band == Band.GHZ_6) return attn5Db;
+        return attn24Db;
     }
 }

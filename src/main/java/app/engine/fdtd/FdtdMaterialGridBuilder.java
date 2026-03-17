@@ -2,6 +2,7 @@ package app.engine.fdtd;
 
 import app.model.Wall;
 import app.model.WallMaterial;
+import app.solver.v2.FloorplanGridTransform;
 
 import java.util.List;
 
@@ -29,17 +30,12 @@ public final class FdtdMaterialGridBuilder {
         double safeScale = (Double.isFinite(scaleMPerPx) && scaleMPerPx > 1.0e-9) ? scaleMPerPx : 0.01;
         double dx = Math.max(1.0e-4, cfg.dxMeters);
         int pml = Math.max(8, cfg.pmlCells);
+        FloorplanGridTransform transform = new FloorplanGridTransform(widthPx, heightPx, safeScale, dx, pml);
 
-        double mapWidthM = Math.max(1.0e-6, widthPx * safeScale);
-        double mapHeightM = Math.max(1.0e-6, heightPx * safeScale);
-
-        // mapNx/mapNy: 실제 평면도 영역을 표현하는 Ez 셀 수(내부 도메인)
-        int mapNx = Math.max(4, (int) Math.ceil(mapWidthM / dx));
-        int mapNy = Math.max(4, (int) Math.ceil(mapHeightM / dx));
-
-        // 전체 계산 도메인 = 내부 도메인 + 양쪽 PML
-        int nx = mapNx + 2 * pml;
-        int ny = mapNy + 2 * pml;
+        int mapNx = transform.mapNx();
+        int mapNy = transform.mapNy();
+        int nx = transform.nx();
+        int ny = transform.ny();
 
         double[][] epsR = new double[nx][ny];
         double[][] muR = new double[nx][ny];
@@ -63,10 +59,10 @@ public final class FdtdMaterialGridBuilder {
                 MaterialProps props = resolveMaterial(w, cfg.wallPreset, cfg.frequencyGhz());
 
                 // wall endpoint를 meter -> cell index로 변환
-                int x0 = clamp((int) Math.round((w.x1 * safeScale) / dx) + pml, 0, nx - 1);
-                int y0 = clamp((int) Math.round((w.y1 * safeScale) / dx) + pml, 0, ny - 1);
-                int x1 = clamp((int) Math.round((w.x2 * safeScale) / dx) + pml, 0, nx - 1);
-                int y1 = clamp((int) Math.round((w.y2 * safeScale) / dx) + pml, 0, ny - 1);
+                int x0 = transform.toGridX(w.x1);
+                int y0 = transform.toGridY(w.y1);
+                int x1 = transform.toGridX(w.x2);
+                int y1 = transform.toGridY(w.y2);
 
                 int radius = Math.max(0, (int) Math.round(0.5 * props.thicknessM / dx));
                 rasterLine(x0, y0, x1, y1, (x, y) -> paintDisk(

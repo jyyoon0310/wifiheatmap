@@ -87,7 +87,7 @@ public class CanvasView {
         }
         if (solverOverlay != null) {
             g.save();
-            g.setGlobalAlpha(0.82);
+            g.setGlobalAlpha(0.72);
             g.drawImage(solverOverlay, 0, 0);
             g.restore();
         }

@@ -74,12 +74,18 @@ public class WifiEnvironment {
                 // 2) LOS + 1차 반사 + 1차 회절 전력 합산
                 double bandMw = 0.0;
                 double freqGhz = rc.centerFreqGhz();
-                double bwPenaltyDb = rc.bandwidthPenaltyDb();
+                // RSSI(전력) 예측에는 BW 패널티를 직접 차감하지 않는다.
+                // (BW 패널티는 링크 품질/SNR 추정에서 별도 사용 권장)
+                double bwPenaltyDb = 0.0;
 
                 double wallLoss = WifiMath.wallLossAlong(ap.x, ap.y, px, py, walls, b);
 
                 double baseLossLos = WifiMath.pathLossDb(dM, freqGhz, pathLossN);
-                double rssiLos = rc.txPowerDbm + rc.antennaGain - (baseLossLos + wallLoss + bwPenaltyDb);
+                double nearCompLos = WifiMath.nearFieldBandCompensationDb(dM, freqGhz);
+                boolean losLikely = wallLoss <= 1.0e-6;
+                double bfGainLos = WifiMath.beamformingGainDb(b, dM, losLikely);
+                double rssiLos = rc.txPowerDbm + rc.antennaGain + nearCompLos + bfGainLos
+                        - (baseLossLos + wallLoss + bwPenaltyDb);
                 bandMw += Math.pow(10.0, rssiLos / 10.0);
 
                 // 반사(모든 벽 시도)
@@ -96,7 +102,8 @@ public class WifiEnvironment {
                     if (p.lengthMeters > dM * 2.5) continue;
 
                     double baseLossRefl = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
-                    double rssiRefl = rc.txPowerDbm + rc.antennaGain
+                    double nearCompRefl = WifiMath.nearFieldBandCompensationDb(p.lengthMeters, freqGhz);
+                    double rssiRefl = rc.txPowerDbm + rc.antennaGain + nearCompRefl
                             - (baseLossRefl + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
                     if (rssiRefl < rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB) continue;
                     bandMw += Math.pow(10.0, rssiRefl / 10.0);
@@ -152,7 +159,13 @@ public class WifiEnvironment {
         if (WifiMath.isSegmentBlocked(apPt, corner, walls, ownerWall, corner, tolPx)) return 0.0;
         if (WifiMath.isSegmentBlocked(corner, rxPt, walls, ownerWall, corner, tolPx)) return 0.0;
 
-        double diffLossDb = WifiMath.knifeEdgeLossDb(hM, d1M, d2M, freqGhz);
+        // 하이브리드 회절: 가까운 코너는 UTD, 먼 코너는 Knife-Edge
+        double diffLossDb;
+        if (d1M + d2M < 2.0 * DIFFRACTION_RADIUS_M) {
+            diffLossDb = WifiMath.utdWedgeDiffractionLossDb(hM, d1M, d2M, freqGhz, 1.5);
+        } else {
+            diffLossDb = WifiMath.knifeEdgeLossDb(hM, d1M, d2M, freqGhz);
+        }
         if (diffLossDb <= 0.0) return 0.0;
 
         WifiMath.Path p = WifiMath.buildSingleCornerDiffraction(apPt, rxPt, corner, walls, scaleMPerPx, diffLossDb, band);
@@ -160,7 +173,8 @@ public class WifiEnvironment {
         if (p.lengthMeters > losM * 2.8) return 0.0;
 
         double baseLossDiff = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
-        double rssiDiff = rc.txPowerDbm + rc.antennaGain
+        double nearCompDiff = WifiMath.nearFieldBandCompensationDb(p.lengthMeters, freqGhz);
+        double rssiDiff = rc.txPowerDbm + rc.antennaGain + nearCompDiff
                 - (baseLossDiff + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
         if (rssiDiff < rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB) return 0.0;
         return Math.pow(10.0, rssiDiff / 10.0);
@@ -202,14 +216,19 @@ public class WifiEnvironment {
                 dM = Math.max(dM, MIN_DISTANCE_M);
 
                 double freqGhz = rc.centerFreqGhz();
-                double bwPenaltyDb = rc.bandwidthPenaltyDb();
+                // RSSI(전력) 예측에는 BW 패널티를 직접 차감하지 않는다.
+                double bwPenaltyDb = 0.0;
 
                 double bandMw = 0.0;
 
                 // LOS
                 double wallLoss = WifiMath.wallLossAlong(ap.x, ap.y, px, py, walls, b);
                 double baseLossLos = WifiMath.pathLossDb(dM, freqGhz, pathLossN);
-                double rssiLos = rc.txPowerDbm + rc.antennaGain - (baseLossLos + wallLoss + bwPenaltyDb);
+                double nearCompLos = WifiMath.nearFieldBandCompensationDb(dM, freqGhz);
+                boolean losLikely = wallLoss <= 1.0e-6;
+                double bfGainLos = WifiMath.beamformingGainDb(b, dM, losLikely);
+                double rssiLos = rc.txPowerDbm + rc.antennaGain + nearCompLos + bfGainLos
+                        - (baseLossLos + wallLoss + bwPenaltyDb);
                 bandMw += Math.pow(10.0, rssiLos / 10.0);
 
                 PropagationPath losPath = null;
@@ -251,7 +270,8 @@ public class WifiEnvironment {
                     if (p.lengthMeters > dM * REFLECTION_LOS_RATIO_CUTOFF) continue;
 
                     double baseLossRefl = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
-                    double rssiRefl = rc.txPowerDbm + rc.antennaGain
+                    double nearCompRefl = WifiMath.nearFieldBandCompensationDb(p.lengthMeters, freqGhz);
+                    double rssiRefl = rc.txPowerDbm + rc.antennaGain + nearCompRefl
                             - (baseLossRefl + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
                     if (rssiRefl < rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB) continue;
                     bandMw += Math.pow(10.0, rssiRefl / 10.0);
@@ -318,7 +338,13 @@ public class WifiEnvironment {
                     if (WifiMath.isSegmentBlocked(apPt, corner, walls, cc.wall, corner, tolPx)) continue;
                     if (WifiMath.isSegmentBlocked(corner, rxPt, walls, cc.wall, corner, tolPx)) continue;
 
-                    double diffLossDb = WifiMath.knifeEdgeLossDb(hM, d1M, d2M, freqGhz);
+                    // 하이브리드 회절: 가까운 코너는 UTD, 먼 코너는 Knife-Edge
+                    double diffLossDb;
+                    if (d1M + d2M < 2.0 * DIFFRACTION_RADIUS_M) {
+                        diffLossDb = WifiMath.utdWedgeDiffractionLossDb(hM, d1M, d2M, freqGhz, 1.5);
+                    } else {
+                        diffLossDb = WifiMath.knifeEdgeLossDb(hM, d1M, d2M, freqGhz);
+                    }
                     if (diffLossDb <= 0.0) continue;
 
                     WifiMath.Path p = WifiMath.buildSingleCornerDiffraction(
@@ -326,7 +352,8 @@ public class WifiEnvironment {
                     if (p == null) continue;
 
                     double baseLossDiff = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
-                    double rssiDiff = rc.txPowerDbm + rc.antennaGain
+                    double nearCompDiff = WifiMath.nearFieldBandCompensationDb(p.lengthMeters, freqGhz);
+                    double rssiDiff = rc.txPowerDbm + rc.antennaGain + nearCompDiff
                             - (baseLossDiff + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
                     if (rssiDiff < rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB) continue;
                     bandMw += Math.pow(10.0, rssiDiff / 10.0);
