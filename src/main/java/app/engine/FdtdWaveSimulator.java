@@ -32,12 +32,36 @@ public class FdtdWaveSimulator {
     private static final double C0 = 299_792_458.0;
     private static final double DEFAULT_SCALE_M_PER_PX = 0.01;
 
-    private static final double POWER_EMA_ALPHA = 0.94;
-    private static final double DISPLAY_MIN_DB = -78.0;
+    // Soft Source(+=) 전환 후 응답성 향상: Hard Source 시절 0.94 → 0.85
+    // Hard source는 매 스텝 Ez를 절대값으로 덮어써서 EMA가 느려도 상관없었으나,
+    // Soft source는 주입량이 누적식이므로 EMA가 빠르게 따라가야 초기 신호가 보임
+    private static final double POWER_EMA_ALPHA = 0.85;
+    private static final double DISPLAY_MIN_DB = -92.0;
     private static final double DISPLAY_MAX_DB = 0.0;
-    private static final double DISPLAY_FLOOR_RATIO = 2.5e-7;
-    private static final double AIR_SIGMA = 2.0e-6; // [S/m], air damping (too high면 에너지가 빨리 죽는다)
-    private static final int SOURCE_RAMP_CYCLES = 20;
+    // 표시 바닥은 충분히 낮게 두고(alpha 컷오프로 노이즈 투명화) 전체 화면이 녹색으로 채워지는 현상을 줄인다.
+    private static final double DISPLAY_FLOOR_RATIO = 1.0e-11;
+    private static final double DISPLAY_FLOOR_DB = -104.0;
+    private static final double DISPLAY_ALPHA_CUTOFF_DB = -82.0;
+    // Soft Source 전환 후 공기 감쇠 감소: Hard source는 매 스텝 Ez를 절대값으로 복구하므로
+    // 높은 sigma도 이겨냈으나, Soft source는 주입 후 감쇠에 의해 신호가 소멸되기 쉬움.
+    // 2.0e-6 → 5.0e-7 S/m 으로 줄여 파장이 멀리 퍼지도록 허용
+    private static final double AIR_SIGMA = 5.0e-7; // [S/m], air damping
+    // Soft Source 전환 후: Hard source는 ramp가 느려도 절대값으로 Ez를 덮어쓰므로
+    // 초기에도 신호가 보였으나, Soft source는 ramp 초기에 주입량이 ≈0 이어서
+    // 공기 감쇠에 지져서 신호가 사라짐 → ramp 사이클을 20→5로 단축
+    private static final int SOURCE_RAMP_CYCLES = 5;
+    // 격자 해상도가 충분치 않을 때 Nyquist 근처 주파수는 수치 분산/불안정성을 키운다.
+    // 실시간 오버레이 안정성을 위해 소스 주파수를 dt 기준으로 보수적으로 제한한다.
+    // f_eff <= SOURCE_FREQ_LIMIT_FACTOR / dt
+    // dt = 0.99*dx/(c*sqrt(2)) 기준으로 SOURCE_FREQ_LIMIT_FACTOR≈0.085이면
+    // 대략 8 cells / wavelength를 확보해 수치 이방성(별모양) 완화에 유리하다.
+    private static final double SOURCE_FREQ_LIMIT_FACTOR = 0.085;
+    // 점 소스(1셀 주입)는 축 방향 별모양(수치 이방성)이 쉽게 생긴다.
+    // 3x3 가우시안 유사 분포로 주입해 파면을 더 둥글게 만든다.
+    private static final int[] SRC_OX = {0, 1, -1, 0, 0, 1, 1, -1, -1};
+    private static final int[] SRC_OY = {0, 0, 0, 1, -1, 1, -1, 1, -1};
+    private static final double[] SRC_W = {0.36, 0.12, 0.12, 0.12, 0.12, 0.04, 0.04, 0.04, 0.04};
+    private static final int NORM_SOURCE_EXCLUDE_R = 2;
     private static final int MIN_PML_CELLS = 8;
     private static final int MAX_PML_CELLS = 20;
     private static final double MIN_DX_M = 0.004;
@@ -91,6 +115,7 @@ public class FdtdWaveSimulator {
     private long stepCount = 0L;
     private double timeNs = 0.0;
     private double visNorm = 1.0e-6;
+    private String lastVisualDebugSummary = "debug: (solver idle)";
 
     private static final class Source {
         final int gx;
@@ -289,6 +314,13 @@ public class FdtdWaveSimulator {
         );
     }
 
+    /**
+     * Solver 시각화 디버그 HUD/패널 표시용 한 줄 요약.
+     */
+    public String visualDebugSummary() {
+        return lastVisualDebugSummary;
+    }
+
     private void clearFieldState() {
         clear2D(ez);
         clear2D(ezx);
@@ -299,6 +331,7 @@ public class FdtdWaveSimulator {
         stepCount = 0L;
         timeNs = 0.0;
         visNorm = 1.0e-6;
+        lastVisualDebugSummary = "debug: field reset";
     }
 
     public void step(int subSteps) {
@@ -310,21 +343,59 @@ public class FdtdWaveSimulator {
 
     public WritableImage renderFrame() {
         double localMax = 1.0e-12;
+        double localMaxOutsideSource = 1.0e-12;
+        double localSumOutsideSource = 0.0;
+        int localCountOutsideSource = 0;
         for (int mx = 0; mx < grid.mapNx; mx++) {
             int gx = mx + pml;
             for (int my = 0; my < grid.mapNy; my++) {
                 int gy = my + pml;
-                localMax = Math.max(localMax, powerEma[gx][gy]);
+                double v = powerEma[gx][gy];
+                if (!Double.isFinite(v) || v < 0.0) {
+                    v = 0.0;
+                    powerEma[gx][gy] = 0.0;
+                }
+                localMax = Math.max(localMax, v);
+                if (!isSourceCoreCell(gx, gy)) {
+                    localMaxOutsideSource = Math.max(localMaxOutsideSource, v);
+                    localSumOutsideSource += v;
+                    localCountOutsideSource++;
+                }
             }
         }
 
-        visNorm = Math.max(localMax, visNorm * 0.999);
-        visNorm = 0.94 * visNorm + 0.06 * localMax;
+        if (!Double.isFinite(localMax) || localMax <= 0.0) {
+            localMax = 1.0e-12;
+        }
+        if (!Double.isFinite(localMaxOutsideSource) || localMaxOutsideSource <= 0.0) {
+            localMaxOutsideSource = localMax;
+        }
+
+        double localMeanOutsideSource = localSumOutsideSource / Math.max(1, localCountOutsideSource);
+        if (!Double.isFinite(localMeanOutsideSource) || localMeanOutsideSource <= 0.0) {
+            localMeanOutsideSource = localMaxOutsideSource * 0.05;
+        }
+
+        // 기준 정규화 값:
+        // - source core 제외 최대값(localMaxOutsideSource)을 기준으로 삼아
+        //   전체 화면이 단색(녹색)으로 채워지는 현상을 줄인다.
+        // - EMA로 프레임 간 튐을 완화한다.
+        double targetNorm = localMaxOutsideSource;
+        targetNorm = Math.max(1.0e-12, targetNorm);
+        if (!Double.isFinite(visNorm) || visNorm <= 0.0) {
+            visNorm = targetNorm;
+        }
+        visNorm = 0.92 * visNorm + 0.08 * targetNorm;
+        visNorm = clampDouble(visNorm, targetNorm * 0.50, targetNorm * 2.20);
         double norm = Math.max(1.0e-12, visNorm);
-        double floor = Math.max(norm * DISPLAY_FLOOR_RATIO, 1.0e-14);
+        double floorFromDb = norm * Math.pow(10.0, DISPLAY_FLOOR_DB / 10.0);
+        double floor = Math.max(Math.max(floorFromDb, norm * DISPLAY_FLOOR_RATIO), 1.0e-20);
+        double alphaCutoffPower = norm * Math.pow(10.0, DISPLAY_ALPHA_CUTOFF_DB / 10.0);
 
         double pxPerCellX = widthPx / (double) grid.mapNx;
         double pxPerCellY = heightPx / (double) grid.mapNy;
+        int visibleCells = 0;
+        int totalCells = Math.max(1, grid.mapNx * grid.mapNy);
 
         for (int mx = 0; mx < grid.mapNx; mx++) {
             int gx = mx + pml;
@@ -335,12 +406,21 @@ public class FdtdWaveSimulator {
                 int py0 = clamp((int) Math.floor(my * pxPerCellY), 0, heightPx - 1);
                 int py1 = clamp((int) Math.ceil((my + 1) * pxPerCellY), py0 + 1, heightPx);
 
-                double p = Math.max(floor, powerEma[gx][gy]);
-                double relDb = 10.0 * Math.log10(p / norm);
+                double rawP = powerEma[gx][gy];
+                if (!Double.isFinite(rawP) || rawP < 0.0) rawP = 0.0;
+                double p = Math.max(floor, rawP);
+                double ratio = p / norm;
+                if (!Double.isFinite(ratio) || ratio <= 0.0) ratio = floor / norm;
+                double relDb = 10.0 * Math.log10(ratio);
+                if (!Double.isFinite(relDb)) relDb = DISPLAY_MIN_DB;
                 relDb = clampDouble(relDb, DISPLAY_MIN_DB, DISPLAY_MAX_DB);
                 double t = (relDb - DISPLAY_MIN_DB) / (DISPLAY_MAX_DB - DISPLAY_MIN_DB);
+                if (!Double.isFinite(t)) t = 0.0;
                 t = Math.pow(clampDouble(t, 0.0, 1.0), 0.82);
                 int argb = toArgb(powerColorFromDb(t, relDb));
+                if (rawP >= alphaCutoffPower) {
+                    visibleCells++;
+                }
 
                 for (int py = py0; py < py1; py++) {
                     for (int px = px0; px < px1; px++) {
@@ -349,6 +429,17 @@ public class FdtdWaveSimulator {
                 }
             }
         }
+
+        double coverage = 100.0 * visibleCells / totalCells;
+        lastVisualDebugSummary = String.format(
+                "debug max=%.3e outMax=%.3e mean=%.3e norm=%.3e floor=%.3e vis=%.1f%%",
+                localMax,
+                localMaxOutsideSource,
+                localMeanOutsideSource,
+                norm,
+                floor,
+                coverage
+        );
 
         return frame;
     }
@@ -437,7 +528,7 @@ public class FdtdWaveSimulator {
                 int gx = clamp(grid.toGridX(ap.x), 1, nx - 2);
                 int gy = clamp(grid.toGridY(ap.y), 1, ny - 2);
                 double fHz = Math.max(1.0, rc.centerFreqGhz() * 1.0e9);
-                double fNyquistSafe = 0.45 / dtSeconds;
+                double fNyquistSafe = SOURCE_FREQ_LIMIT_FACTOR / dtSeconds;
                 double fEff = Math.min(fHz, fNyquistSafe);
                 if (fEff < fHz) clampedFreqCount++;
 
@@ -462,14 +553,16 @@ public class FdtdWaveSimulator {
         for (int i = 0; i < nx; i++) {
             for (int j = 0; j < ny - 1; j++) {
                 double dEdy = (ez[i][j + 1] - ez[i][j]) / dxMeters;
-                hx[i][j] = bHx[i][j] * hx[i][j] - cHx[i][j] * dEdy;
+                double next = bHx[i][j] * hx[i][j] - cHx[i][j] * dEdy;
+                hx[i][j] = Double.isFinite(next) ? next : 0.0;
             }
         }
 
         for (int i = 0; i < nx - 1; i++) {
             for (int j = 0; j < ny; j++) {
                 double dEdx = (ez[i + 1][j] - ez[i][j]) / dxMeters;
-                hy[i][j] = bHy[i][j] * hy[i][j] + cHy[i][j] * dEdx;
+                double next = bHy[i][j] * hy[i][j] + cHy[i][j] * dEdx;
+                hy[i][j] = Double.isFinite(next) ? next : 0.0;
             }
         }
     }
@@ -480,9 +573,14 @@ public class FdtdWaveSimulator {
                 double curlHy = (hy[i][j] - hy[i - 1][j]) / dxMeters;
                 double curlHx = (hx[i][j] - hx[i][j - 1]) / dxMeters;
 
-                ezx[i][j] = cEx1[i][j] * ezx[i][j] + cEx2[i][j] * curlHy;
-                ezy[i][j] = cEy1[i][j] * ezy[i][j] - cEy2[i][j] * curlHx;
-                ez[i][j] = ezx[i][j] + ezy[i][j];
+                double ex = cEx1[i][j] * ezx[i][j] + cEx2[i][j] * curlHy;
+                double ey = cEy1[i][j] * ezy[i][j] - cEy2[i][j] * curlHx;
+                if (!Double.isFinite(ex)) ex = 0.0;
+                if (!Double.isFinite(ey)) ey = 0.0;
+                ezx[i][j] = ex;
+                ezy[i][j] = ey;
+                double sum = ex + ey;
+                ez[i][j] = Double.isFinite(sum) ? sum : 0.0;
             }
         }
     }
@@ -498,12 +596,20 @@ public class FdtdWaveSimulator {
                 ramp *= ramp;
             }
 
-            // Hard source: 소스 셀 에너지를 매 스텝 강제로 유지해
-            // "퍼졌다가 완전히 사라지는" 체감 현상을 줄인다.
+            // Soft source + 3x3 분포 주입:
+            // Hard source(=)는 Maxwell 방정식을 덮어써 에너지 폭발을 유발.
+            // Soft source(+=)는 curl H 결과에 소스를 더해 수치 안정성 유지.
+            // 1셀 점 주입보다 파면 이방성(별모양 축방향 로브)을 줄여준다.
             double src = s.amplitude * Math.sin(s.phase) * ramp;
-            ezx[s.gx][s.gy] = 0.5 * src;
-            ezy[s.gx][s.gy] = 0.5 * src;
-            ez[s.gx][s.gy] = src;
+            for (int k = 0; k < SRC_OX.length; k++) {
+                int gx = s.gx + SRC_OX[k];
+                int gy = s.gy + SRC_OY[k];
+                if (gx <= 0 || gx >= nx - 1 || gy <= 0 || gy >= ny - 1) continue;
+                double v = src * SRC_W[k];
+                ezx[gx][gy] += 0.5 * v;
+                ezy[gx][gy] += 0.5 * v;
+                ez[gx][gy] = ezx[gx][gy] + ezy[gx][gy];
+            }
             s.phase += s.omegaDt;
         }
     }
@@ -512,10 +618,31 @@ public class FdtdWaveSimulator {
         double beta = 1.0 - POWER_EMA_ALPHA;
         for (int i = 1; i < nx - 1; i++) {
             for (int j = 1; j < ny - 1; j++) {
-                double p = ez[i][j] * ez[i][j];
-                powerEma[i][j] = POWER_EMA_ALPHA * powerEma[i][j] + beta * p;
+                double e = ez[i][j];
+                if (!Double.isFinite(e)) {
+                    e = 0.0;
+                    ez[i][j] = 0.0;
+                    ezx[i][j] = 0.0;
+                    ezy[i][j] = 0.0;
+                }
+                double p = e * e;
+                if (!Double.isFinite(p)) p = 0.0;
+                double prev = powerEma[i][j];
+                if (!Double.isFinite(prev) || prev < 0.0) prev = 0.0;
+                double next = POWER_EMA_ALPHA * prev + beta * p;
+                powerEma[i][j] = Double.isFinite(next) ? next : 0.0;
             }
         }
+    }
+
+    private boolean isSourceCoreCell(int gx, int gy) {
+        int r2 = NORM_SOURCE_EXCLUDE_R * NORM_SOURCE_EXCLUDE_R;
+        for (Source s : sources) {
+            int dx = gx - s.gx;
+            int dy = gy - s.gy;
+            if (dx * dx + dy * dy <= r2) return true;
+        }
+        return false;
     }
 
     private static double selectReferenceFrequencyGhz(WifiEnvironment env, Band bandFilter) {
@@ -563,8 +690,12 @@ public class FdtdWaveSimulator {
     }
 
     private static double sourceAmplitudeFromEirpDbm(double eirpDbm) {
+        // Soft Source(+=): Maxwell curl H에 더하는 방식이므로
+        // Hard Source(=) 대비 실제 Ez 누적량이 훨씬 작다.
+        // 전형적 EIRP 23dBm AP → amplitude: Hard=1.1 V/m → Soft=10 V/m 급으로 증가 필요.
+        // 단순히 10× 스케일링으로 적용 (렌더링 정규화로 절대값은 의미 없음)
         double t = clampDouble((eirpDbm - 5.0) / 30.0, 0.0, 1.0);
-        return 0.35 + 1.45 * t;
+        return 10.0 * (0.35 + 1.45 * t);
     }
 
     private static double initialPhase(AP ap, Band band) {
@@ -598,7 +729,7 @@ public class FdtdWaveSimulator {
 
     private static Color powerColorFromDb(double t, double relDb) {
         double u = clampDouble(t, 0.0, 1.0);
-        if (u <= 0.0) return Color.rgb(10, 8, 28, 0.0);
+        if (u <= 0.0 || relDb <= DISPLAY_ALPHA_CUTOFF_DB) return Color.rgb(10, 8, 28, 0.0);
 
         Color c;
         if (u < 0.10) {
@@ -619,8 +750,8 @@ public class FdtdWaveSimulator {
             c = lerp(Color.rgb(255, 168, 20, 0.90), Color.rgb(153, 0, 0, 0.94), (u - 0.92) / 0.08);
         }
 
-        double alphaBoost = 0.08 * clampDouble((relDb + 10.0) / 10.0, 0.0, 1.0);
-        double alpha = clampDouble(0.10 + c.getOpacity() * 0.75 + alphaBoost, 0.08, 0.95);
+        double visibility = clampDouble((relDb - DISPLAY_ALPHA_CUTOFF_DB) / 30.0, 0.0, 1.0);
+        double alpha = clampDouble((0.06 + c.getOpacity() * 0.84) * Math.pow(visibility, 0.70), 0.0, 0.92);
         return new Color(c.getRed(), c.getGreen(), c.getBlue(), alpha);
     }
 

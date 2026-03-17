@@ -811,11 +811,13 @@ public final class WifiMath {
         double t = (rssi - vmin) / (vmax - vmin);
         t = Math.max(0.0, Math.min(1.0, t));
 
-        // [t, R, G, B]
+        // [t, R, G, B] — 5단계 색상 정지점 (NetSpot 스타일 세밀한 그라디언트)
         double[][] stops = {
-                {0.00, 0,   160, 0},    // Green
-                {0.50, 255, 235, 0},    // Yellow
-                {1.00, 230, 40,  20}    // Red
+                {0.00,   0, 100,   0},   // Dark Green (매우 약한 신호)
+                {0.25,   0, 200,   0},   // Green
+                {0.50, 255, 235,   0},   // Yellow
+                {0.75, 255, 140,   0},   // Orange
+                {1.00, 230,  40,  20}    // Red (매우 강한 신호)
         };
 
         int i = 0;
@@ -876,6 +878,144 @@ public final class WifiMath {
                 pw.setColor(xx, yy, c);
             }
         }
+    }
+
+    // ===== Edge-Preserving Bilateral Filter (Tomasi & Manduchi 1998) =====
+
+    /**
+     * dBm 2D 그리드에 대한 Bilateral Filter.
+     *
+     * 공간적으로 가까운 픽셀끼리 스무딩하되,
+     * dBm 차이가 큰 경계(= 벽에 의한 신호 불연속)는 자동으로 보존.
+     *
+     * W(i,j→p,q) = exp(-(Δd²)/(2σ_s²)) × exp(-(ΔdBm²)/(2σ_r²))
+     *
+     * @param dbmGrid      width×height dBm 값 (row-major, dbmGrid[y*width+x])
+     * @param width        이미지 폭 (px)
+     * @param height       이미지 높이 (px)
+     * @param spatialSigma 공간 시그마 (px) — 블러 반경 (권장: gridStepPx)
+     * @param rangeSigma   범위 시그마 (dBm) — 값 차이 허용치 (권장: 6~8)
+     * @return 새로운 스무딩된 dBm 배열
+     */
+    public static double[] bilateralFilterDbm(double[] dbmGrid, int width, int height,
+                                               double spatialSigma, double rangeSigma) {
+        if (dbmGrid == null || width <= 0 || height <= 0) return dbmGrid;
+        if (spatialSigma <= 0.0 || rangeSigma <= 0.0) return dbmGrid.clone();
+
+        int radius = (int) Math.ceil(2.0 * spatialSigma);
+        double spatialDenom = 2.0 * spatialSigma * spatialSigma;
+        double rangeDenom = 2.0 * rangeSigma * rangeSigma;
+
+        // 공간 가우시안 커널 사전 계산 (대칭이므로 1/4만 계산)
+        double[] spatialKernel = new double[(radius + 1) * (radius + 1)];
+        for (int dy = 0; dy <= radius; dy++) {
+            for (int dx = 0; dx <= radius; dx++) {
+                spatialKernel[dy * (radius + 1) + dx] = Math.exp(-(dx * dx + dy * dy) / spatialDenom);
+            }
+        }
+
+        double[] result = new double[width * height];
+
+        // 행별 병렬 처리
+        java.util.stream.IntStream.range(0, height).parallel().forEach(y -> {
+            for (int x = 0; x < width; x++) {
+                double centerDbm = dbmGrid[y * width + x];
+                double weightSum = 0.0;
+                double valueSum = 0.0;
+
+                int yMin = Math.max(0, y - radius);
+                int yMax = Math.min(height - 1, y + radius);
+                int xMin = Math.max(0, x - radius);
+                int xMax = Math.min(width - 1, x + radius);
+
+                for (int qy = yMin; qy <= yMax; qy++) {
+                    int dy = Math.abs(qy - y);
+                    for (int qx = xMin; qx <= xMax; qx++) {
+                        int dx = Math.abs(qx - x);
+                        double neighborDbm = dbmGrid[qy * width + qx];
+
+                        // 공간 가중치 (사전 계산된 커널)
+                        double ws = spatialKernel[dy * (radius + 1) + dx];
+
+                        // 범위 가중치 (dBm 차이 → 벽 경계에서 자동 억제)
+                        double dDbm = neighborDbm - centerDbm;
+                        double wr = Math.exp(-(dDbm * dDbm) / rangeDenom);
+
+                        double w = ws * wr;
+                        weightSum += w;
+                        valueSum += w * neighborDbm;
+                    }
+                }
+
+                result[y * width + x] = (weightSum > 0.0) ? valueSum / weightSum : centerDbm;
+            }
+        });
+
+        return result;
+    }
+
+    // ===== Separable Gaussian Blur (dBm 그리드용) =====
+
+    /**
+     * 1D separable Gaussian blur on dBm grid.
+     * bilateral 필터 후 residual ray(바퀴살) 잔재 제거용 경량 후처리.
+     *
+     * 수평 → 수직 순서로 두 번 1D 컨볼루션 수행 (O(n·r), separability 활용).
+     * 경계: clamp-to-edge (border 픽셀을 그대로 연장)
+     *
+     * @param src    원본 dBm 배열 (row-major, src[y*width+x])
+     * @param width  이미지 폭 (px)
+     * @param height 이미지 높이 (px)
+     * @param sigma  가우시안 σ (px), 권장: 1.0~2.0
+     * @return 새로운 스무딩된 dBm 배열
+     */
+    public static double[] gaussianBlurDbm(double[] src, int width, int height, double sigma) {
+        if (src == null || width <= 0 || height <= 0 || sigma <= 0.0) return src;
+
+        int radius = (int) Math.ceil(3.0 * sigma); // 3σ rule: 99.7% 포함
+        int kernelSize = radius * 2 + 1;
+
+        // 1D 가우시안 커널 사전 계산
+        double[] kernel = new double[kernelSize];
+        double twoSigmaSq = 2.0 * sigma * sigma;
+        double kernelSum = 0.0;
+        for (int i = 0; i < kernelSize; i++) {
+            int x = i - radius;
+            kernel[i] = Math.exp(-(x * x) / twoSigmaSq);
+            kernelSum += kernel[i];
+        }
+        for (int i = 0; i < kernelSize; i++) {
+            kernel[i] /= kernelSum; // 정규화
+        }
+
+        double[] tmp = new double[width * height]; // 수평 패스 결과
+        double[] dst = new double[width * height]; // 수직 패스 결과 (최종)
+
+        // 수평 패스 (각 행에 1D 컨볼루션)
+        java.util.stream.IntStream.range(0, height).parallel().forEach(y -> {
+            for (int x = 0; x < width; x++) {
+                double sum = 0.0;
+                for (int k = 0; k < kernelSize; k++) {
+                    int sx = Math.max(0, Math.min(width - 1, x + k - radius)); // clamp
+                    sum += kernel[k] * src[y * width + sx];
+                }
+                tmp[y * width + x] = sum;
+            }
+        });
+
+        // 수직 패스 (각 열에 1D 컨볼루션)
+        java.util.stream.IntStream.range(0, height).parallel().forEach(y -> {
+            for (int x = 0; x < width; x++) {
+                double sum = 0.0;
+                for (int k = 0; k < kernelSize; k++) {
+                    int sy = Math.max(0, Math.min(height - 1, y + k - radius)); // clamp
+                    sum += kernel[k] * tmp[sy * width + x];
+                }
+                dst[y * width + x] = sum;
+            }
+        });
+
+        return dst;
     }
 
     // ===== 간단 박스 블러 =====

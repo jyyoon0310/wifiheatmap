@@ -93,6 +93,7 @@ public class MainController {
     private long solverMaterialSignature = Long.MIN_VALUE;
     private double solverScaleSignature = Double.NaN;
     private Band solverBandSignature = null;
+    private String solverDebugText = "debug: -";
     private Task<HeatmapGenerator.HeatmapResult> legacyHeatmapTask;
     private OnboardingStep onboardingStep = OnboardingStep.NONE;
 
@@ -328,6 +329,7 @@ public class MainController {
         long solverStep = (fdtdSolver == null) ? 0L : fdtdSolver.stepCount();
         double solverTimeNs = (fdtdSolver == null) ? 0.0 : fdtdSolver.timeNs();
         window.getLeftPanel().setSolverStatus(solverRunning, solverStep, solverTimeNs, solverFpsEma);
+        window.getLeftPanel().setSolverDebug(solverDebugText);
         window.getBottomBar().setRssiLegendRange(state.legendMinProperty().get(), state.legendMaxProperty().get());
         window.getBottomBar().setCurrentRssi(currentMouseStrongestRssi());
 
@@ -348,7 +350,8 @@ public class MainController {
                 selectedAp,
                 hoverWall,
                 selectedWall,
-                List.of()
+                List.of(),
+                (state.getTool() == AppState.Tool.SOLVER) ? solverDebugText : null
         );
     }
 
@@ -893,9 +896,9 @@ public class MainController {
     /**
      * 활성 AP의 최고 주파수 밴드에 따라 적절한 gridStep을 자동 결정.
      * 파장이 짧은 고주파수일수록 더 세밀한 격자가 필요함.
-     *   6GHz: 4px (λ≈50mm, 가장 세밀)
-     *   5GHz: 5px (λ≈60mm)
-     *   2.4GHz: 8px (λ≈125mm, 기존 기본값)
+     *   6GHz: 3px (λ≈50mm, 가장 세밀) — ray 폭 감소, bilateral+gaussian 효과 극대화
+     *   5GHz: 4px (λ≈60mm)
+     *   2.4GHz: 6px (λ≈125mm) — 8→6px 감소로 ray 폭 축소, adaptive refinement 보완
      */
     private int computeAdaptiveGridStep(WifiEnvironment env) {
         boolean has6 = env.getAps().stream()
@@ -906,9 +909,9 @@ public class MainController {
                 .filter(ap -> ap != null && ap.enabled)
                 .anyMatch(ap -> ap.radios.get(app.model.Band.GHZ_5) != null
                         && ap.radios.get(app.model.Band.GHZ_5).enabled);
-        if (has6) return 4;
-        if (has5) return 5;
-        return 8;
+        if (has6) return 3;
+        if (has5) return 4;
+        return 6;
     }
 
     /** gridStep에 맞게 smoothRadius도 자동 연동 */
@@ -950,6 +953,7 @@ public class MainController {
         solverBandSignature = null;
         solverStartWallNs = 0L;
         solverLastTelemetryNs = 0L;
+        solverDebugText = "debug: -";
     }
 
     private void startSolver() {
@@ -959,6 +963,7 @@ public class MainController {
         if (fdtdSolver != null && fdtdSolver.sourceCount() > 0) {
             fdtdSolver.step(24);
             solverOverlayImage = fdtdSolver.renderFrame();
+            solverDebugText = fdtdSolver.visualDebugSummary();
         }
         solverRunning = true;
         solverStartWallNs = System.nanoTime();
@@ -986,6 +991,7 @@ public class MainController {
         stopSolver();
         if (!ensureSolverReady(false)) {
             solverOverlayImage = null;
+            solverDebugText = "debug: solver not ready";
             render();
             return;
         }
@@ -997,6 +1003,7 @@ public class MainController {
         solverLastTelemetryNs = 0L;
         solverFpsEma = Double.NaN;
         solverOverlayImage = fdtdSolver.renderFrame();
+        solverDebugText = fdtdSolver.visualDebugSummary();
         render();
     }
 
@@ -1034,6 +1041,7 @@ public class MainController {
             System.out.printf("[SolverV2] backend=%s%n", fdtdSolver.backendName());
             System.out.println(fdtdSolver.diagnosticsSummary());
             solverOverlayImage = fdtdSolver.renderFrame();
+            solverDebugText = fdtdSolver.visualDebugSummary();
             solverFpsEma = Double.NaN;
 
             solverBandSignature = solverBand;
@@ -1049,11 +1057,13 @@ public class MainController {
             fdtdSolver.refreshSources(env);
             System.out.println(fdtdSolver.diagnosticsSummary());
             solverOverlayImage = fdtdSolver.renderFrame();
+            solverDebugText = fdtdSolver.visualDebugSummary();
             solverFpsEma = Double.NaN;
             solverSourceSignature = sourceSig;
         }
         if (fdtdSolver.sourceCount() <= 0) {
             solverOverlayImage = null;
+            solverDebugText = "debug: no active source";
             if (showErrorIfMissingMap) {
                 showInfo("선택된 표시 밴드에 활성 AP 라디오가 없습니다.\n밴드를 'All' 또는 활성 밴드로 바꿔주세요.");
             }
@@ -1149,6 +1159,7 @@ public class MainController {
         fdtdSolver.step(subSteps);
         if (fdtdSolver.stepCount() % Math.max(1, solverRenderFrameMod) == 0L) {
             solverOverlayImage = fdtdSolver.renderFrame();
+            solverDebugText = fdtdSolver.visualDebugSummary();
             render();
         }
 
@@ -1158,7 +1169,7 @@ public class MainController {
             double runtimeSec = (solverStartWallNs <= 0L) ? 0.0 : (now - solverStartWallNs) / 1_000_000_000.0;
             double dtNs = fdtdSolver.dtSeconds() * 1.0e9;
             System.out.printf(
-                    "[SolverV2] runtime=%.1fs step=%d fps=%s dx=%.4fm dt=%.4fns CFL=%.4f pml=%d src=%d materials(air=%d wall=%d door=%d window=%d)%n",
+                    "[SolverV2] runtime=%.1fs step=%d fps=%s dx=%.4fm dt=%.4fns CFL=%.4f pml=%d src=%d materials(air=%d wall=%d door=%d window=%d) %s%n",
                     runtimeSec,
                     fdtdSolver.stepCount(),
                     Double.isFinite(solverFpsEma) ? String.format("%.1f", solverFpsEma) : "-",
@@ -1170,7 +1181,8 @@ public class MainController {
                     ms.airCells(),
                     ms.wallCells(),
                     ms.doorCells(),
-                    ms.windowCells()
+                    ms.windowCells(),
+                    (solverDebugText == null ? "debug:-" : solverDebugText)
             );
         }
     }

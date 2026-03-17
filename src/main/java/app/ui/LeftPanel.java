@@ -101,6 +101,7 @@ public class LeftPanel {
 
     private final Label solverStateLabel = new Label("대기");
     private final Label solverStatsLabel = new Label("step 0 / time 0 ns / fps -");
+    private final Label solverDebugLabel = new Label("debug: -");
 
     // 외부에서 주입받을 핸들러(컨트롤러가 연결)
     private Runnable onApplyScale = () -> {};
@@ -167,6 +168,8 @@ public class LeftPanel {
         solverOverlayCheck.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 12px;");
         solverStateLabel.setStyle("-fx-text-fill: " + Styles.TEXT_MAIN + "; -fx-font-size: 12px; -fx-font-weight: 600;");
         solverStatsLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
+        solverDebugLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 10px; -fx-font-family: 'Menlo';");
+        solverDebugLabel.setWrapText(true);
 
         solverBandCombo.getItems().setAll("All (2.4/5/6)", "2.4GHz", "5GHz", "6GHz");
         solverBandCombo.getSelectionModel().selectFirst();
@@ -187,7 +190,8 @@ public class LeftPanel {
                 new Label("Render every N frame: 자동"),
                 solverOverlayCheck,
                 solverStateLabel,
-                solverStatsLabel
+                solverStatsLabel,
+                solverDebugLabel
         );
 
         Styles.styleTextField(apNameField);
@@ -532,6 +536,11 @@ public class LeftPanel {
         solverStateLabel.setText(running ? "실행중" : "대기");
         String fpsTxt = Double.isFinite(fps) && fps > 0.0 ? String.format("%.1f", fps) : "-";
         solverStatsLabel.setText(String.format("step %d / time %.0f ns / fps %s", step, timeNs, fpsTxt));
+    }
+
+    public void setSolverDebug(String debugText) {
+        String txt = (debugText == null || debugText.isBlank()) ? "debug: -" : debugText;
+        solverDebugLabel.setText(txt);
     }
 
     public void setOnSolverConfigChanged(Runnable onSolverConfigChanged) {

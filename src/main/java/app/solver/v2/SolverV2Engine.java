@@ -40,6 +40,7 @@ public final class SolverV2Engine {
         double courantNumber();
         FdtdWaveSimulator.MaterialStats materialStats();
         String diagnosticsSummary();
+        String visualDebugSummary();
     }
 
     private static final class CpuBackend implements Backend {
@@ -66,6 +67,7 @@ public final class SolverV2Engine {
         @Override public double courantNumber() { return sim.courantNumber(); }
         @Override public FdtdWaveSimulator.MaterialStats materialStats() { return sim.materialStats(); }
         @Override public String diagnosticsSummary() { return sim.diagnosticsSummary(); }
+        @Override public String visualDebugSummary() { return sim.visualDebugSummary(); }
     }
 
     private static final class GpuBackend implements Backend {
@@ -92,6 +94,7 @@ public final class SolverV2Engine {
         @Override public double courantNumber() { return session.courantNumber(); }
         @Override public FdtdWaveSimulator.MaterialStats materialStats() { return session.materialStats(); }
         @Override public String diagnosticsSummary() { return session.diagnosticsSummary(); }
+        @Override public String visualDebugSummary() { return session.visualDebugSummary(); }
     }
 
     private final Backend backend;
@@ -167,4 +170,5 @@ public final class SolverV2Engine {
     public double courantNumber() { return backend.courantNumber(); }
     public FdtdWaveSimulator.MaterialStats materialStats() { return backend.materialStats(); }
     public String diagnosticsSummary() { return backend.diagnosticsSummary(); }
+    public String visualDebugSummary() { return backend.visualDebugSummary(); }
 }

@@ -43,5 +43,14 @@ public interface GpuWaveSolver {
         double courantNumber();
         FdtdWaveSimulator.MaterialStats materialStats();
         String diagnosticsSummary();
+
+        /**
+         * Per-frame visualization debug summary.
+         * (예: max/mean/norm/floor/coverage)
+         * 기본 구현은 빈 문자열이며, backend가 제공하면 LeftPanel/Canvas HUD에 표시된다.
+         */
+        default String visualDebugSummary() {
+            return "";
+        }
     }
 }

@@ -41,13 +41,18 @@ Solver 시작 시 콘솔에 다음 항목이 출력됩니다.
 
 즉, 검증 시 필요한 핵심 런타임 지표를 바로 확인할 수 있습니다.
 
-## GPU 가속 확장 포인트
+## GPU 가속 동작 방식
 
-기본 빌드는 CPU backend를 사용합니다.
-GPU backend는 SPI(`app.solver.v2.GpuWaveSolver`) 구현체를 외부 모듈로 제공하면 AUTO 모드에서 자동 선택됩니다.
+기본 빌드에는 macOS용 **Metal native backend**(`app.solver.v2.MetalGpuWaveSolver`)가 포함됩니다.
+Gradle `run` 시 `buildMetalNative`가 자동 실행되어 `build/native/libmetalsolverjni.dylib`를 생성합니다.
 
-- 구현체가 없거나 초기화 실패 시 CPU fallback
-- 콘솔에 `backend=CPU` 또는 `backend=GPU`가 출력됨
+- Metal 세션 생성 성공 시: `backend=GPU`로 자동 선택
+- GPU 초기화 실패/미지원 시: 안전하게 `backend=CPU` fallback
+- 콘솔 로그에서 `backend=...` 및 `[SolverV2][Metal] ...`로 실제 동작 경로 확인
+
+보조 backend로 Aparapi(OpenCL) 구현(`app.solver.v2.AparapiGpuWaveSolver`)도 남아 있습니다.
+
+추가 실험용 GPU backend가 필요하면 SPI(`app.solver.v2.GpuWaveSolver`) 구현체를 추가로 제공해도 됩니다.
 
 ## 검증 시나리오 3종 (필수)
 

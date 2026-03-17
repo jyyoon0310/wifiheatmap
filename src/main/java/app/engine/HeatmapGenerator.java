@@ -76,9 +76,9 @@ public class HeatmapGenerator {
 
     // ===== Adaptive Sampling 튜닝 =====
     /** 인접 그리드 꼭짓점 간 dBm 차이가 이 값을 초과하면 세분화 */
-    private static final double REFINE_THRESHOLD_DB = 6.0;
-    /** 최대 세분화 깊이 (0=코스 그리드만, 3=최소 셀 = gridStep/8) */
-    private static final int MAX_REFINE_DEPTH = 3;
+    private static final double REFINE_THRESHOLD_DB = 4.0;
+    /** 최대 세분화 깊이 (0=코스 그리드만, 4=최소 셀 = gridStep/16) */
+    private static final int MAX_REFINE_DEPTH = 4;
 
     private static final class WallCand {
         final Wall wall;
@@ -163,10 +163,10 @@ public class HeatmapGenerator {
             int py = Math.min(height - 1, gy * gridStepPx);
             coarseDbm[idx] = computeRssiAt(px, py, enabled, walls, scaleMPerPx, pathLossN, minDistanceM, clientHeightM);
 
-            // 진행률: Phase 1 = 0~40%
+            // 진행률: Phase 1 = 0~35%
             int done = completedCoarse.incrementAndGet();
             if (progressCallback != null && done % coarseProgressInterval == 0) {
-                progressCallback.accept(0.4 * done / totalCoarse);
+                progressCallback.accept(0.35 * done / totalCoarse);
             }
         });
 
@@ -258,15 +258,15 @@ public class HeatmapGenerator {
             refineCells = nextLevel;
         }
 
-        // 진행률: Phase 2 완료 = 50%
+        // 진행률: Phase 2 완료 = 45%
         if (progressCallback != null) {
-            progressCallback.accept(0.5);
+            progressCallback.accept(0.45);
         }
 
         // ====================================================================
-        //  Phase 3: Bicubic 보간 → 픽셀별 dBm → 색상 변환
+        //  Phase 3: Bicubic 보간 → 픽셀별 dBm 배열 (색상 변환은 아직 안 함)
         // ====================================================================
-        int[] argbPixels = new int[width * height];
+        double[] dbmGrid = new double[width * height];
         int totalRows = height;
         AtomicInteger completedRows = new AtomicInteger(0);
         int rowProgressInterval = Math.max(1, totalRows / 20);
@@ -292,28 +292,36 @@ public class HeatmapGenerator {
 
                 double dbm;
                 if (hasRefinement) {
-                    // 세분화된 영역: 해당 서브셀에서 Bilinear 보간
-                    // 서브셀 결정
+                    // 세분화된 영역: 서브셀 기반 Bicubic 보간 (통일)
+                    // 가장 가까운 서브셀 결정
                     int subX0, subY0, subX1, subY1;
                     if (px <= mx) { subX0 = cx0; subX1 = mx; }
                     else          { subX0 = mx;  subX1 = cx1; }
                     if (py <= my) { subY0 = cy0; subY1 = my; }
                     else          { subY0 = my;  subY1 = cy1; }
 
-                    // 4개 서브셀 꼭짓점 값 조회
-                    double v00 = sampleOrNearest(sampleMap, subX0, subY0, coarseDbm, gw, gh, gridStepPx, width, height);
-                    double v10 = sampleOrNearest(sampleMap, subX1, subY0, coarseDbm, gw, gh, gridStepPx, width, height);
-                    double v01 = sampleOrNearest(sampleMap, subX0, subY1, coarseDbm, gw, gh, gridStepPx, width, height);
-                    double v11 = sampleOrNearest(sampleMap, subX1, subY1, coarseDbm, gw, gh, gridStepPx, width, height);
+                    int halfW = subX1 - subX0;
+                    int halfH = subY1 - subY0;
 
-                    double tx = (subX1 > subX0) ? (double)(px - subX0) / (subX1 - subX0) : 0.0;
-                    double ty = (subY1 > subY0) ? (double)(py - subY0) / (subY1 - subY0) : 0.0;
+                    // 4×4 이웃 값을 sampleMap에서 조회 (Bicubic 통일)
+                    double[][] grid4x4 = new double[4][4];
+                    for (int dy = -1; dy <= 2; dy++) {
+                        for (int dx = -1; dx <= 2; dx++) {
+                            int sx = subX0 + dx * halfW;
+                            int sy = subY0 + dy * halfH;
+                            sx = Math.max(0, Math.min(width - 1, sx));
+                            sy = Math.max(0, Math.min(height - 1, sy));
+                            grid4x4[dy + 1][dx + 1] = sampleOrNearest(sampleMap, sx, sy, coarseDbm, gw, gh, gridStepPx, width, height);
+                        }
+                    }
+
+                    double tx = (halfW > 0) ? (double)(px - subX0) / halfW : 0.0;
+                    double ty = (halfH > 0) ? (double)(py - subY0) / halfH : 0.0;
                     tx = Math.max(0.0, Math.min(1.0, tx));
                     ty = Math.max(0.0, Math.min(1.0, ty));
-                    dbm = bilinearInterp(v00, v10, v01, v11, tx, ty);
+                    dbm = WifiMath.bicubicCatmullRom(grid4x4, tx, ty);
                 } else {
                     // 코스 그리드: Bicubic (Catmull-Rom) 보간
-                    // 4×4 이웃 꼭짓점 값 수집
                     double[][] grid4x4 = new double[4][4];
                     for (int dy = -1; dy <= 2; dy++) {
                         for (int dx = -1; dx <= 2; dx++) {
@@ -330,14 +338,50 @@ public class HeatmapGenerator {
                     dbm = WifiMath.bicubicCatmullRom(grid4x4, tx, ty);
                 }
 
-                Color c = WifiMath.rssiToColor(dbm, legendMinDbm, legendMaxDbm);
-                argbPixels[py * width + px] = colorToArgb(c);
+                dbmGrid[py * width + px] = dbm;
             }
 
-            // 진행률: Phase 3 = 50~100%
+            // 진행률: Phase 3 = 45~75%
             int done = completedRows.incrementAndGet();
             if (progressCallback != null && done % rowProgressInterval == 0) {
-                progressCallback.accept(0.5 + 0.5 * done / totalRows);
+                progressCallback.accept(0.45 + 0.30 * done / totalRows);
+            }
+        });
+
+        // ====================================================================
+        //  Phase 3.5: Bilateral Filter — edge-preserving 스무딩
+        //  벽에 의한 RSSI 불연속은 자동 보존, 같은 방 내부는 부드럽게
+        // ====================================================================
+        if (progressCallback != null) {
+            progressCallback.accept(0.75);
+        }
+        // spatialSigma: ray 폭(~gridStep)보다 크게 → ray를 공간적으로 블렌딩
+        // rangeSigma=12dBm: ray 경계 점프(8~12dBm) ≤ σ_r → 블렌딩
+        //                  벽 감쇠(15~25dBm) > σ_r → 벽 경계 보존 (ITU-R P.2040)
+        double bilateralSpatialSigma = Math.max(6.0, gridStepPx * 1.5);
+        double bilateralRangeSigma = 12.0;
+        final double[] bilateralDbm = WifiMath.bilateralFilterDbm(dbmGrid, width, height,
+                bilateralSpatialSigma, bilateralRangeSigma);
+
+        // ====================================================================
+        //  Phase 3.6: Light Gaussian 후처리 — bilateral 후 잔여 ray 잔재 제거
+        //  σ=1.5px: 미세 바퀴살 줄무늬를 부드럽게 블렌딩, 전체 형태는 유지
+        // ====================================================================
+        final double[] smoothedDbm = WifiMath.gaussianBlurDbm(bilateralDbm, width, height, 1.5);
+
+        if (progressCallback != null) {
+            progressCallback.accept(0.90);
+        }
+
+        // ====================================================================
+        //  Phase 4: dBm → 색상 변환 → ARGB 픽셀 배열
+        // ====================================================================
+        int[] argbPixels = new int[width * height];
+        IntStream.range(0, height).parallel().forEach(py -> {
+            for (int px = 0; px < width; px++) {
+                double dbm = smoothedDbm[py * width + px];
+                Color c = WifiMath.rssiToColor(dbm, legendMinDbm, legendMaxDbm);
+                argbPixels[py * width + px] = colorToArgb(c);
             }
         });
 
@@ -347,7 +391,6 @@ public class HeatmapGenerator {
         }
 
         // WritableImage는 JavaFX Thread에서만 생성 가능 → int[] 버퍼만 반환
-        // smoothRadiusPx는 0으로 전달 (Bicubic 보간이 boxBlur를 대체)
         return new HeatmapResult(argbPixels, width, height, 0,
                 usedGpuLastRun, gpuFallbackLastRun);
     }

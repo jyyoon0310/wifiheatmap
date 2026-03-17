@@ -11,6 +11,7 @@ import javafx.scene.image.ImageView;
 import javafx.scene.image.WritableImage;
 import javafx.scene.layout.StackPane;
 import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
 
 import java.util.List;
 
@@ -77,7 +78,8 @@ public class CanvasView {
                        AP selectedAp,
                        Wall hoverWall,
                        Wall selectedWall,
-                       List<PropagationPath> debugPaths) {
+                       List<PropagationPath> debugPaths,
+                       String solverDebugText) {
 
         g.clearRect(0, 0, drawCanvas.getWidth(), drawCanvas.getHeight());
 
@@ -87,9 +89,10 @@ public class CanvasView {
         }
         if (solverOverlay != null) {
             g.save();
-            g.setGlobalAlpha(0.72);
+            g.setGlobalAlpha(0.74);
             g.drawImage(solverOverlay, 0, 0);
             g.restore();
+            drawSolverDebugHud(solverDebugText);
         }
 
         // walls
@@ -214,7 +217,7 @@ public class CanvasView {
                        List<Point2D> calibPts,
                        Point2D wallFirst,
                        Point2D wallHover) {
-        render(env, state, heatmap, null, calibPts, wallFirst, wallHover, null, null, null, null, null);
+        render(env, state, heatmap, null, calibPts, wallFirst, wallHover, null, null, null, null, null, null);
     }
 
     public void render(WifiEnvironment env,
@@ -225,6 +228,37 @@ public class CanvasView {
                        Point2D wallHover,
                        AP hoverAp,
                        AP selectedAp) {
-        render(env, state, heatmap, null, calibPts, wallFirst, wallHover, hoverAp, selectedAp, null, null, null);
+        render(env, state, heatmap, null, calibPts, wallFirst, wallHover, hoverAp, selectedAp, null, null, null, null);
+    }
+
+    private void drawSolverDebugHud(String solverDebugText) {
+        if (solverDebugText == null || solverDebugText.isBlank()) return;
+        String[] lines = solverDebugText.split("\\R");
+        if (lines.length == 0) return;
+
+        g.save();
+        g.setFont(Font.font("Menlo", 11));
+
+        double x = 14.0;
+        double y = 14.0;
+        double lineH = 15.0;
+        double w = 0.0;
+        for (String line : lines) {
+            w = Math.max(w, line.length() * 6.7);
+        }
+        double h = 10.0 + lines.length * lineH;
+
+        g.setFill(Color.rgb(18, 18, 24, 0.72));
+        g.fillRoundRect(x, y, w + 16.0, h, 10.0, 10.0);
+        g.setStroke(Color.rgb(255, 255, 255, 0.18));
+        g.strokeRoundRect(x, y, w + 16.0, h, 10.0, 10.0);
+
+        g.setFill(Color.rgb(240, 244, 255, 0.95));
+        double ty = y + 16.0;
+        for (String line : lines) {
+            g.fillText(line, x + 8.0, ty);
+            ty += lineH;
+        }
+        g.restore();
     }
 }
