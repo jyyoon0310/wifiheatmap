@@ -151,7 +151,7 @@ public class FdtdWaveSimulator {
         this.scaleMPerPx = (Double.isFinite(envScale) && envScale > 1.0e-9) ? envScale : DEFAULT_SCALE_M_PER_PX;
         this.refFreqGhz = selectReferenceFrequencyGhz(env, displayBandFilter);
         this.dxMeters = chooseDxMeters(this.widthPx, this.heightPx, this.scaleMPerPx, this.cellPx, this.refFreqGhz);
-        this.dtSeconds = 0.99 * this.dxMeters / (C0 * Math.sqrt(2.0));
+        this.dtSeconds = 0.90 * this.dxMeters / (C0 * Math.sqrt(2.0));
         this.timeStepNs = this.dtSeconds * 1.0e9;
 
         int pmlCells = choosePmlCells(this.widthPx, this.heightPx, this.cellPx);
@@ -455,7 +455,9 @@ public class FdtdWaveSimulator {
 
     private void buildPmlProfiles() {
         double m = 3.5;
-        double r0 = 1.0e-8;
+        // r0: 목표 반사 계수. 너무 작으면 sigma_max가 수백만 S/m → 계수 폭발.
+        // pml 두께에 따라 적절히 완화: 8셀 → 1e-3, 12셀 → 1e-5, 그 이상 → 1e-6
+        double r0 = (pml <= 8) ? 1.0e-3 : (pml <= 12) ? 1.0e-5 : 1.0e-6;
         double sigmaEmax = -((m + 1.0) * Math.log(r0)) * (EPS0 * C0) / (2.0 * Math.max(1, pml) * dxMeters);
         double sigmaMmax = sigmaEmax * (MU0 / EPS0);
 
