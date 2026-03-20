@@ -11,6 +11,7 @@ import app.model.WallMaterial;
 import app.model.WifiEnvironment;
 import app.solver.v2.SolverV2Engine;
 import app.ui.MainWindow;
+import app.ui.Styles;
 import javafx.animation.AnimationTimer;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
@@ -293,6 +294,8 @@ public class MainController {
         dlg.setTitle("벽 재질 선택");
         dlg.setHeaderText("벽 재질을 선택하세요 (2.4GHz/5GHz 감쇠)");
         dlg.setContentText("재질");
+        dlg.initOwner(stage);
+        Styles.styleDialog(dlg);
 
         Optional<String> selected = dlg.showAndWait();
         selected.ifPresent(key -> {
@@ -476,6 +479,8 @@ public class MainController {
         );
         ask.setTitle("프리셋 확인");
         ask.setHeaderText("미리 설정된 프리셋을 사용할 수 있습니다.");
+        ask.initOwner(stage);
+        Styles.styleAlert(ask);
         Optional<javafx.scene.control.ButtonType> result = ask.showAndWait();
         if (result.isEmpty() || result.get() != loadBtn) {
             return false;
@@ -552,6 +557,8 @@ public class MainController {
         dlg.setTitle("실내 감쇠 설정");
         dlg.setHeaderText("경로 손실 지수(n)를 선택하세요");
         dlg.setContentText("환경");
+        dlg.initOwner(stage);
+        Styles.styleDialog(dlg);
 
         Optional<String> selected = dlg.showAndWait();
         if (selected.isEmpty()) return null;
@@ -567,6 +574,8 @@ public class MainController {
             td.setTitle("사용자 경로 손실 지수");
             td.setHeaderText("n 값을 입력하세요 (권장 2.0 ~ 4.5)");
             td.setContentText("n");
+            td.initOwner(stage);
+            Styles.styleDialog(td);
             Optional<String> raw = td.showAndWait();
             if (raw.isEmpty()) return null;
 
@@ -1355,17 +1364,21 @@ public class MainController {
     }
 
     private void showError(String msg) {
-        new javafx.scene.control.Alert(
+        var alert = new javafx.scene.control.Alert(
                 javafx.scene.control.Alert.AlertType.ERROR, msg,
-                javafx.scene.control.ButtonType.OK
-        ).showAndWait();
+                javafx.scene.control.ButtonType.OK);
+        alert.initOwner(stage);
+        Styles.styleAlert(alert);
+        alert.showAndWait();
     }
 
     private void showInfo(String msg) {
-        new javafx.scene.control.Alert(
+        var alert = new javafx.scene.control.Alert(
                 javafx.scene.control.Alert.AlertType.INFORMATION, msg,
-                javafx.scene.control.ButtonType.OK
-        ).showAndWait();
+                javafx.scene.control.ButtonType.OK);
+        alert.initOwner(stage);
+        Styles.styleAlert(alert);
+        alert.showAndWait();
     }
 
     private List<RssiResult> currentMouseRssiRows() {

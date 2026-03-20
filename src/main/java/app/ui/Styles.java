@@ -26,24 +26,23 @@ public class Styles {
     }
 
     public static boolean isDark() { return darkMode; }
-
     public static void addThemeListener(Runnable r) { THEME_LISTENERS.add(r); }
 
-    /** Returns true the first time this object is registered; false if already registered. */
+    /** Returns true the first time this object is registered. */
     static boolean registerOnce(Object node) { return REGISTERED.add(node); }
 
-    // ── Theme-aware color methods ─────────────────────────────────────────────
-    public static String bgApp()      { return darkMode ? "#111113" : "#F2F2F7"; }
+    // ── Theme-aware colour palette ────────────────────────────────────────────
+    public static String bgApp()      { return darkMode ? "#111113" : "#F0F0F5"; }
     public static String bgPanel()    { return darkMode ? "#1C1C1E" : "#FFFFFF"; }
-    public static String bgRow()      { return darkMode ? "rgba(255,255,255,0.07)" : "#EBEBEE"; }
-    public static String bgRowHdr()   { return darkMode ? "rgba(255,255,255,0.12)" : "#D8D8DC"; }
-    public static String bgTabBar()   { return darkMode ? "rgba(255,255,255,0.08)" : "#E8EBF0"; }
-    public static String borderSoft() { return darkMode ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.09)"; }
+    public static String bgRow()      { return darkMode ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.04)"; }
+    public static String bgRowHdr()   { return darkMode ? "rgba(255,255,255,0.13)" : "rgba(0,0,0,0.07)"; }
+    public static String bgTabBar()   { return darkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)"; }
+    public static String borderSoft() { return darkMode ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.08)"; }
     public static String textMain()   { return darkMode ? "#F2F2F5" : "#1C1C1E"; }
     public static String textSub()    { return darkMode ? "#98989E" : "#6B7280"; }
-    public static String accent()     { return darkMode ? "#0A84FF" : "#3B82F6"; }
+    public static String accent()     { return darkMode ? "#0A84FF" : "#007AFF"; }
 
-    // ── Static hex constants (must stay hex for Color.web() compatibility) ───
+    // ── Static hex constants ──────────────────────────────────────────────────
     public static final String RSSI_LOW   = "#2D6CF6";
     public static final String RSSI_MID1  = "#22C55E";
     public static final String RSSI_MID2  = "#EAB308";
@@ -55,91 +54,111 @@ public class Styles {
     public static final String STATUS_ERROR   = "#EF4444";
 
     public static final String FONT_STACK =
-            "'-Apple SD Gothic Neo','Apple SD 산돌고딕 Neo','Noto Sans KR','Malgun Gothic',sans-serif";
-    public static final String FONT_MONO  = "'SF Mono','Menlo','Monaco',monospace";
+            "'SF Pro Text','-Apple SD Gothic Neo','Apple SD 산돌고딕 Neo','Noto Sans KR','Malgun Gothic',sans-serif";
+    public static final String FONT_MONO  = "'SF Mono','Menlo','Monaco','Consolas',monospace";
 
     // ── Liquid Glass internals ────────────────────────────────────────────────
     private static String glassSpecular() {
-        return darkMode ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.55)";
+        // Top white veil — stronger in light, subtler in dark
+        return darkMode ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.75)";
     }
     private static String glassBody() {
-        // 다크: 반투명 카드 (앱 배경 #111113 위에서 약간 밝게)
-        return darkMode ? "rgba(38,38,40,0.96)" : "rgba(255,255,255,0.82)";
+        return darkMode ? "rgba(34,34,36,0.96)" : "rgba(252,252,255,0.88)";
+    }
+    private static String glassBorder() {
+        // Inner rim glow — white for light, subtle for dark
+        return darkMode ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.78)";
     }
     private static String glassShadow() {
         return darkMode
-                ? "dropshadow(gaussian,rgba(0,0,0,0.70),16,0.10,0,3)"
-                : "dropshadow(gaussian,rgba(0,0,0,0.08),14,0.06,0,2)";
+                ? "dropshadow(gaussian,rgba(0,0,0,0.85),28,0.14,0,6)"
+                : "dropshadow(gaussian,rgba(0,0,0,0.13),24,0.08,0,5)";
     }
     private static String inputBg() {
-        return darkMode ? "#2C2C2E" : "rgba(255,255,255,0.90)";
+        return darkMode ? "#2C2C2E" : "rgba(255,255,255,0.92)";
     }
     private static String btnBg() {
-        return darkMode ? "#2C2C2E" : "rgba(255,255,255,0.80)";
+        return darkMode ? "#2C2C2E" : "rgba(255,255,255,0.82)";
     }
     private static String btnHoverBg() {
-        return darkMode ? "#3A3A3C" : "rgba(255,255,255,0.96)";
+        return darkMode ? "#3A3A3C" : "rgba(255,255,255,0.98)";
     }
     private static String btnPressedBg() {
-        return darkMode ? "#1C1C1E" : "rgba(210,210,218,0.95)";
+        return darkMode ? "#1C1C1E" : "rgba(210,210,220,0.95)";
+    }
+    private static String popupBg() {
+        return darkMode ? "#242426" : "#FFFFFF";
+    }
+    private static String popupShadow() {
+        return darkMode
+                ? "dropshadow(gaussian,rgba(0,0,0,0.90),32,0.18,0,8)"
+                : "dropshadow(gaussian,rgba(0,0,0,0.18),28,0.10,0,7)";
     }
 
     // ── Shared style strings ──────────────────────────────────────────────────
     static String flatBase() {
         return "-fx-background-color:" + btnBg() + ";" +
                "-fx-text-fill:" + textMain() + ";" +
-               "-fx-background-radius:8;" +
+               "-fx-background-radius:9;" +
                "-fx-border-color:" + borderSoft() + ";" +
-               "-fx-border-radius:8;" +
+               "-fx-border-radius:9;" +
                "-fx-padding:6 10;" +
-               "-fx-font-size:12px;";
+               "-fx-font-size:12px;" +
+               "-fx-font-family:" + FONT_STACK + ";";
     }
     private static String flatHover() {
         return "-fx-background-color:" + btnHoverBg() + ";" +
                "-fx-text-fill:" + textMain() + ";" +
-               "-fx-background-radius:8;" +
+               "-fx-background-radius:9;" +
                "-fx-border-color:" + accent() + ";" +
-               "-fx-border-radius:8;" +
+               "-fx-border-radius:9;" +
                "-fx-padding:6 10;" +
-               "-fx-font-size:12px;";
+               "-fx-font-size:12px;" +
+               "-fx-font-family:" + FONT_STACK + ";";
     }
     private static String flatPressed() {
         return "-fx-background-color:" + btnPressedBg() + ";" +
                "-fx-text-fill:" + textMain() + ";" +
-               "-fx-background-radius:8;" +
+               "-fx-background-radius:9;" +
                "-fx-border-color:" + accent() + ";" +
-               "-fx-border-radius:8;" +
+               "-fx-border-radius:9;" +
                "-fx-padding:6 10;" +
-               "-fx-font-size:12px;";
+               "-fx-font-size:12px;" +
+               "-fx-font-family:" + FONT_STACK + ";";
     }
     private static String accentBase() {
         return "-fx-background-color:" + accent() + ";" +
                "-fx-text-fill:white;" +
-               "-fx-background-radius:8;" +
-               "-fx-padding:6 12;" +
-               "-fx-font-size:12px;";
+               "-fx-background-radius:9;" +
+               "-fx-border-color:transparent;" +
+               "-fx-padding:6 14;" +
+               "-fx-font-size:12px;" +
+               "-fx-font-weight:600;" +
+               "-fx-font-family:" + FONT_STACK + ";";
     }
     static String textFieldBase() {
         return "-fx-background-color:" + inputBg() + ";" +
                "-fx-text-fill:" + textMain() + ";" +
                "-fx-prompt-text-fill:" + textSub() + ";" +
-               "-fx-background-radius:8;" +
+               "-fx-background-radius:9;" +
                "-fx-border-color:" + borderSoft() + ";" +
-               "-fx-border-radius:8;" +
-               "-fx-padding:6 8;" +
-               "-fx-font-size:12px;";
+               "-fx-border-radius:9;" +
+               "-fx-padding:7 10;" +
+               "-fx-font-size:12px;" +
+               "-fx-font-family:" + FONT_STACK + ";";
     }
-    static String comboBase() {
+    public static String comboBase() {
         return "-fx-background-color:" + inputBg() + ";" +
                "-fx-text-fill:" + textMain() + ";" +
                "-fx-border-color:" + borderSoft() + ";" +
-               "-fx-border-radius:8;" +
-               "-fx-background-radius:8;" +
-               "-fx-padding:1 2;" +
-               "-fx-font-size:12px;";
+               "-fx-border-radius:9;" +
+               "-fx-background-radius:9;" +
+               "-fx-padding:2 4;" +
+               "-fx-font-size:12px;" +
+               "-fx-font-family:" + FONT_STACK + ";";
     }
 
-    // ── Public style helpers ──────────────────────────────────────────────────
+    // ── Button helpers ────────────────────────────────────────────────────────
 
     public static void styleFlatButton(Button b) {
         Runnable apply = () -> {
@@ -157,15 +176,21 @@ public class Styles {
         Runnable apply = () -> {
             b.setStyle(accentBase());
             b.setOnMouseEntered(e -> { if (!b.isDisabled()) b.setStyle(
-                    "-fx-background-color:derive(" + accent() + ",-15%);-fx-text-fill:white;" +
-                    "-fx-background-radius:8;-fx-padding:6 12;-fx-font-size:12px;"); });
+                    "-fx-background-color:derive(" + accent() + ",-12%);" +
+                    "-fx-text-fill:white;-fx-background-radius:9;-fx-border-color:transparent;" +
+                    "-fx-padding:6 14;-fx-font-size:12px;-fx-font-weight:600;" +
+                    "-fx-font-family:" + FONT_STACK + ";"); });
             b.setOnMouseExited(e -> b.setStyle(accentBase()));
             b.setOnMousePressed(e -> { if (!b.isDisabled()) b.setStyle(
-                    "-fx-background-color:derive(" + accent() + ",-25%);-fx-text-fill:white;" +
-                    "-fx-background-radius:8;-fx-padding:6 12;-fx-font-size:12px;"); });
+                    "-fx-background-color:derive(" + accent() + ",-22%);" +
+                    "-fx-text-fill:white;-fx-background-radius:9;-fx-border-color:transparent;" +
+                    "-fx-padding:6 14;-fx-font-size:12px;-fx-font-weight:600;" +
+                    "-fx-font-family:" + FONT_STACK + ";"); });
             b.setOnMouseReleased(e -> { if (!b.isDisabled()) b.setStyle(
-                    "-fx-background-color:derive(" + accent() + ",-15%);-fx-text-fill:white;" +
-                    "-fx-background-radius:8;-fx-padding:6 12;-fx-font-size:12px;"); });
+                    "-fx-background-color:derive(" + accent() + ",-12%);" +
+                    "-fx-text-fill:white;-fx-background-radius:9;-fx-border-color:transparent;" +
+                    "-fx-padding:6 14;-fx-font-size:12px;-fx-font-weight:600;" +
+                    "-fx-font-family:" + FONT_STACK + ";"); });
         };
         apply.run();
         if (registerOnce(b)) addThemeListener(apply);
@@ -182,8 +207,8 @@ public class Styles {
             sp.setStyle(
                     "-fx-background-color:" + inputBg() + ";" +
                     "-fx-border-color:" + borderSoft() + ";" +
-                    "-fx-border-radius:8;" +
-                    "-fx-background-radius:8;");
+                    "-fx-border-radius:9;" +
+                    "-fx-background-radius:9;");
             if (sp.getEditor() != null) {
                 sp.getEditor().setStyle(textFieldBase());
             }
@@ -204,42 +229,50 @@ public class Styles {
         if (selected) {
             t.setStyle("-fx-background-color:" + accent() + ";" +
                     "-fx-text-fill:white;" +
-                    "-fx-background-radius:8;" +
+                    "-fx-background-radius:9;" +
                     "-fx-border-color:transparent;" +
-                    "-fx-border-radius:8;" +
+                    "-fx-border-radius:9;" +
                     "-fx-padding:6 10;" +
-                    "-fx-font-size:12px;");
+                    "-fx-font-size:12px;" +
+                    "-fx-font-family:" + FONT_STACK + ";");
         } else {
             t.setStyle("-fx-background-color:" + btnBg() + ";" +
                     "-fx-text-fill:" + textMain() + ";" +
-                    "-fx-background-radius:8;" +
+                    "-fx-background-radius:9;" +
                     "-fx-border-color:" + borderSoft() + ";" +
-                    "-fx-border-radius:8;" +
+                    "-fx-border-radius:9;" +
                     "-fx-padding:6 10;" +
-                    "-fx-font-size:12px;");
+                    "-fx-font-size:12px;" +
+                    "-fx-font-family:" + FONT_STACK + ";");
         }
     }
 
-    /** Left-panel "card" container (Liquid Glass, auto-updates on theme change). */
+    // ── Liquid Glass card ─────────────────────────────────────────────────────
+
+    /** Creates a left-panel glass card with title + content nodes. */
     public static VBox card(String title, Node... content) {
         Label t = new Label(title);
         Runnable applyTitle = () -> t.setStyle(
                 "-fx-text-fill:" + textMain() + ";" +
                 "-fx-font-size:13px;" +
-                "-fx-font-weight:600;" +
+                "-fx-font-weight:700;" +
                 "-fx-font-family:" + FONT_STACK + ";");
         applyTitle.run();
 
         VBox box = new VBox(10);
         box.getChildren().add(t);
         box.getChildren().addAll(content);
-        box.setPadding(new Insets(14));
+        box.setPadding(new Insets(14, 14, 14, 14));
+
         Runnable applyCard = () -> box.setStyle(
+                // Two-layer glass: specular (top glint) + body (frosted)
                 "-fx-background-color:" + glassSpecular() + "," + glassBody() + ";" +
                 "-fx-background-insets:0,0.5;" +
                 "-fx-background-radius:18;" +
-                "-fx-border-color:" + borderSoft() + ";" +
-                "-fx-border-radius:18;" +
+                // Inner rim — brighter than body = "wet glass" edge
+                "-fx-border-color:" + glassBorder() + "," + borderSoft() + ";" +
+                "-fx-border-insets:0,0.5;" +
+                "-fx-border-radius:18,17.5;" +
                 "-fx-border-width:0.5;" +
                 "-fx-effect:" + glassShadow() + ";");
         applyCard.run();
@@ -248,32 +281,163 @@ public class Styles {
         return box;
     }
 
+    // ── ComboBox popup ────────────────────────────────────────────────────────
+
     /**
-     * Registers a ComboBox to style its popup with the current theme each time it opens.
-     * No additional theme listener needed — the popup is freshly looked up on each open.
+     * Styles the floating popup window of a ComboBox as a Liquid Glass panel.
+     * Call on every ComboBox once after creation.
      */
     public static void installComboPopupStyle(ComboBox<?> cb) {
         cb.showingProperty().addListener((o, ov, showing) -> {
             if (!showing) return;
             Platform.runLater(() -> {
                 try {
-                    String popupBg = darkMode ? "#2C2C2E" : "#FFFFFF";
+                    // Popup container
                     Node popup = cb.lookup(".combo-box-popup");
                     if (popup != null) popup.setStyle(
-                            "-fx-background-color:" + popupBg + ";" +
-                            "-fx-border-color:" + borderSoft() + ";" +
-                            "-fx-border-radius:10;" +
-                            "-fx-background-radius:10;" +
-                            "-fx-padding:6;");
+                            "-fx-background-color:" + glassSpecular() + "," + popupBg() + ";" +
+                            "-fx-background-insets:0,0.5;" +
+                            "-fx-background-radius:14;" +
+                            "-fx-border-color:" + glassBorder() + "," + borderSoft() + ";" +
+                            "-fx-border-insets:0,0.5;" +
+                            "-fx-border-radius:14,13.5;" +
+                            "-fx-border-width:0.5;" +
+                            "-fx-effect:" + popupShadow() + ";" +
+                            "-fx-padding:4;");
+                    // ListView inside popup
                     Node lv = cb.lookup(".combo-box-popup .list-view");
                     if (lv != null) lv.setStyle(
-                            "-fx-background-color:" + popupBg + ";" +
-                            "-fx-control-inner-background:" + popupBg + ";" +
-                            "-fx-text-fill:" + textMain() + ";" +
+                            "-fx-background-color:transparent;" +
                             "-fx-border-color:transparent;" +
-                            "-fx-background-radius:10;");
+                            "-fx-control-inner-background:transparent;");
                 } catch (Exception ignored) {}
             });
         });
+    }
+
+    // ── Alert / Dialog ────────────────────────────────────────────────────────
+
+    /**
+     * Core glass styling for any DialogPane.
+     * Called by styleAlert() and styleDialog() — do not call directly unless needed.
+     */
+    public static void styleDialogPane(DialogPane dp) {
+        Runnable apply = () -> {
+            // Glass background
+            dp.setStyle(
+                    "-fx-background-color:" + glassSpecular() + "," + glassBody() + ";" +
+                    "-fx-background-insets:0,0.5;" +
+                    "-fx-background-radius:20;" +
+                    "-fx-border-color:" + glassBorder() + "," + borderSoft() + ";" +
+                    "-fx-border-insets:0,0.5;" +
+                    "-fx-border-radius:20,19.5;" +
+                    "-fx-border-width:0.5;" +
+                    "-fx-effect:" + (darkMode
+                            ? "dropshadow(gaussian,rgba(0,0,0,0.92),44,0.22,0,14)"
+                            : "dropshadow(gaussian,rgba(0,0,0,0.18),36,0.10,0,10)") + ";" +
+                    "-fx-font-family:" + FONT_STACK + ";");
+            // Header area
+            Platform.runLater(() -> {
+                Node header = dp.lookup(".header-panel");
+                if (header != null) header.setStyle(
+                        "-fx-background-color:transparent;" +
+                        "-fx-border-color:" + borderSoft() + ";" +
+                        "-fx-border-width:0 0 0.5 0;");
+                Node content = dp.lookup(".content");
+                if (content != null) content.setStyle(
+                        "-fx-text-fill:" + textMain() + ";" +
+                        "-fx-font-family:" + FONT_STACK + ";");
+                Node bb = dp.lookup(".button-bar");
+                if (bb != null) bb.setStyle("-fx-background-color:transparent;");
+                dp.lookupAll(".button").forEach(btn -> {
+                    if (btn instanceof Button b) styleFlatButton(b);
+                });
+                dp.lookupAll(".label").forEach(lbl -> {
+                    if (lbl instanceof Label l)
+                        l.setStyle("-fx-text-fill:" + textMain() + ";-fx-font-family:" + FONT_STACK + ";");
+                });
+                dp.lookupAll(".text-field").forEach(tf -> {
+                    if (tf instanceof TextField t) styleTextField(t);
+                });
+                dp.lookupAll(".combo-box").forEach(cb -> {
+                    if (cb instanceof ComboBox<?> c) {
+                        Runnable r = () -> c.setStyle(comboBase());
+                        r.run();
+                        if (registerOnce(c)) addThemeListener(r);
+                        installComboPopupStyle(c);
+                    }
+                });
+                dp.lookupAll(".spinner").forEach(sp -> {
+                    if (sp instanceof Spinner<?> s) styleSpinner(s);
+                });
+                // Choice dialog list
+                Node lv = dp.lookup(".list-view");
+                if (lv instanceof ListView<?> listView) styleListView(listView);
+                // Tab pane
+                Node tp = dp.lookup(".tab-pane");
+                if (tp instanceof TabPane tabPane) styleTabPane(tabPane);
+            });
+        };
+        dp.sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) Platform.runLater(apply);
+        });
+        apply.run();
+        if (registerOnce(dp)) addThemeListener(apply);
+    }
+
+    /**
+     * Glass styling for an Alert dialog.
+     */
+    public static void styleAlert(Alert alert) {
+        styleDialogPane(alert.getDialogPane());
+    }
+
+    /**
+     * Glass styling for any generic Dialog (ChoiceDialog, TextInputDialog, etc.).
+     */
+    public static void styleDialog(Dialog<?> dialog) {
+        styleDialogPane(dialog.getDialogPane());
+    }
+
+    // ── ListView ─────────────────────────────────────────────────────────────
+
+    /** Applies glass background + transparent border to a ListView. */
+    public static void styleListView(ListView<?> lv) {
+        Runnable apply = () -> lv.setStyle(
+                "-fx-background-color:transparent;" +
+                "-fx-border-color:transparent;");
+        apply.run();
+        if (registerOnce(lv)) addThemeListener(apply);
+    }
+
+    // ── TabPane ──────────────────────────────────────────────────────────────
+
+    /** Styles a TabPane header to match the glass design system. */
+    public static void styleTabPane(TabPane tp) {
+        Runnable apply = () -> {
+            tp.setStyle(
+                    "-fx-background-color:transparent;" +
+                    "-fx-border-color:transparent;");
+            // Tab header area
+            Node header = tp.lookup(".tab-header-area");
+            if (header != null) header.setStyle(
+                    "-fx-background-color:" + bgTabBar() + ";" +
+                    "-fx-background-radius:10 10 0 0;" +
+                    "-fx-border-color:transparent;");
+            // Individual tabs
+            tp.lookupAll(".tab").forEach(tabNode -> tabNode.setStyle(
+                    "-fx-background-color:transparent;" +
+                    "-fx-border-color:transparent;"));
+            tp.lookupAll(".tab-label").forEach(lbl -> {
+                if (lbl instanceof Label l)
+                    l.setStyle("-fx-text-fill:" + textMain() + ";-fx-font-family:" + FONT_STACK + ";");
+            });
+            tp.lookupAll(".tab:selected").forEach(tabNode -> tabNode.setStyle(
+                    "-fx-background-color:" + accent() + ";" +
+                    "-fx-border-color:transparent;" +
+                    "-fx-background-radius:8;"));
+        };
+        apply.run();
+        if (registerOnce(tp)) addThemeListener(apply);
     }
 }

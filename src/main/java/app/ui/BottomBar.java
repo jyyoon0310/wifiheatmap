@@ -18,11 +18,10 @@ import javafx.util.Duration;
 import java.util.function.DoubleConsumer;
 
 public class BottomBar {
-    private static final String FONT_STACK = "'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', sans-serif";
     private static final String RSSI_LABEL_BASE_STYLE =
-            "-fx-font-family: " + FONT_STACK + ";" +
-            "-fx-font-size: 15px;" +
-            "-fx-font-weight: 700;";
+            "-fx-font-family:" + Styles.FONT_STACK + ";" +
+            "-fx-font-size:15px;" +
+            "-fx-font-weight:700;";
 
 
     private final HBox root = new HBox(10);
@@ -49,7 +48,7 @@ public class BottomBar {
         Runnable applyLabel = () -> label.setStyle(
                 "-fx-text-fill: " + Styles.textSub() + ";" +
                 "-fx-font-size: 12px;" +
-                "-fx-font-family: " + FONT_STACK + ";"
+                "-fx-font-family: " + Styles.FONT_STACK + ";"
         );
         applyLabel.run();
         Styles.addThemeListener(applyLabel);
@@ -61,10 +60,10 @@ public class BottomBar {
 
         // 히트맵 생성 진행률 라벨
         heatmapStatusLabel.setStyle(
-                "-fx-text-fill: #34D1FF;" +
-                "-fx-font-size: 13px;" +
-                "-fx-font-weight: 600;" +
-                "-fx-font-family: " + FONT_STACK + ";"
+                "-fx-text-fill:#34D1FF;" +
+                "-fx-font-size:13px;" +
+                "-fx-font-weight:600;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";"
         );
         heatmapStatusLabel.setVisible(false);
         heatmapStatusLabel.setManaged(false);
@@ -73,31 +72,24 @@ public class BottomBar {
         HBox legendLabels = new HBox();
         legendLabels.setAlignment(Pos.CENTER);
         legendLabels.setPadding(new Insets(5, 6, 1, 6));
-        legendMinLabel.setStyle(
-                "-fx-text-fill: white;" +
-                        "-fx-font-size: 12px;" +
-                        "-fx-font-weight: 700;" +
-                        "-fx-font-family: " + FONT_STACK + ";" +
-                        "-fx-padding: 0 2;" +
-                        "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.55), 3, 0.2, 0, 1);"
-        );
-        legendMaxLabel.setStyle(
-                "-fx-text-fill: white;" +
-                        "-fx-font-size: 12px;" +
-                        "-fx-font-weight: 700;" +
-                        "-fx-font-family: " + FONT_STACK + ";" +
-                        "-fx-padding: 0 2;" +
-                        "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.55), 3, 0.2, 0, 1);"
-        );
+        String legendLabelStyle =
+                "-fx-text-fill:white;" +
+                "-fx-font-size:11px;" +
+                "-fx-font-weight:700;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";" +
+                "-fx-padding:0 3;" +
+                "-fx-effect:dropshadow(gaussian,rgba(0,0,0,0.60),4,0.25,0,1);";
+        legendMinLabel.setStyle(legendLabelStyle);
+        legendMaxLabel.setStyle(legendLabelStyle);
         Region legendSpacer = new Region();
         HBox.setHgrow(legendSpacer, Priority.ALWAYS);
         legendLabels.getChildren().addAll(legendMinLabel, legendSpacer, legendMaxLabel);
 
         legendBg.setStyle(
-                "-fx-background-radius: 4;" +
+                "-fx-background-radius: 6;" +
                         "-fx-background-color: linear-gradient(to right, #2D6CF6, #34D1FF, #2FD44A, #F6D32D, #F0632D);" +
-                        "-fx-border-color: rgba(0,0,0,0.18);" +
-                        "-fx-border-radius: 4;"
+                        "-fx-border-color: rgba(0,0,0,0.14);" +
+                        "-fx-border-radius: 6;"
         );
         markerLine.setManaged(false);
         markerLine.setVisible(false);
@@ -123,12 +115,12 @@ public class BottomBar {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
         root.getChildren().addAll(label, clientHeightSpinner, applyBtn, spacer, heatmapStatusLabel, currentRssiLabel, legendPane);
-        root.setPadding(new Insets(8, 10, 8, 10));
+        root.setPadding(new Insets(7, 12, 7, 12));
         Runnable applyRoot = () -> root.setStyle(
-                "-fx-alignment: center-left;" +
-                        "-fx-background-color: " + Styles.bgApp() + ";" +
-                        "-fx-border-color: " + Styles.borderSoft() + ";" +
-                        "-fx-border-width: 1 0 0 0;"
+                "-fx-alignment:center-left;" +
+                "-fx-background-color:" + Styles.bgApp() + ";" +
+                "-fx-border-color:" + Styles.borderSoft() + ";" +
+                "-fx-border-width:0.5 0 0 0;"
         );
         applyRoot.run();
         Styles.addThemeListener(applyRoot);
@@ -231,10 +223,10 @@ public class BottomBar {
         statusClearTimer.stop();
         heatmapStatusLabel.setText(String.format("히트맵 생성중... %.0f%%", Math.min(100.0, percent)));
         heatmapStatusLabel.setStyle(
-                "-fx-text-fill: #34D1FF;" +
-                "-fx-font-size: 13px;" +
-                "-fx-font-weight: 600;" +
-                "-fx-font-family: " + FONT_STACK + ";"
+                "-fx-text-fill:#34D1FF;" +
+                "-fx-font-size:13px;" +
+                "-fx-font-weight:600;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";"
         );
         heatmapStatusLabel.setVisible(true);
         heatmapStatusLabel.setManaged(true);
@@ -244,10 +236,10 @@ public class BottomBar {
     public void setHeatmapComplete(double elapsedSec) {
         heatmapStatusLabel.setText(String.format("히트맵 생성 완료 (%.1f초)", elapsedSec));
         heatmapStatusLabel.setStyle(
-                "-fx-text-fill: #2FD44A;" +
-                "-fx-font-size: 13px;" +
-                "-fx-font-weight: 600;" +
-                "-fx-font-family: " + FONT_STACK + ";"
+                "-fx-text-fill:#2FD44A;" +
+                "-fx-font-size:13px;" +
+                "-fx-font-weight:600;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";"
         );
         heatmapStatusLabel.setVisible(true);
         heatmapStatusLabel.setManaged(true);

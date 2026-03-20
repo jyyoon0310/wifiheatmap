@@ -157,10 +157,10 @@ public class TopToolbar {
         );
 
         Runnable applyBar = () -> bar.setStyle(
-                "-fx-background-color: " + Styles.bgApp() + ";" +
-                "-fx-border-color: " + Styles.borderSoft() + ";" +
-                "-fx-border-width: 0 0 1 0;" +
-                "-fx-padding: 6 10;");
+                "-fx-background-color:" + Styles.bgApp() + ";" +
+                "-fx-border-color:" + Styles.borderSoft() + ";" +
+                "-fx-border-width:0 0 0.5 0;" +
+                "-fx-padding:6 12;");
         applyBar.run();
         Styles.addThemeListener(applyBar);
     }
@@ -186,14 +186,15 @@ public class TopToolbar {
         zoomLabel.setOnMouseClicked(e -> { if (onZoom100 != null) onZoom100.run(); });
 
         Runnable applyZoomLabel = () -> zoomLabel.setStyle(
-                "-fx-alignment: center;" +
-                "-fx-padding: 5 8;" +
-                "-fx-text-fill: " + Styles.textMain() + ";" +
-                "-fx-background-color: " + Styles.bgPanel() + ";" +
-                "-fx-border-color: " + Styles.borderSoft() + ";" +
-                "-fx-border-radius: 8;" +
-                "-fx-background-radius: 8;" +
-                "-fx-font-size: 12px;"
+                "-fx-alignment:center;" +
+                "-fx-padding:5 8;" +
+                "-fx-text-fill:" + Styles.textMain() + ";" +
+                "-fx-background-color:" + Styles.bgPanel() + ";" +
+                "-fx-border-color:" + Styles.borderSoft() + ";" +
+                "-fx-border-radius:8;" +
+                "-fx-background-radius:8;" +
+                "-fx-font-size:12px;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";"
         );
         applyZoomLabel.run();
         Styles.addThemeListener(applyZoomLabel);

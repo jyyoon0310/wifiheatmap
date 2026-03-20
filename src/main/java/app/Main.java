@@ -13,6 +13,10 @@ public class Main extends Application {
         Scene scene = new Scene(controller.getRoot(), 1200, 860);
         controller.bindScene(scene);
 
+        // Liquid Glass global stylesheet (scrollbars, list/combo cells, dialogs)
+        var cssUrl = Main.class.getResource("/glass.css");
+        if (cssUrl != null) scene.getStylesheets().add(cssUrl.toExternalForm());
+
         stage.setTitle("Wi-Fi Heatmap");
         stage.setScene(scene);
         stage.show();

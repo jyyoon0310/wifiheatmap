@@ -376,15 +376,47 @@ public class LeftPanel {
         wallListView.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
         wallListView.setPlaceholder(styledPlaceholder("벽이 없습니다."));
         wallListView.setCellFactory(lv -> new ListCell<>() {
+            {
+                // hover + selection → restyle the cell
+                hoverProperty().addListener((o, ov, nv) -> restyle());
+                selectedProperty().addListener((o, ov, nv) -> restyle());
+                Styles.addThemeListener(this::restyle);
+            }
             @Override
             protected void updateItem(Wall item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
                     setText(null);
+                    setStyle("-fx-background-color:transparent;");
                     return;
                 }
                 String label = item.getMaterial() == null ? "벽" : item.getMaterial().labelKo();
-                setText(String.format("벽 %d - %s", getIndex() + 1, label));
+                setText(String.format("벽 %d  –  %s", getIndex() + 1, label));
+                restyle();
+            }
+            private void restyle() {
+                boolean sel = isSelected();
+                boolean hov = isHover();
+                String bg;
+                String fg;
+                if (sel) {
+                    bg = Styles.isDark() ? "rgba(10,132,255,0.22)" : "rgba(0,122,255,0.13)";
+                    fg = Styles.accent();
+                } else if (hov) {
+                    bg = Styles.isDark() ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.05)";
+                    fg = Styles.textMain();
+                } else {
+                    bg = "transparent";
+                    fg = Styles.textMain();
+                }
+                setStyle(
+                    "-fx-background-color:" + bg + ";" +
+                    "-fx-text-fill:" + fg + ";" +
+                    "-fx-background-radius:8;" +
+                    "-fx-padding:6 10;" +
+                    "-fx-font-size:12px;" +
+                    "-fx-font-family:" + Styles.FONT_STACK + ";"
+                );
             }
         });
         wallListView.getSelectionModel().selectedItemProperty().addListener((o, ov, nv) -> {
@@ -392,12 +424,10 @@ public class LeftPanel {
             setSelectedWall(nv);
             onSelectWall.accept(nv);
         });
+        // glass container: transparent bg, no border (CSS handles it)
         Runnable applyWallListView = () -> wallListView.setStyle(
-                "-fx-background-color: transparent;" +
-                "-fx-border-color: " + Styles.borderSoft() + ";" +
-                "-fx-border-radius: 8;" +
-                "-fx-background-radius: 8;"
-        );
+                "-fx-background-color:transparent;" +
+                "-fx-border-color:transparent;");
         applyWallListView.run();
         Styles.addThemeListener(applyWallListView);
 
@@ -823,7 +853,9 @@ public class LeftPanel {
         setSelectedAp(null);
         onClearApSelection.run();
         onApChanged.run();
-        new Alert(Alert.AlertType.INFORMATION, "적용되었습니다!", ButtonType.OK).showAndWait();
+        Alert alert = new Alert(Alert.AlertType.INFORMATION, "적용되었습니다!", ButtonType.OK);
+        Styles.styleAlert(alert);
+        alert.showAndWait();
     }
 
     private void deleteCurrentAp() {
@@ -1074,21 +1106,29 @@ public class LeftPanel {
 
     private HBox createRssiRow(String leftText, double dbm) {
         Label left = new Label(leftText);
-        left.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
+        left.setStyle(
+                "-fx-text-fill:" + Styles.textMain() + ";" +
+                "-fx-font-size:12px;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";");
 
         javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         Label right = new Label(formatDbm(dbm));
-        right.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
+        right.setStyle(
+                "-fx-text-fill:" + Styles.textSub() + ";" +
+                "-fx-font-size:11px;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";");
 
         HBox row = new HBox(8, left, spacer, right);
         row.setStyle(
-                "-fx-alignment: center-left;" +
-                "-fx-padding: 5 8;" +
-                "-fx-background-color: " + Styles.bgRow() + ";" +
-                "-fx-background-radius: 8;"
-        );
+                "-fx-alignment:center-left;" +
+                "-fx-padding:5 10;" +
+                "-fx-background-color:" + Styles.bgRow() + ";" +
+                "-fx-background-radius:9;" +
+                "-fx-border-color:" + Styles.borderSoft() + ";" +
+                "-fx-border-radius:9;" +
+                "-fx-border-width:0.5;");
         return row;
     }
 
@@ -1099,15 +1139,21 @@ public class LeftPanel {
 
     private HBox createRssiApHeaderRow(String apName) {
         Label left = new Label(apName);
-        left.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px; -fx-font-weight: 600;");
+        left.setStyle(
+                "-fx-text-fill:" + Styles.textMain() + ";" +
+                "-fx-font-size:12px;" +
+                "-fx-font-weight:700;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";");
 
         HBox row = new HBox(left);
         row.setStyle(
-                "-fx-alignment: center-left;" +
-                "-fx-padding: 5 8;" +
-                "-fx-background-color: " + Styles.bgRowHdr() + ";" +
-                "-fx-background-radius: 8;"
-        );
+                "-fx-alignment:center-left;" +
+                "-fx-padding:5 10;" +
+                "-fx-background-color:" + Styles.bgRowHdr() + ";" +
+                "-fx-background-radius:9;" +
+                "-fx-border-color:" + Styles.borderSoft() + ";" +
+                "-fx-border-radius:9;" +
+                "-fx-border-width:0.5;");
         return row;
     }
 

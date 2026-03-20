@@ -1,0 +1,152 @@
+/*
+ * glass.css — Apple Liquid Glass global overrides
+ * Handles: scrollbars, list cells, combo popup cells, spinner arrows
+ * (Theme-neutral colours; Java code handles dark/light colour switching)
+ */
+
+/* ═══════════════════════════════════════════════════════
+   Scrollbars — thin, translucent, no arrow buttons
+   ═══════════════════════════════════════════════════════ */
+.scroll-bar {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+.scroll-bar:vertical   { -fx-pref-width:  7; }
+.scroll-bar:horizontal { -fx-pref-height: 7; }
+
+.scroll-bar .track {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+.scroll-bar .thumb {
+    -fx-background-color: rgba(120,120,128,0.28);
+    -fx-background-radius: 4;
+    -fx-background-insets: 1;
+}
+.scroll-bar .thumb:hover   { -fx-background-color: rgba(120,120,128,0.52); }
+.scroll-bar .thumb:pressed { -fx-background-color: rgba(120,120,128,0.70); }
+
+.scroll-bar .increment-button,
+.scroll-bar .decrement-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+    -fx-pref-width: 0;  -fx-min-width: 0;
+    -fx-pref-height: 0; -fx-min-height: 0;
+    -fx-max-width: 0;   -fx-max-height: 0;
+}
+.scroll-bar .increment-arrow,
+.scroll-bar .decrement-arrow {
+    -fx-background-color: transparent;
+    -fx-shape: " ";
+    -fx-padding: 0;
+}
+
+/* ═══════════════════════════════════════════════════════
+   ScrollPane — hide focus ring
+   ═══════════════════════════════════════════════════════ */
+.scroll-pane:focused,
+.scroll-pane > .viewport {
+    -fx-background-color: transparent;
+}
+
+/* ═══════════════════════════════════════════════════════
+   ListView — glass cells with hover / selected states
+   ═══════════════════════════════════════════════════════ */
+.list-view {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 3;
+}
+.list-view .list-cell {
+    -fx-background-color: transparent;
+    -fx-background-radius: 8;
+    -fx-border-color: transparent;
+    -fx-padding: 6 10;
+}
+.list-view .list-cell:odd  { -fx-background-color: transparent; }
+.list-view .list-cell:even { -fx-background-color: transparent; }
+.list-view .list-cell:filled:hover {
+    -fx-background-color: rgba(120,120,128,0.10);
+}
+.list-view .list-cell:filled:selected {
+    -fx-background-color: rgba(0,100,210,0.13);
+    -fx-text-fill: #0064D2;
+}
+.list-view .list-cell:filled:selected:hover {
+    -fx-background-color: rgba(0,100,210,0.19);
+    -fx-text-fill: #0064D2;
+}
+
+/* ═══════════════════════════════════════════════════════
+   ComboBox popup — glass cells with hover
+   ═══════════════════════════════════════════════════════ */
+.combo-box-popup .list-view {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 3;
+}
+.combo-box-popup .list-view .list-cell {
+    -fx-background-color: transparent;
+    -fx-background-radius: 8;
+    -fx-border-color: transparent;
+    -fx-padding: 7 12;
+}
+.combo-box-popup .list-view .list-cell:odd  { -fx-background-color: transparent; }
+.combo-box-popup .list-view .list-cell:even { -fx-background-color: transparent; }
+.combo-box-popup .list-view .list-cell:hover {
+    -fx-background-color: rgba(120,120,128,0.10);
+}
+.combo-box-popup .list-view .list-cell:filled:selected {
+    -fx-background-color: rgba(0,100,210,0.14);
+    -fx-text-fill: #0064D2;
+}
+
+/* ═══════════════════════════════════════════════════════
+   Spinner — subtle arrows
+   ═══════════════════════════════════════════════════════ */
+.spinner .increment-arrow-button,
+.spinner .decrement-arrow-button {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0 4;
+}
+.spinner .increment-arrow-button:hover,
+.spinner .decrement-arrow-button:hover {
+    -fx-background-color: rgba(120,120,128,0.12);
+    -fx-background-radius: 4;
+}
+.spinner .increment-arrow { -fx-background-color: rgba(120,120,128,0.65); }
+.spinner .decrement-arrow { -fx-background-color: rgba(120,120,128,0.65); }
+
+/* ═══════════════════════════════════════════════════════
+   ToolBar — strip default background/border
+   ═══════════════════════════════════════════════════════ */
+.tool-bar {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+
+/* ═══════════════════════════════════════════════════════
+   Separator — subtle line
+   ═══════════════════════════════════════════════════════ */
+.separator .line {
+    -fx-border-color: rgba(120,120,128,0.20);
+    -fx-border-width: 0 0 0 1;
+}
+
+/* ═══════════════════════════════════════════════════════
+   Dialog / Alert — glass panel base
+   ═══════════════════════════════════════════════════════ */
+.dialog-pane {
+    -fx-background-radius: 20;
+    -fx-border-radius: 20;
+}
+.dialog-pane .button-bar {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+.dialog-pane .header-panel {
+    -fx-background-color: transparent;
+}
