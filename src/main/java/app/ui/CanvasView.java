@@ -43,7 +43,6 @@ public class CanvasView {
         viewportPane = new StackPane(zoomGroup);
         viewportPane.setAlignment(Pos.CENTER);
         viewportPane.setPickOnBounds(true);
-        viewportPane.setStyle("-fx-background-color: " + Styles.BG_APP + ";");
 
         canvasSP = new ScrollPane(viewportPane);
         canvasSP.setPannable(false);
@@ -51,10 +50,16 @@ public class CanvasView {
         canvasSP.setFitToHeight(false);
         canvasSP.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         canvasSP.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        canvasSP.setStyle("-fx-background: " + Styles.BG_APP + "; -fx-background-color: " + Styles.BG_APP + "; -fx-border-color: transparent;");
 
         root = new StackPane(canvasSP);
-        root.setStyle("-fx-background-color: " + Styles.BG_APP + ";");
+
+        Runnable applyCanvasTheme = () -> {
+            viewportPane.setStyle("-fx-background-color: " + Styles.bgApp() + ";");
+            canvasSP.setStyle("-fx-background: " + Styles.bgApp() + "; -fx-background-color: " + Styles.bgApp() + "; -fx-border-color: transparent;");
+            root.setStyle("-fx-background-color: " + Styles.bgApp() + ";");
+        };
+        applyCanvasTheme.run();
+        Styles.addThemeListener(applyCanvasTheme);
     }
 
     // ===== getters =====
@@ -194,7 +199,7 @@ public class CanvasView {
             }
 
             // 이름
-            g.setFill(isSelected ? Color.ORANGE : Color.BLACK);
+            g.setFill(isSelected ? Color.ORANGE : (Styles.isDark() ? Color.web("#E8E8ED") : Color.BLACK));
             g.fillText(ap.name, ap.x + r + 4, ap.y - r - 2);
         }
 

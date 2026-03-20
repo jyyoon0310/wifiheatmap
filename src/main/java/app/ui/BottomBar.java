@@ -46,11 +46,13 @@ public class BottomBar {
 
     public BottomBar() {
         Label label = new Label("Client Height (m)");
-        label.setStyle(
-                "-fx-text-fill: " + Styles.TEXT_SUB + ";" +
+        Runnable applyLabel = () -> label.setStyle(
+                "-fx-text-fill: " + Styles.textSub() + ";" +
                 "-fx-font-size: 12px;" +
                 "-fx-font-family: " + FONT_STACK + ";"
         );
+        applyLabel.run();
+        Styles.addThemeListener(applyLabel);
 
         clientHeightSpinner.setEditable(true);
         Styles.styleSpinner(clientHeightSpinner);
@@ -122,12 +124,14 @@ public class BottomBar {
         HBox.setHgrow(spacer, Priority.ALWAYS);
         root.getChildren().addAll(label, clientHeightSpinner, applyBtn, spacer, heatmapStatusLabel, currentRssiLabel, legendPane);
         root.setPadding(new Insets(8, 10, 8, 10));
-        root.setStyle(
+        Runnable applyRoot = () -> root.setStyle(
                 "-fx-alignment: center-left;" +
-                        "-fx-background-color: " + Styles.BG_APP + ";" +
-                        "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
+                        "-fx-background-color: " + Styles.bgApp() + ";" +
+                        "-fx-border-color: " + Styles.borderSoft() + ";" +
                         "-fx-border-width: 1 0 0 0;"
         );
+        applyRoot.run();
+        Styles.addThemeListener(applyRoot);
     }
 
     public Node getNode() {
@@ -164,7 +168,7 @@ public class BottomBar {
             currentRssiLabel.setStyle("-fx-text-fill: " + colorHex + ";" + RSSI_LABEL_BASE_STYLE);
         } else {
             currentRssiLabel.setText("- dBm");
-            currentRssiLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + ";" + RSSI_LABEL_BASE_STYLE);
+            currentRssiLabel.setStyle("-fx-text-fill: " + Styles.textSub() + ";" + RSSI_LABEL_BASE_STYLE);
         }
     }
 

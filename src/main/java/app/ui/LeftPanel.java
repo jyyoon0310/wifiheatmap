@@ -114,6 +114,8 @@ public class LeftPanel {
     private Runnable onSolverOverlayChanged = () -> {};
     private Consumer<Wall> onSelectWall = (w) -> {};
 
+    private List<RssiResult> lastRssiResults = List.of();
+
     private WifiEnvironment envRef;
     private AP currentAp = null;
     private Wall currentWall = null;
@@ -123,14 +125,18 @@ public class LeftPanel {
 
     public LeftPanel() {
         root.setPadding(new Insets(10));
-        root.setStyle("-fx-background-color: " + Styles.BG_PANEL + ";");
+        Runnable applyRoot = () -> root.setStyle("-fx-background-color: " + Styles.bgPanel() + ";");
+        applyRoot.run();
+        Styles.addThemeListener(applyRoot);
 
         // --- Scale card ---
         Label hint = new Label("두 점 클릭 후 실제거리 입력");
-        hint.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 12px;");
+        Runnable applyHint = () -> hint.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
+        applyHint.run(); Styles.addThemeListener(applyHint);
 
         Label distLbl = new Label("두 점 실제거리(m)");
-        distLbl.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 12px;");
+        Runnable applyDistLbl = () -> distLbl.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
+        applyDistLbl.run(); Styles.addThemeListener(applyDistLbl);
 
         Styles.styleTextField(realMetersField);
         realMetersField.setPrefWidth(150);
@@ -165,10 +171,14 @@ public class LeftPanel {
         styleTextCombo(solverBandCombo);
 
         solverOverlayCheck.setSelected(true);
-        solverOverlayCheck.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 12px;");
-        solverStateLabel.setStyle("-fx-text-fill: " + Styles.TEXT_MAIN + "; -fx-font-size: 12px; -fx-font-weight: 600;");
-        solverStatsLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
-        solverDebugLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 10px; -fx-font-family: 'Menlo';");
+        Runnable applyOverlayChk = () -> solverOverlayCheck.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
+        applyOverlayChk.run(); Styles.addThemeListener(applyOverlayChk);
+        Runnable applyStateLabel = () -> solverStateLabel.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px; -fx-font-weight: 600;");
+        applyStateLabel.run(); Styles.addThemeListener(applyStateLabel);
+        Runnable applyStatsLabel = () -> solverStatsLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
+        applyStatsLabel.run(); Styles.addThemeListener(applyStatsLabel);
+        Runnable applyDebugLabel = () -> solverDebugLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 10px; -fx-font-family: 'Menlo';");
+        applyDebugLabel.run(); Styles.addThemeListener(applyDebugLabel);
         solverDebugLabel.setWrapText(true);
 
         solverBandCombo.getItems().setAll("All (2.4/5/6)", "2.4GHz", "5GHz", "6GHz");
@@ -180,14 +190,28 @@ public class LeftPanel {
         solverBandCombo.valueProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
         solverOverlayCheck.selectedProperty().addListener((o, ov, nv) -> onSolverOverlayChanged.run());
 
+        // 솔버 카드 정적 레이블들 (테마 리스너 등록)
+        Label[] solverInfoLabels = {
+            new Label("모델: 2D 파동 Solver 오버레이"),
+            new Label("표시: Power (time-avg |u|^2)"),
+            new Label("표시 밴드"),
+            new Label("격자 크기(px): 4 (고정)"),
+            new Label("Sub-steps/frame: 자동"),
+            new Label("Render every N frame: 자동")
+        };
+        for (Label lbl : solverInfoLabels) {
+            Runnable r = () -> lbl.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
+            r.run(); Styles.addThemeListener(r);
+        }
+
         solverCard = Styles.card(
                 "Solver",
-                new Label("모델: 2D 파동 Solver 오버레이"),
-                new Label("표시: Power (time-avg |u|^2)"),
-                new VBox(4, new Label("표시 밴드"), solverBandCombo),
-                new Label("격자 크기(px): 4 (고정)"),
-                new Label("Sub-steps/frame: 자동"),
-                new Label("Render every N frame: 자동"),
+                solverInfoLabels[0],
+                solverInfoLabels[1],
+                new VBox(4, solverInfoLabels[2], solverBandCombo),
+                solverInfoLabels[3],
+                solverInfoLabels[4],
+                solverInfoLabels[5],
                 solverOverlayCheck,
                 solverStateLabel,
                 solverStatsLabel,
@@ -219,8 +243,10 @@ public class LeftPanel {
         Styles.styleFlatButton(deleteWallBtn);
 
         Label coordTitle = new Label("좌표(px)");
-        coordTitle.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 12px;");
-        apCoordLabel.setStyle("-fx-text-fill: " + Styles.TEXT_MAIN + "; -fx-font-size: 12px;");
+        Runnable applyCoordTitle = () -> coordTitle.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
+        applyCoordTitle.run(); Styles.addThemeListener(applyCoordTitle);
+        Runnable applyCoordLabel = () -> apCoordLabel.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
+        applyCoordLabel.run(); Styles.addThemeListener(applyCoordLabel);
 
         VBox band24 = createBandEditor("2.4 GHz", enabled24Check, ssid24Field, tx24Spinner, gain24Spinner, ch24Combo, bw24Combo);
         VBox band5 = createBandEditor("5 GHz", enabled5Check, ssid5Field, tx5Spinner, gain5Spinner, ch5Combo, bw5Combo);
@@ -242,15 +268,22 @@ public class LeftPanel {
         HBox.setHgrow(t24, Priority.ALWAYS);
         HBox.setHgrow(t5, Priority.ALWAYS);
         HBox.setHgrow(t6, Priority.ALWAYS);
-        bandSwitcher.setStyle(
-                "-fx-background-color: #EEF1F5;" +
+        Runnable applyBandSwitcher = () -> bandSwitcher.setStyle(
+                "-fx-background-color: " + Styles.bgTabBar() + ";" +
                 "-fx-background-radius: 10;" +
                 "-fx-padding: 4;"
         );
+        applyBandSwitcher.run();
+        Styles.addThemeListener(applyBandSwitcher);
 
         applyBandTabStyle(t24, true);
         applyBandTabStyle(t5, false);
         applyBandTabStyle(t6, false);
+        Styles.addThemeListener(() -> {
+            applyBandTabStyle(t24, t24.isSelected());
+            applyBandTabStyle(t5, t5.isSelected());
+            applyBandTabStyle(t6, t6.isSelected());
+        });
 
         StackPane bandContent = new StackPane(band24, band5, band6);
         setBandPaneVisible(band24, true);
@@ -273,11 +306,22 @@ public class LeftPanel {
         });
 
         HBox apButtons = new HBox(8, applyApBtn, deleteApBtn);
+
+        // AP 카드 레이블 + CheckBox 테마 리스너
+        Label apNameLbl = new Label("이름");
+        Label apHeightLbl = new Label("AP 높이(m)");
+        for (Label lbl : new Label[]{apNameLbl, apHeightLbl}) {
+            Runnable r = () -> lbl.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
+            r.run(); Styles.addThemeListener(r);
+        }
+        Runnable applyApEnabledChk = () -> apEnabledCheck.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
+        applyApEnabledChk.run(); Styles.addThemeListener(applyApEnabledChk);
+
         apDetailsCard = Styles.card(
                 "AP Details",
-                new VBox(6, new Label("이름"), apNameField),
+                new VBox(6, apNameLbl, apNameField),
                 apEnabledCheck,
-                new VBox(4, new Label("AP 높이(m)"), apHeightField),
+                new VBox(4, apHeightLbl, apHeightField),
                 new VBox(4, coordTitle, apCoordLabel),
                 bandSwitcher,
                 bandContent,
@@ -298,13 +342,9 @@ public class LeftPanel {
         });
         wallMaterialCombo.getSelectionModel().select(WallMaterial.CONCRETE_WALL);
         wallMaterialCombo.setMaxWidth(Double.MAX_VALUE);
-        wallMaterialCombo.setStyle(
-                "-fx-background-color: " + Styles.BG_APP + ";" +
-                "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
-                "-fx-border-radius: 8;" +
-                "-fx-background-radius: 8;" +
-                "-fx-font-size: 12px;"
-        );
+        Runnable applyWallMatCombo = () -> wallMaterialCombo.setStyle(Styles.comboBase());
+        applyWallMatCombo.run();
+        Styles.addThemeListener(applyWallMatCombo);
         Styles.installComboPopupStyle(wallMaterialCombo);
         wallMaterialCombo.valueProperty().addListener((o, ov, nv) -> {
             if (nv == null) return;
@@ -314,11 +354,18 @@ public class LeftPanel {
             }
         });
 
+        Label wallMatLbl = new Label("재질");
+        Label wall24Lbl  = new Label("2.4GHz 감쇠(dB)");
+        Label wall5Lbl   = new Label("5GHz 감쇠(dB)");
+        for (Label lbl : new Label[]{wallMatLbl, wall24Lbl, wall5Lbl}) {
+            Runnable r = () -> lbl.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
+            r.run(); Styles.addThemeListener(r);
+        }
         wallDetailsCard = Styles.card(
                 "Wall Details",
-                new VBox(4, new Label("재질"), wallMaterialCombo),
-                new VBox(4, new Label("2.4GHz 감쇠(dB)"), wall24Field),
-                new VBox(4, new Label("5GHz 감쇠(dB)"), wall5Field),
+                new VBox(4, wallMatLbl, wallMaterialCombo),
+                new VBox(4, wall24Lbl, wall24Field),
+                new VBox(4, wall5Lbl, wall5Field),
                 new HBox(8, applyWallBtn, deleteWallBtn)
         );
         applyWallBtn.setOnAction(e -> applyWallEdits());
@@ -345,12 +392,14 @@ public class LeftPanel {
             setSelectedWall(nv);
             onSelectWall.accept(nv);
         });
-        wallListView.setStyle(
+        Runnable applyWallListView = () -> wallListView.setStyle(
                 "-fx-background-color: transparent;" +
-                "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
+                "-fx-border-color: " + Styles.borderSoft() + ";" +
                 "-fx-border-radius: 8;" +
                 "-fx-background-radius: 8;"
         );
+        applyWallListView.run();
+        Styles.addThemeListener(applyWallListView);
 
         wallListCard = Styles.card(
                 "Walls",
@@ -358,6 +407,7 @@ public class LeftPanel {
         );
 
         root.getChildren().addAll(rssiCard, scaleCard, solverCard, apDetailsCard, wallListCard, wallDetailsCard);
+        Styles.addThemeListener(() -> updateRssiRows(lastRssiResults));
         setScaleVisible(false);
         setSolverToolActive(false);
         setSelectedAp(null);
@@ -596,19 +646,27 @@ public class LeftPanel {
                                   ComboBox<Integer> channel,
                                   ComboBox<Integer> bandwidth) {
         Label t = new Label(title);
-        t.setStyle("-fx-text-fill: " + Styles.TEXT_MAIN + "; -fx-font-size: 12px; -fx-font-weight: 600;");
+        Runnable applyT = () -> t.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px; -fx-font-weight: 600;");
+        applyT.run(); Styles.addThemeListener(applyT);
         Label ssidLabel = new Label("SSID");
-        ssidLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
+        Runnable applySsidL = () -> ssidLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
+        applySsidL.run(); Styles.addThemeListener(applySsidL);
         Label txLabel = new Label("Tx(dBm, 고정 17)");
-        txLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
+        Runnable applyTxL = () -> txLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
+        applyTxL.run(); Styles.addThemeListener(applyTxL);
         Label gainLabel = new Label("Gain(dBi)");
-        gainLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
+        Runnable applyGainL = () -> gainLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
+        applyGainL.run(); Styles.addThemeListener(applyGainL);
         Label chLabel = new Label("Channel");
-        chLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
+        Runnable applyChL = () -> chLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
+        applyChL.run(); Styles.addThemeListener(applyChL);
         Label bwLabel = new Label("Bandwidth(MHz)");
-        bwLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
+        Runnable applyBwL = () -> bwLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
+        applyBwL.run(); Styles.addThemeListener(applyBwL);
 
         enabled.setSelected(true);
+        Runnable applyEnabled = () -> enabled.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
+        applyEnabled.run(); Styles.addThemeListener(applyEnabled);
 
         ssid.setMaxWidth(Double.MAX_VALUE);
         tx.setMaxWidth(Double.MAX_VALUE);
@@ -655,39 +713,27 @@ public class LeftPanel {
         return cb;
     }
 
-    private static void styleIntCombo(ComboBox<Integer> cb) {
+    private void styleIntCombo(ComboBox<Integer> cb) {
         cb.setMinWidth(0);
         cb.setPrefWidth(120);
         cb.setMaxWidth(Double.MAX_VALUE);
-        cb.setStyle(
-                "-fx-background-color: " + Styles.BG_APP + ";" +
-                "-fx-text-fill: " + Styles.TEXT_MAIN + ";" +
-                "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
-                "-fx-border-radius: 8;" +
-                "-fx-background-radius: 8;" +
-                "-fx-padding: 1 2;" +
-                "-fx-font-size: 12px;"
-        );
+        Runnable apply = () -> cb.setStyle(Styles.comboBase());
+        apply.run();
+        if (Styles.registerOnce(cb)) Styles.addThemeListener(apply);
         Styles.installComboPopupStyle(cb);
     }
 
-    private static void styleTextCombo(ComboBox<String> cb) {
+    private void styleTextCombo(ComboBox<String> cb) {
         cb.setMinWidth(0);
         cb.setPrefWidth(160);
         cb.setMaxWidth(Double.MAX_VALUE);
-        cb.setStyle(
-                "-fx-background-color: " + Styles.BG_APP + ";" +
-                "-fx-text-fill: " + Styles.TEXT_MAIN + ";" +
-                "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
-                "-fx-border-radius: 8;" +
-                "-fx-background-radius: 8;" +
-                "-fx-padding: 1 2;" +
-                "-fx-font-size: 12px;"
-        );
+        Runnable apply = () -> cb.setStyle(Styles.comboBase());
+        apply.run();
+        if (Styles.registerOnce(cb)) Styles.addThemeListener(apply);
         Styles.installComboPopupStyle(cb);
     }
 
-    private static void styleChannelCombo(ComboBox<Integer> cb, Band band) {
+    private void styleChannelCombo(ComboBox<Integer> cb, Band band) {
         styleIntCombo(cb);
 
         StringConverter<Integer> converter = new StringConverter<>() {
@@ -752,8 +798,8 @@ public class LeftPanel {
                 "-fx-background-radius: 8;" +
                 "-fx-padding: 4 10;" +
                 (selected
-                        ? "-fx-background-color: " + Styles.ACCENT + "; -fx-text-fill: white; -fx-border-color: transparent;"
-                        : "-fx-background-color: transparent; -fx-text-fill: " + Styles.TEXT_MAIN + "; -fx-border-color: transparent;")
+                        ? "-fx-background-color: " + Styles.accent() + "; -fx-text-fill: white; -fx-border-color: transparent;"
+                        : "-fx-background-color: transparent; -fx-text-fill: " + Styles.textMain() + "; -fx-border-color: transparent;")
         );
     }
 
@@ -986,17 +1032,18 @@ public class LeftPanel {
     }
 
     private void updateRssiRows(List<RssiResult> rows) {
+        lastRssiResults = (rows == null) ? List.of() : rows;
         rssiRows.getChildren().clear();
 
-        if (rows.isEmpty()) {
+        if (lastRssiResults.isEmpty()) {
             Label empty = new Label("마우스를 캔버스 위로 올리면 SSID, 주파수, RSSI가 표시됩니다.");
             empty.setWrapText(true);
-            empty.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
+            empty.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
             rssiRows.getChildren().add(empty);
             return;
         }
 
-        List<RssiResult> sorted = rows.stream()
+        List<RssiResult> sorted = lastRssiResults.stream()
                 .sorted(Comparator
                         .comparing((RssiResult r) -> safeApName(r.apName))
                         .thenComparingInt(r -> bandOrder(r.band))
@@ -1027,19 +1074,19 @@ public class LeftPanel {
 
     private HBox createRssiRow(String leftText, double dbm) {
         Label left = new Label(leftText);
-        left.setStyle("-fx-text-fill: " + Styles.TEXT_MAIN + "; -fx-font-size: 12px;");
+        left.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
 
         javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         Label right = new Label(formatDbm(dbm));
-        right.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
+        right.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
 
         HBox row = new HBox(8, left, spacer, right);
         row.setStyle(
                 "-fx-alignment: center-left;" +
                 "-fx-padding: 5 8;" +
-                "-fx-background-color: #ECECEF;" +
+                "-fx-background-color: " + Styles.bgRow() + ";" +
                 "-fx-background-radius: 8;"
         );
         return row;
@@ -1052,13 +1099,13 @@ public class LeftPanel {
 
     private HBox createRssiApHeaderRow(String apName) {
         Label left = new Label(apName);
-        left.setStyle("-fx-text-fill: " + Styles.TEXT_MAIN + "; -fx-font-size: 12px; -fx-font-weight: 600;");
+        left.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px; -fx-font-weight: 600;");
 
         HBox row = new HBox(left);
         row.setStyle(
                 "-fx-alignment: center-left;" +
                 "-fx-padding: 5 8;" +
-                "-fx-background-color: #D9D9DD;" +
+                "-fx-background-color: " + Styles.bgRowHdr() + ";" +
                 "-fx-background-radius: 8;"
         );
         return row;
@@ -1074,7 +1121,7 @@ public class LeftPanel {
 
     private static Label styledPlaceholder(String text) {
         Label label = new Label(text);
-        label.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + "; -fx-font-size: 11px;");
+        label.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
         return label;
     }
 }

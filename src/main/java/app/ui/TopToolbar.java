@@ -4,6 +4,8 @@ import app.model.AppState;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.DoubleProperty;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.Cursor;
 import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
@@ -25,35 +27,44 @@ public class TopToolbar {
     private Runnable onResetSolver;
     private Consumer<AppState.Tool> onToolChanged;
 
-    // ✅ 줌 액션 콜백
     private Runnable onZoomFit;
     private Runnable onZoom100;
     private Runnable onZoomIn;
     private Runnable onZoomOut;
 
     private final ToggleGroup toolGroup = new ToggleGroup();
-    private final ToggleButton tScale = new ToggleButton("스케일");
-    private final ToggleButton tAP = new ToggleButton("AP배치");
-    private final ToggleButton tWall = new ToggleButton("벽그리기");
+    private final ToggleButton tScale  = new ToggleButton("스케일");
+    private final ToggleButton tAP    = new ToggleButton("AP배치");
+    private final ToggleButton tWall  = new ToggleButton("벽그리기");
     private final ToggleButton tSolver = new ToggleButton("Solver");
-    private final Button solverStartBtn = new Button("Solver 시작");
-    private final Button solverStopBtn = new Button("Solver 정지");
-    private final Button solverResetBtn = new Button("Solver 리셋");
 
-    // ✅ 줌 UI
+    private final Button solverStartBtn = new Button("▶ 시작");
+    private final Button solverStopBtn  = new Button("■ 정지");
+    private final Button solverResetBtn = new Button("↺ 리셋");
+
     private final Label zoomLabel = new Label("100%");
 
+    // pill container for tool toggles — needs theme update
+    private HBox toolPill;
+
     public TopToolbar() {
-        Button open = new Button("평면도 열기");
+        // ── 파일 버튼 그룹 ──────────────────────────────────────────────────
+        Button open = new Button("열기");
         Styles.styleFlatButton(open);
+        open.setTooltip(new Tooltip("평면도 열기"));
         open.setOnAction(e -> { if (onOpenFloorplan != null) onOpenFloorplan.run(); });
-        Button openSettings = new Button("설정값 열기");
+
+        Button openSettings = new Button("불러오기");
         Styles.styleFlatButton(openSettings);
+        openSettings.setTooltip(new Tooltip("설정값 열기"));
         openSettings.setOnAction(e -> { if (onOpenSettings != null) onOpenSettings.run(); });
-        Button saveSettings = new Button("설정값 저장");
+
+        Button saveSettings = new Button("저장");
         Styles.styleFlatButton(saveSettings);
+        saveSettings.setTooltip(new Tooltip("설정값 저장"));
         saveSettings.setOnAction(e -> { if (onSaveSettings != null) onSaveSettings.run(); });
 
+        // ── 도구 선택 pill ──────────────────────────────────────────────────
         tScale.setToggleGroup(toolGroup);
         tAP.setToggleGroup(toolGroup);
         tWall.setToggleGroup(toolGroup);
@@ -63,7 +74,6 @@ public class TopToolbar {
         Styles.styleToggle(tAP);
         Styles.styleToggle(tWall);
         Styles.styleToggle(tSolver);
-
         clearToolSelection();
 
         tScale.setOnAction(e -> {
@@ -83,14 +93,30 @@ public class TopToolbar {
             onToolChanged.accept(tSolver.isSelected() ? AppState.Tool.SOLVER : AppState.Tool.VIEW);
         });
 
+        toolPill = new HBox(2, tScale, tAP, tWall, tSolver);
+        toolPill.setAlignment(Pos.CENTER);
+        toolPill.setPadding(new Insets(3, 6, 3, 6));
+        Runnable applyPill = () -> toolPill.setStyle(
+                "-fx-background-color: " + Styles.bgRow() + ";" +
+                "-fx-background-radius: 10;" +
+                "-fx-border-color: " + Styles.borderSoft() + ";" +
+                "-fx-border-radius: 10;" +
+                "-fx-border-width: 0.5;"
+        );
+        applyPill.run();
+        Styles.addThemeListener(applyPill);
+
+        // ── 히트맵 버튼 ────────────────────────────────────────────────────
         Button gen = new Button("히트맵 생성");
         Styles.styleAccentButton(gen);
         gen.setOnAction(e -> { if (onGenerateHeatmap != null) onGenerateHeatmap.run(); });
 
-        Button clear = new Button("히트맵 클리어");
+        Button clear = new Button("클리어");
         Styles.styleFlatButton(clear);
+        clear.setTooltip(new Tooltip("히트맵 클리어"));
         clear.setOnAction(e -> { if (onClearHeatmap != null) onClearHeatmap.run(); });
 
+        // ── 솔버 컨트롤 ─────────────────────────────────────────────────────
         Styles.styleAccentButton(solverStartBtn);
         Styles.styleFlatButton(solverStopBtn);
         Styles.styleFlatButton(solverResetBtn);
@@ -101,75 +127,106 @@ public class TopToolbar {
         solverResetBtn.setOnAction(e -> { if (onResetSolver != null) onResetSolver.run(); });
         setSolverToolActive(false);
 
-        // ===== ✅ Zoom box (오른쪽 정렬) =====
+        // ── 오른쪽 spacer ──────────────────────────────────────────────────
         HBox spacer = new HBox();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
+        // ── 줌 컨트롤 ─────────────────────────────────────────────────────
         HBox zoomBox = buildZoomBox();
 
+        // ── 다크 모드 토글 ─────────────────────────────────────────────────
+        ToggleButton darkBtn = new ToggleButton("◑");
+        darkBtn.setTooltip(new Tooltip("다크 / 라이트 모드"));
+        darkBtn.setSelected(Styles.isDark());
+        darkBtn.setOnAction(e -> Styles.setDark(darkBtn.isSelected()));
+        Styles.styleToggle(darkBtn);
+        Styles.addThemeListener(() -> darkBtn.setSelected(Styles.isDark()));
+
+        // ── bar 구성 ───────────────────────────────────────────────────────
         bar.getItems().addAll(
-                open,
-                openSettings,
-                saveSettings,
+                open, openSettings, saveSettings,
                 new Separator(),
-                tScale, tAP, tWall, tSolver,
+                toolPill,
                 new Separator(),
                 gen, clear,
                 solverStartBtn, solverStopBtn, solverResetBtn,
                 spacer,
-                zoomBox
+                zoomBox,
+                new Separator(),
+                darkBtn
         );
 
-        bar.setStyle("-fx-background-color: " + Styles.BG_APP + ";" +
-                "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
+        Runnable applyBar = () -> bar.setStyle(
+                "-fx-background-color: " + Styles.bgApp() + ";" +
+                "-fx-border-color: " + Styles.borderSoft() + ";" +
                 "-fx-border-width: 0 0 1 0;" +
-                "-fx-padding: 8 10;");
+                "-fx-padding: 6 10;");
+        applyBar.run();
+        Styles.addThemeListener(applyBar);
     }
 
     private HBox buildZoomBox() {
+        // 맞춤 버튼
         Button fit = new Button("맞춤");
         Styles.styleFlatButton(fit);
+        fit.setTooltip(new Tooltip("화면에 맞춤"));
         fit.setOnAction(e -> { if (onZoomFit != null) onZoomFit.run(); });
 
-        Button b100 = new Button("100%");
-        Styles.styleFlatButton(b100);
-        b100.setOnAction(e -> { if (onZoom100 != null) onZoom100.run(); });
-
+        // − 버튼
         Button minus = new Button("−");
         Styles.styleFlatButton(minus);
+        minus.setPrefWidth(30);
         minus.setOnAction(e -> { if (onZoomOut != null) onZoomOut.run(); });
 
+        // 줌 레이블 (클릭 시 100% 복귀)
+        zoomLabel.setMinWidth(52);
+        zoomLabel.setAlignment(Pos.CENTER);
+        zoomLabel.setCursor(Cursor.HAND);
+        zoomLabel.setTooltip(new Tooltip("클릭 시 100%로 초기화"));
+        zoomLabel.setOnMouseClicked(e -> { if (onZoom100 != null) onZoom100.run(); });
+
+        Runnable applyZoomLabel = () -> zoomLabel.setStyle(
+                "-fx-alignment: center;" +
+                "-fx-padding: 5 8;" +
+                "-fx-text-fill: " + Styles.textMain() + ";" +
+                "-fx-background-color: " + Styles.bgPanel() + ";" +
+                "-fx-border-color: " + Styles.borderSoft() + ";" +
+                "-fx-border-radius: 8;" +
+                "-fx-background-radius: 8;" +
+                "-fx-font-size: 12px;"
+        );
+        applyZoomLabel.run();
+        Styles.addThemeListener(applyZoomLabel);
+
+        // + 버튼
         Button plus = new Button("+");
         Styles.styleFlatButton(plus);
+        plus.setPrefWidth(30);
         plus.setOnAction(e -> { if (onZoomIn != null) onZoomIn.run(); });
 
-        zoomLabel.setMinWidth(64);
-        zoomLabel.setStyle(
-                "-fx-alignment: center;" +
-                        "-fx-padding: 6 10;" +
-                        "-fx-background-color: " + Styles.BG_PANEL + ";" +
-                        "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
-                        "-fx-border-radius: 10;" +
-                        "-fx-background-radius: 10;"
-        );
-
-        HBox box = new HBox(8, fit, b100, new Separator(), minus, zoomLabel, plus);
-        box.setPadding(new Insets(2, 0, 2, 0));
-        box.setStyle("-fx-alignment: center-right;");
+        HBox box = new HBox(4, fit, minus, zoomLabel, plus);
+        box.setAlignment(Pos.CENTER);
+        box.setPadding(new Insets(1, 0, 1, 0));
         return box;
     }
 
+    // ── getters / setters ───────────────────────────────────────────────────
     public Node getNode() { return bar; }
 
-    public void setOnOpenFloorplan(Runnable r) { this.onOpenFloorplan = r; }
-    public void setOnOpenSettings(Runnable r) { this.onOpenSettings = r; }
-    public void setOnSaveSettings(Runnable r) { this.onSaveSettings = r; }
-    public void setOnGenerateHeatmap(Runnable r) { this.onGenerateHeatmap = r; }
-    public void setOnClearHeatmap(Runnable r) { this.onClearHeatmap = r; }
-    public void setOnStartSolver(Runnable r) { this.onStartSolver = r; }
-    public void setOnStopSolver(Runnable r) { this.onStopSolver = r; }
-    public void setOnResetSolver(Runnable r) { this.onResetSolver = r; }
+    public void setOnOpenFloorplan(Runnable r)          { this.onOpenFloorplan = r; }
+    public void setOnOpenSettings(Runnable r)           { this.onOpenSettings = r; }
+    public void setOnSaveSettings(Runnable r)           { this.onSaveSettings = r; }
+    public void setOnGenerateHeatmap(Runnable r)        { this.onGenerateHeatmap = r; }
+    public void setOnClearHeatmap(Runnable r)           { this.onClearHeatmap = r; }
+    public void setOnStartSolver(Runnable r)            { this.onStartSolver = r; }
+    public void setOnStopSolver(Runnable r)             { this.onStopSolver = r; }
+    public void setOnResetSolver(Runnable r)            { this.onResetSolver = r; }
     public void setOnToolChanged(Consumer<AppState.Tool> c) { this.onToolChanged = c; }
+
+    public void setOnZoomFit(Runnable r)  { this.onZoomFit  = r; }
+    public void setOnZoom100(Runnable r)  { this.onZoom100  = r; }
+    public void setOnZoomIn(Runnable r)   { this.onZoomIn   = r; }
+    public void setOnZoomOut(Runnable r)  { this.onZoomOut  = r; }
 
     public void setSolverRunning(boolean running) {
         solverStartBtn.setDisable(running);
@@ -185,18 +242,11 @@ public class TopToolbar {
         solverResetBtn.setVisible(active);
     }
 
-    // ✅ 줌 콜백 setter
-    public void setOnZoomFit(Runnable r) { this.onZoomFit = r; }
-    public void setOnZoom100(Runnable r) { this.onZoom100 = r; }
-    public void setOnZoomIn(Runnable r) { this.onZoomIn = r; }
-    public void setOnZoomOut(Runnable r) { this.onZoomOut = r; }
-
-    /** MainController에서 zoomScaleProperty 넘겨주면 라벨이 자동 갱신됨 */
+    /** MainController에서 zoomScaleProperty를 넘겨주면 라벨이 자동 갱신됨 */
     public void bindZoomLabel(DoubleProperty zoomScaleProperty) {
         zoomLabel.textProperty().bind(
                 Bindings.createStringBinding(() -> {
-                    double pct = zoomScaleProperty.get() * 100.0;
-                    int ip = (int) Math.round(pct);
+                    int ip = (int) Math.round(zoomScaleProperty.get() * 100.0);
                     return ip + "%";
                 }, zoomScaleProperty)
         );
@@ -214,11 +264,11 @@ public class TopToolbar {
         clearToolSelection();
         if (tool == null || tool == AppState.Tool.VIEW) return;
         switch (tool) {
-            case SCALE -> tScale.setSelected(true);
-            case AP -> tAP.setSelected(true);
-            case WALL -> tWall.setSelected(true);
+            case SCALE  -> tScale.setSelected(true);
+            case AP     -> tAP.setSelected(true);
+            case WALL   -> tWall.setSelected(true);
             case SOLVER -> tSolver.setSelected(true);
-            default -> {}
+            default     -> {}
         }
     }
 }
