@@ -7,9 +7,8 @@ import javafx.animation.PauseTransition;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
+import javafx.geometry.Point2D;
 import javafx.geometry.Pos;
-import javafx.scene.Cursor;
-import javafx.scene.Node;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.*;
@@ -17,27 +16,32 @@ import javafx.scene.image.Image;
 import javafx.scene.image.WritableImage;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
+import javafx.stage.Popup;
 import javafx.stage.Window;
 import javafx.util.Duration;
 
 import java.awt.image.BufferedImage;
 import java.util.*;
 import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 /**
  * 벽 자동 인식 다이얼로그.
  *
- * 인식된 벽을 캔버스에서 클릭으로 선택/해제할 수 있습니다.
- *   초록  = 선택됨 (적용 대상)
- *   회색  = 미선택
- *   주황  = 호버 중
+ * 인식된 선분을 클릭하면 글라스 팝오버가 뜨며
+ * 재질을 고르고 "추가"를 누르면 즉시 추가 목록에 들어갑니다.
+ * "완료" 버튼으로 최종 적용합니다.
+ *
+ * 색상 범례:
+ *   하늘색 = 후보 (아직 미추가)
+ *   주황   = 호버
+ *   노란색 = 팝오버가 열린 선분
+ *   초록   = 추가 확정됨
  */
 public class WallDetectorDialog {
 
-    private static final double PREVIEW_MAX_W = 680;
-    private static final double PREVIEW_MAX_H = 480;
-    private static final double HIT_RADIUS_PX  = 8.0; // 클릭 판정 반경
+    private static final double PREVIEW_MAX_W = 700;
+    private static final double PREVIEW_MAX_H = 500;
+    private static final double HIT_RADIUS_PX = 9.0;
 
     public static void show(Window owner, BufferedImage floorplan,
                             BiConsumer<List<WallDetector.Segment>, WallMaterial> onApply) {
@@ -46,19 +50,17 @@ public class WallDetectorDialog {
         Dialog<Void> dlg = new Dialog<>();
         dlg.setTitle("벽 자동 인식");
         if (owner != null) dlg.initOwner(owner);
-        dlg.getDialogPane().setPrefSize(980, 660);
+        dlg.getDialogPane().setPrefSize(1000, 680);
 
         // ── 스케일 / 캔버스 ────────────────────────────────────────────────
         double scaleX = Math.min(1.0, PREVIEW_MAX_W / floorplan.getWidth());
         double scaleY = Math.min(1.0, PREVIEW_MAX_H / floorplan.getHeight());
         double scale  = Math.min(scaleX, scaleY);
-        int canvasW = (int) Math.round(floorplan.getWidth()  * scale);
-        int canvasH = (int) Math.round(floorplan.getHeight() * scale);
+        int canvasW   = (int) Math.round(floorplan.getWidth()  * scale);
+        int canvasH   = (int) Math.round(floorplan.getHeight() * scale);
 
         Canvas canvas = new Canvas(canvasW, canvasH);
-        canvas.setCursor(Cursor.CROSSHAIR);
-
-        Image grayPreview = toGrayFxImage(floorplan, canvasW, canvasH);
+        Image grayBg  = toGrayFxImage(floorplan, canvasW, canvasH);
 
         StackPane previewPane = new StackPane(canvas);
         Runnable stylePreview = () -> previewPane.setStyle(
@@ -68,44 +70,141 @@ public class WallDetectorDialog {
         Styles.addThemeListener(stylePreview);
         previewPane.setPadding(new Insets(6));
 
-        // ── 선택 상태 ──────────────────────────────────────────────────────
-        // detected[0] : 현재 인식된 전체 선분
-        // selected    : 선택된 인덱스 집합 (기본: 전체 선택)
+        // ── 상태 ──────────────────────────────────────────────────────────
         @SuppressWarnings("unchecked")
         List<WallDetector.Segment>[] detectedRef = new List[]{List.of()};
-        Set<Integer> selected  = new LinkedHashSet<>();
-        int[]        hovered   = {-1};
 
-        // ── 상태 / 선택 레이블 ─────────────────────────────────────────────
-        Label statusLbl = styledLabel("인식 중...", false);
-        Label selLbl    = styledLabel("", false);
+        // 추가 확정된 (세그먼트 인덱스 → 선택된 재질) 맵
+        Map<Integer, WallMaterial> addedMap = new LinkedHashMap<>();
 
-        Runnable updateSelLbl = () -> {
+        int[] hoveredIdx = {-1};
+        int[] pendingIdx = {-1}; // 팝오버가 열린 선분 인덱스
+
+        Label statusLbl = styledLabel("인식 중...");
+        Label addedLbl  = styledLabel("");
+
+        Runnable updateLabels = () -> {
             int total = detectedRef[0].size();
-            int sel   = selected.size();
-            selLbl.setText(sel + " / " + total + "개 선택");
+            int added = addedMap.size();
+            statusLbl.setText("인식된 벽: " + total + "개");
+            addedLbl.setText(added > 0 ? "추가 확정: " + added + "개" : "");
         };
 
-        // ── 선택 버튼들 ────────────────────────────────────────────────────
-        Button selAllBtn  = smallBtn("모두 선택");
-        Button selNoneBtn = smallBtn("모두 해제");
-        Button selInvBtn  = smallBtn("반전");
+        // ── 글라스 팝오버 ─────────────────────────────────────────────────
+        Popup popup = new Popup();
+        popup.setAutoHide(true);
 
-        HBox selBtns = new HBox(6, selAllBtn, selNoneBtn, selInvBtn);
-        selBtns.setAlignment(Pos.CENTER_LEFT);
-
-        // ── 재질 선택 ──────────────────────────────────────────────────────
         ComboBox<WallMaterial> matCombo = new ComboBox<>();
         matCombo.getItems().setAll(WallMaterial.values());
         matCombo.getSelectionModel().select(WallMaterial.CONCRETE_WALL);
         matCombo.setMaxWidth(Double.MAX_VALUE);
-        Runnable applyMat = () -> matCombo.setStyle(Styles.comboBase());
-        applyMat.run();
-        Styles.addThemeListener(applyMat);
-        Styles.installComboPopupStyle(matCombo);
         matCombo.setConverter(new javafx.util.StringConverter<>() {
             @Override public String toString(WallMaterial m) { return m == null ? "" : m.labelKo(); }
             @Override public WallMaterial fromString(String s) { return null; }
+        });
+        Runnable applyCombo = () -> matCombo.setStyle(Styles.comboBase());
+        applyCombo.run();
+        Styles.addThemeListener(applyCombo);
+        Styles.installComboPopupStyle(matCombo);
+
+        Label popupTitle = new Label("벽 추가");
+        Runnable applyTitle = () -> popupTitle.setStyle(
+                "-fx-text-fill:" + Styles.textMain() + ";" +
+                "-fx-font-size:12px;-fx-font-weight:600;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";");
+        applyTitle.run();
+        Styles.addThemeListener(applyTitle);
+
+        Label popupHint = new Label("재질을 선택하고 추가하세요");
+        Runnable applyHint = () -> popupHint.setStyle(
+                "-fx-text-fill:" + Styles.textSub() + ";" +
+                "-fx-font-size:11px;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";");
+        applyHint.run();
+        Styles.addThemeListener(applyHint);
+
+        Button popupAddBtn    = new Button("추가");
+        Button popupCancelBtn = new Button("취소");
+        Styles.styleAccentButton(popupAddBtn);
+        Styles.styleFlatButton(popupCancelBtn);
+
+        HBox popupBtnRow = new HBox(8, popupAddBtn, popupCancelBtn);
+        popupBtnRow.setAlignment(Pos.CENTER_RIGHT);
+
+        VBox popupBox = new VBox(10, popupTitle, popupHint, matCombo, popupBtnRow);
+        popupBox.setPadding(new Insets(14));
+        popupBox.setPrefWidth(210);
+        Runnable applyPopupBox = () -> popupBox.setStyle(
+                "-fx-background-color:" + Styles.bgPanel() + ";" +
+                "-fx-background-radius:14;" +
+                "-fx-border-color:" + Styles.borderSoft() + ";" +
+                "-fx-border-radius:14;" +
+                "-fx-border-width:0.5;" +
+                "-fx-effect:" + (Styles.isDark()
+                        ? "dropshadow(gaussian,rgba(0,0,0,0.85),28,0.20,0,10)"
+                        : "dropshadow(gaussian,rgba(0,0,0,0.18),20,0.10,0,6)") + ";");
+        applyPopupBox.run();
+        Styles.addThemeListener(applyPopupBox);
+        popup.getContent().add(popupBox);
+
+        // ── 렌더링 클로저 ─────────────────────────────────────────────────
+        Runnable redraw = () ->
+                drawPreview(canvas, grayBg, detectedRef[0], scale,
+                        addedMap.keySet(), hoveredIdx[0], pendingIdx[0]);
+
+        // 팝오버 닫힘 시 pending 해제
+        popup.setOnHidden(e -> {
+            pendingIdx[0] = -1;
+            redraw.run();
+        });
+
+        // 추가 버튼
+        popupAddBtn.setOnAction(e -> {
+            int idx = pendingIdx[0];
+            if (idx >= 0 && idx < detectedRef[0].size()) {
+                WallMaterial mat = matCombo.getValue();
+                if (mat == null) mat = WallMaterial.CONCRETE_WALL;
+                addedMap.put(idx, mat);
+                updateLabels.run();
+            }
+            popup.hide(); // onHidden이 pendingIdx 초기화 + redraw
+        });
+
+        popupCancelBtn.setOnAction(e -> popup.hide());
+
+        // ── 캔버스 마우스 이벤트 ──────────────────────────────────────────
+        canvas.setOnMouseMoved(e -> {
+            int prev = hoveredIdx[0];
+            hoveredIdx[0] = hitTest(detectedRef[0], e.getX(), e.getY(), scale);
+            if (hoveredIdx[0] != prev) redraw.run();
+        });
+
+        canvas.setOnMouseExited(e -> {
+            hoveredIdx[0] = -1;
+            redraw.run();
+        });
+
+        canvas.setOnMouseClicked(e -> {
+            int idx = hitTest(detectedRef[0], e.getX(), e.getY(), scale);
+            if (idx < 0) return;
+
+            if (addedMap.containsKey(idx)) {
+                // 이미 추가된 선분 → 클릭하면 제거 (토글)
+                addedMap.remove(idx);
+                updateLabels.run();
+                redraw.run();
+                return;
+            }
+
+            pendingIdx[0] = idx;
+            redraw.run();
+
+            // 팝오버 위치: 선분 중점 근처 (캔버스 → 화면 좌표)
+            WallDetector.Segment seg = detectedRef[0].get(idx);
+            double mx = ((seg.x1() + seg.x2()) * 0.5) * scale;
+            double my = ((seg.y1() + seg.y2()) * 0.5) * scale;
+            Point2D screen = canvas.localToScreen(mx + 14, my - 10);
+            if (screen != null) popup.show(canvas, screen.getX(), screen.getY());
         });
 
         // ── 파라미터 슬라이더 ──────────────────────────────────────────────
@@ -115,6 +214,15 @@ public class WallDetectorDialog {
         Slider sMaxGap    = slider( 2,  50,   8, "최대 갭 (px)");
         Slider sThreshold = slider(10, 100,  30, "누적 임계값");
         Slider sMergeDist = slider( 2,  40,  10, "병합 거리 (px)");
+
+        // ── 범례 ─────────────────────────────────────────────────────────
+        HBox legend = new HBox(10,
+                legendItem("#5BC8F5", "후보"),
+                legendItem("#FFB740", "호버"),
+                legendItem("#FFE84D", "선택 중"),
+                legendItem("#34D34A", "추가됨 (재클릭=취소)")
+        );
+        legend.setAlignment(Pos.CENTER_LEFT);
 
         // ── 오른쪽 파라미터 패널 ───────────────────────────────────────────
         VBox paramPanel = new VBox(10,
@@ -130,15 +238,11 @@ public class WallDetectorDialog {
                 sectionLabel("병합"),
                 sliderRow("병합 거리 (px)", sMergeDist),
                 new Separator(),
-                sectionLabel("선택"),
-                selBtns,
-                new Separator(),
-                sectionLabel("재질"),
-                matCombo
+                legend
         );
         paramPanel.setPadding(new Insets(12));
-        paramPanel.setPrefWidth(220);
-        paramPanel.setMaxWidth(220);
+        paramPanel.setPrefWidth(230);
+        paramPanel.setMaxWidth(230);
         Runnable applyPanel = () -> paramPanel.setStyle(
                 "-fx-background-color:" + Styles.bgPanel() + ";" +
                 "-fx-background-radius:10;" +
@@ -147,7 +251,7 @@ public class WallDetectorDialog {
                 "-fx-border-width:0.5;");
         applyPanel.run();
         Styles.addThemeListener(applyPanel);
-        for (Node n : paramPanel.getChildren()) {
+        for (javafx.scene.Node n : paramPanel.getChildren()) {
             if (n instanceof Separator sep) {
                 Runnable r = () -> sep.setStyle("-fx-background-color:" + Styles.borderSoft() + ";");
                 r.run(); Styles.addThemeListener(r);
@@ -155,7 +259,7 @@ public class WallDetectorDialog {
         }
 
         // ── 레이아웃 ──────────────────────────────────────────────────────
-        HBox bottomRow = new HBox(12, statusLbl, selLbl);
+        HBox bottomRow = new HBox(16, statusLbl, addedLbl);
         bottomRow.setAlignment(Pos.CENTER_LEFT);
 
         VBox leftBox = new VBox(8, previewPane, bottomRow);
@@ -169,54 +273,12 @@ public class WallDetectorDialog {
 
         dlg.getDialogPane().setContent(content);
 
-        // ── 버튼 ──────────────────────────────────────────────────────────
-        ButtonType applyBtnType  = new ButtonType("선택 항목 추가", ButtonBar.ButtonData.OK_DONE);
-        ButtonType cancelBtnType = new ButtonType("취소",            ButtonBar.ButtonData.CANCEL_CLOSE);
-        dlg.getDialogPane().getButtonTypes().addAll(applyBtnType, cancelBtnType);
-
-        Button applyNode = (Button) dlg.getDialogPane().lookupButton(applyBtnType);
-        if (applyNode != null) applyNode.setDisable(true);
+        // ── 대화상자 버튼 ─────────────────────────────────────────────────
+        ButtonType doneBtn  = new ButtonType("완료", ButtonBar.ButtonData.OK_DONE);
+        ButtonType closeBtn = new ButtonType("닫기", ButtonBar.ButtonData.CANCEL_CLOSE);
+        dlg.getDialogPane().getButtonTypes().addAll(doneBtn, closeBtn);
 
         Styles.styleDialogPane(dlg.getDialogPane());
-
-        // ── 렌더링 클로저 ─────────────────────────────────────────────────
-        Runnable redraw = () ->
-                drawPreview(canvas, grayPreview, detectedRef[0], scale, selected, hovered[0]);
-
-        // ── 선택 버튼 동작 ─────────────────────────────────────────────────
-        selAllBtn.setOnAction(e -> {
-            for (int i = 0; i < detectedRef[0].size(); i++) selected.add(i);
-            updateSelLbl.run(); redraw.run();
-        });
-        selNoneBtn.setOnAction(e -> {
-            selected.clear();
-            updateSelLbl.run(); redraw.run();
-        });
-        selInvBtn.setOnAction(e -> {
-            Set<Integer> inv = new LinkedHashSet<>();
-            for (int i = 0; i < detectedRef[0].size(); i++)
-                if (!selected.contains(i)) inv.add(i);
-            selected.clear(); selected.addAll(inv);
-            updateSelLbl.run(); redraw.run();
-        });
-
-        // ── 캔버스 마우스 이벤트 ──────────────────────────────────────────
-        canvas.setOnMouseMoved(e -> {
-            int prev = hovered[0];
-            hovered[0] = hitTest(detectedRef[0], e.getX(), e.getY(), scale);
-            if (hovered[0] != prev) redraw.run();
-        });
-        canvas.setOnMouseExited(e -> {
-            hovered[0] = -1;
-            redraw.run();
-        });
-        canvas.setOnMouseClicked(e -> {
-            int idx = hitTest(detectedRef[0], e.getX(), e.getY(), scale);
-            if (idx < 0) return;
-            if (selected.contains(idx)) selected.remove(idx);
-            else selected.add(idx);
-            updateSelLbl.run(); redraw.run();
-        });
 
         // ── 감지 로직 ─────────────────────────────────────────────────────
         PauseTransition debounce = new PauseTransition(Duration.millis(350));
@@ -224,7 +286,9 @@ public class WallDetectorDialog {
 
         Runnable runDetect = () -> {
             statusLbl.setText("인식 중...");
-            if (applyNode != null) applyNode.setDisable(true);
+            popup.hide();
+            addedMap.clear();
+            updateLabels.run();
 
             WallDetector.Params p = new WallDetector.Params(
                     sCanny1.getValue(), sCanny2.getValue(),
@@ -243,18 +307,12 @@ public class WallDetectorDialog {
             };
             task.setOnSucceeded(ev -> {
                 detectedRef[0] = task.getValue();
-                // 재인식 시 전체 선택으로 초기화
-                selected.clear();
-                for (int i = 0; i < detectedRef[0].size(); i++) selected.add(i);
-
-                statusLbl.setText("인식 완료: " + detectedRef[0].size() + "개");
-                if (applyNode != null) applyNode.setDisable(detectedRef[0].isEmpty());
-                updateSelLbl.run();
+                updateLabels.run();
                 redraw.run();
             });
             task.setOnFailed(ev -> {
                 Throwable ex = task.getException();
-                statusLbl.setText("인식 실패: " + (ex != null ? ex.getMessage() : "알 수 없는 오류"));
+                statusLbl.setText("인식 실패: " + (ex != null ? ex.getMessage() : "?"));
             });
             taskRef[0] = task;
             Thread t = new Thread(task, "wall-detector");
@@ -272,19 +330,21 @@ public class WallDetectorDialog {
         sThreshold.valueProperty().addListener((o, ov, nv) -> schedule.run());
         sMergeDist.valueProperty().addListener((o, ov, nv) -> schedule.run());
 
-        runDetect.run(); // 최초 실행
+        runDetect.run();
 
-        // ── 적용 ─────────────────────────────────────────────────────────
+        // ── 완료 처리 ─────────────────────────────────────────────────────
         dlg.setResultConverter(bt -> {
-            if (bt == applyBtnType && onApply != null) {
+            popup.hide();
+            if (bt == doneBtn && onApply != null && !addedMap.isEmpty()) {
+                // 재질별로 그룹핑해서 onApply 호출 (재질이 다를 수 있으므로)
+                Map<WallMaterial, List<WallDetector.Segment>> byMat = new LinkedHashMap<>();
                 List<WallDetector.Segment> all = detectedRef[0];
-                List<WallDetector.Segment> out = new ArrayList<>();
-                for (int idx : selected) {
-                    if (idx >= 0 && idx < all.size()) out.add(all.get(idx));
+                for (Map.Entry<Integer, WallMaterial> e : addedMap.entrySet()) {
+                    int idx = e.getKey();
+                    if (idx >= 0 && idx < all.size())
+                        byMat.computeIfAbsent(e.getValue(), k -> new ArrayList<>()).add(all.get(idx));
                 }
-                WallMaterial mat = matCombo.getValue();
-                if (mat == null) mat = WallMaterial.CONCRETE_WALL;
-                onApply.accept(out, mat);
+                byMat.forEach((mat, segs) -> onApply.accept(segs, mat));
             }
             return null;
         });
@@ -295,52 +355,57 @@ public class WallDetectorDialog {
     // ── 렌더링 ────────────────────────────────────────────────────────────────
 
     private static void drawPreview(Canvas canvas, Image grayBg,
-                                    List<WallDetector.Segment> segments,
-                                    double scale, Set<Integer> selected, int hovered) {
+                                    List<WallDetector.Segment> segs, double scale,
+                                    Set<Integer> addedSet, int hovered, int pending) {
         GraphicsContext g = canvas.getGraphicsContext2D();
         g.clearRect(0, 0, canvas.getWidth(), canvas.getHeight());
         g.drawImage(grayBg, 0, 0, canvas.getWidth(), canvas.getHeight());
 
-        for (int i = 0; i < segments.size(); i++) {
-            WallDetector.Segment seg = segments.get(i);
-            double x1 = seg.x1() * scale, y1 = seg.y1() * scale;
-            double x2 = seg.x2() * scale, y2 = seg.y2() * scale;
+        for (int i = 0; i < segs.size(); i++) {
+            WallDetector.Segment s = segs.get(i);
+            double x1 = s.x1() * scale, y1 = s.y1() * scale;
+            double x2 = s.x2() * scale, y2 = s.y2() * scale;
 
-            if (i == hovered) {
-                // 호버: 주황 글로우
-                g.setStroke(Color.rgb(255, 160, 30, 0.5));
-                g.setLineWidth(6);
+            boolean isAdded   = addedSet.contains(i);
+            boolean isHovered = (i == hovered) && !isAdded;
+            boolean isPending = (i == pending);
+
+            if (isPending) {
+                // 팝오버 열린 선분: 노란색 글로우
+                g.setStroke(Color.rgb(255, 232, 77, 0.45));
+                g.setLineWidth(7);
                 g.strokeLine(x1, y1, x2, y2);
-                g.setStroke(Color.rgb(255, 180, 50, 1.0));
+                g.setStroke(Color.rgb(255, 240, 80, 1.0));
                 g.setLineWidth(2.5);
-            } else if (selected.contains(i)) {
-                // 선택됨: 초록
+                g.strokeLine(x1, y1, x2, y2);
+            } else if (isAdded) {
+                // 추가 확정: 초록
                 g.setStroke(Color.rgb(52, 211, 74, 1.0));
                 g.setLineWidth(2.0);
-            } else {
-                // 미선택: 흐린 회색
-                g.setStroke(Color.rgb(160, 160, 160, 0.45));
-                g.setLineWidth(1.0);
-            }
-            g.strokeLine(x1, y1, x2, y2);
-
-            // 선택된 선분의 끝점 점 표시
-            if (selected.contains(i) && i != hovered) {
+                g.strokeLine(x1, y1, x2, y2);
                 g.setFill(Color.rgb(52, 211, 74, 0.9));
-                g.fillOval(x1 - 2.5, y1 - 2.5, 5, 5);
-                g.fillOval(x2 - 2.5, y2 - 2.5, 5, 5);
+                g.fillOval(x1 - 3, y1 - 3, 6, 6);
+                g.fillOval(x2 - 3, y2 - 3, 6, 6);
+            } else if (isHovered) {
+                // 호버: 주황 글로우
+                g.setStroke(Color.rgb(255, 160, 30, 0.4));
+                g.setLineWidth(7);
+                g.strokeLine(x1, y1, x2, y2);
+                g.setStroke(Color.rgb(255, 180, 50, 1.0));
+                g.setLineWidth(2.0);
+                g.strokeLine(x1, y1, x2, y2);
+            } else {
+                // 후보: 하늘색
+                g.setStroke(Color.rgb(91, 200, 245, 0.75));
+                g.setLineWidth(1.5);
+                g.strokeLine(x1, y1, x2, y2);
             }
         }
     }
 
     // ── 히트 테스트 ───────────────────────────────────────────────────────────
 
-    /**
-     * 마우스 좌표(캔버스 px)에서 가장 가까운 선분 인덱스를 반환.
-     * HIT_RADIUS_PX 이내 선분이 없으면 -1.
-     */
-    private static int hitTest(List<WallDetector.Segment> segs,
-                                double mx, double my, double scale) {
+    private static int hitTest(List<WallDetector.Segment> segs, double mx, double my, double scale) {
         int    best  = -1;
         double bestD = HIT_RADIUS_PX;
         for (int i = 0; i < segs.size(); i++) {
@@ -353,7 +418,6 @@ public class WallDetectorDialog {
         return best;
     }
 
-    /** 점 (px, py)에서 선분 (ax,ay)-(bx,by)까지의 최단 거리 */
     private static double ptSegDist(double px, double py,
                                     double ax, double ay,
                                     double bx, double by) {
@@ -364,7 +428,7 @@ public class WallDetectorDialog {
         return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
     }
 
-    // ── 그레이 미리보기 ───────────────────────────────────────────────────────
+    // ── 유틸 ─────────────────────────────────────────────────────────────────
 
     private static Image toGrayFxImage(BufferedImage src, int w, int h) {
         BufferedImage scaled = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
@@ -373,41 +437,40 @@ public class WallDetectorDialog {
                 java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
         g.drawImage(src, 0, 0, w, h, null);
         g.dispose();
-
         BufferedImage gray = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                int rgb = scaled.getRGB(x, y);
-                int r = (rgb >> 16) & 0xff, gv = (rgb >> 8) & 0xff, b = rgb & 0xff;
-                int lum = (int)(0.299 * r + 0.587 * gv + 0.114 * b);
-                gray.setRGB(x, y, (0xff << 24) | (lum << 16) | (lum << 8) | lum);
-            }
+        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+            int rgb = scaled.getRGB(x, y);
+            int lum = (int)(0.299*((rgb>>16)&0xff) + 0.587*((rgb>>8)&0xff) + 0.114*(rgb&0xff));
+            gray.setRGB(x, y, (0xff<<24)|(lum<<16)|(lum<<8)|lum);
         }
         WritableImage fx = new WritableImage(w, h);
         SwingFXUtils.toFXImage(gray, fx);
         return fx;
     }
 
-    // ── UI 헬퍼 ──────────────────────────────────────────────────────────────
+    private static HBox legendItem(String hex, String label) {
+        javafx.scene.shape.Rectangle rect = new javafx.scene.shape.Rectangle(12, 12);
+        rect.setFill(Color.web(hex));
+        rect.setArcWidth(4); rect.setArcHeight(4);
+        Label lbl = new Label(label);
+        Runnable r = () -> lbl.setStyle(
+                "-fx-text-fill:" + Styles.textSub() + ";" +
+                "-fx-font-size:10px;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";");
+        r.run(); Styles.addThemeListener(r);
+        HBox box = new HBox(4, rect, lbl);
+        box.setAlignment(Pos.CENTER_LEFT);
+        return box;
+    }
 
-    private static Label styledLabel(String text, boolean bold) {
+    private static Label styledLabel(String text) {
         Label l = new Label(text);
         Runnable r = () -> l.setStyle(
                 "-fx-text-fill:" + Styles.textSub() + ";" +
                 "-fx-font-size:11px;" +
-                (bold ? "-fx-font-weight:600;" : "") +
                 "-fx-font-family:" + Styles.FONT_STACK + ";");
         r.run(); Styles.addThemeListener(r);
         return l;
-    }
-
-    private static Button smallBtn(String text) {
-        Button b = new Button(text);
-        Styles.styleFlatButton(b);
-        b.setStyle(b.getStyle() +
-                "-fx-font-size:11px;" +
-                "-fx-padding:3 8;");
-        return b;
     }
 
     private static Slider slider(double min, double max, double init, String tip) {
@@ -431,8 +494,7 @@ public class WallDetectorDialog {
                 "-fx-font-size:11px;" +
                 "-fx-font-family:" + Styles.FONT_STACK + ";");
         r.run(); Styles.addThemeListener(r);
-        lbl.setPrefWidth(90);
-        lbl.setMinWidth(90);
+        lbl.setPrefWidth(90); lbl.setMinWidth(90);
 
         Label valLbl = new Label(String.valueOf((int) slider.getValue()));
         Runnable rv = () -> valLbl.setStyle(
@@ -455,8 +517,7 @@ public class WallDetectorDialog {
         Label l = new Label(text);
         Runnable r = () -> l.setStyle(
                 "-fx-text-fill:" + Styles.textMain() + ";" +
-                "-fx-font-size:11px;" +
-                "-fx-font-weight:600;" +
+                "-fx-font-size:11px;-fx-font-weight:600;" +
                 "-fx-font-family:" + Styles.FONT_STACK + ";");
         r.run(); Styles.addThemeListener(r);
         return l;
