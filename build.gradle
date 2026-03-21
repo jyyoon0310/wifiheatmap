@@ -10,13 +10,11 @@ repositories {
 ext {
     jfxVersion = '21.0.9'
     jacksonVer = '2.17.2'
-    opencvVer  = '4.7.0-1.5.9'   // ← 여기만 변경
     aparapiVer = '3.0.2'
 }
 
 dependencies {
     implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVer}"
-    implementation "org.bytedeco:opencv-platform:${opencvVer}"
     implementation "com.aparapi:aparapi:${aparapiVer}"
 }
 

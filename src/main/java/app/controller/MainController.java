@@ -11,7 +11,7 @@ import app.model.WallMaterial;
 import app.model.WifiEnvironment;
 import app.solver.v2.SolverV2Engine;
 import app.ui.MainWindow;
-import app.dialog.WallDetectorDialog;
+
 import app.ui.Styles;
 import javafx.animation.AnimationTimer;
 import javafx.animation.PauseTransition;
@@ -161,7 +161,6 @@ public class MainController {
         });
 
         window.getTopToolbar().setOnToolChanged(tool -> activateTool(tool, true));
-        window.getTopToolbar().setOnDetectWalls(this::openWallDetector);
 
         // 줌 박스
         try {
@@ -308,21 +307,6 @@ public class MainController {
         });
     }
 
-    private void openWallDetector() {
-        if (floorplanBI == null) {
-            showInfo("먼저 평면도를 열어주세요.");
-            return;
-        }
-        WallDetectorDialog.show(stage, floorplanBI, (segments, mat) -> {
-            for (app.engine.WallDetector.Segment seg : segments) {
-                app.model.Wall w = new app.model.Wall(
-                        seg.x1(), seg.y1(), seg.x2(), seg.y2(), mat);
-                env.getWalls().add(w);
-            }
-            scheduleHeatmapRefreshIfVisible();
-            render();
-        });
-    }
 
     private void zoomAtViewportCenter(double factor) {
         var sp = window.getCanvasView().getCanvasSP();

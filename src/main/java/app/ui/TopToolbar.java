@@ -26,7 +26,6 @@ public class TopToolbar {
     private Runnable onStopSolver;
     private Runnable onResetSolver;
     private Consumer<AppState.Tool> onToolChanged;
-    private Runnable onDetectWalls;
 
     private Runnable onZoomFit;
     private Runnable onZoom100;
@@ -107,12 +106,6 @@ public class TopToolbar {
         applyPill.run();
         Styles.addThemeListener(applyPill);
 
-        // ── 벽 인식 버튼 ───────────────────────────────────────────────────
-        Button detectWallsBtn = new Button("벽 인식");
-        Styles.styleFlatButton(detectWallsBtn);
-        detectWallsBtn.setTooltip(new Tooltip("OpenCV로 평면도에서 벽을 자동 인식"));
-        detectWallsBtn.setOnAction(e -> { if (onDetectWalls != null) onDetectWalls.run(); });
-
         // ── 히트맵 버튼 ────────────────────────────────────────────────────
         Button gen = new Button("히트맵 생성");
         Styles.styleAccentButton(gen);
@@ -154,8 +147,6 @@ public class TopToolbar {
                 open, openSettings, saveSettings,
                 new Separator(),
                 toolPill,
-                new Separator(),
-                detectWallsBtn,
                 new Separator(),
                 gen, clear,
                 solverStartBtn, solverStopBtn, solverResetBtn,
@@ -232,7 +223,6 @@ public class TopToolbar {
     public void setOnStopSolver(Runnable r)             { this.onStopSolver = r; }
     public void setOnResetSolver(Runnable r)            { this.onResetSolver = r; }
     public void setOnToolChanged(Consumer<AppState.Tool> c) { this.onToolChanged = c; }
-    public void setOnDetectWalls(Runnable r)                { this.onDetectWalls = r; }
 
     public void setOnZoomFit(Runnable r)  { this.onZoomFit  = r; }
     public void setOnZoom100(Runnable r)  { this.onZoom100  = r; }
