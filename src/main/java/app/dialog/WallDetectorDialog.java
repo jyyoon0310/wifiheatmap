@@ -208,12 +208,20 @@ public class WallDetectorDialog {
         });
 
         // ── 파라미터 슬라이더 ──────────────────────────────────────────────
-        Slider sCanny1    = slider(10, 150,  40, "Canny 하한");
-        Slider sCanny2    = slider(40, 250, 120, "Canny 상한");
-        Slider sMinLen    = slider(10, 150,  30, "최소 길이 (px)");
-        Slider sMaxGap    = slider( 2,  50,   8, "최대 갭 (px)");
-        Slider sThreshold = slider(10, 100,  30, "누적 임계값");
-        Slider sMergeDist = slider( 2,  40,  10, "병합 거리 (px)");
+        // 색상 필터
+        Slider sBlackV    = slider( 30, 160,  80, "검정 임계값 (V)");
+        Slider sBlackS    = slider( 10, 120,  60, "채도 임계값 (S)");
+        // 굵기 필터
+        Slider sThickPx   = slider(  2,  12,   3, "최소 굵기 (px)");
+        // 엣지
+        Slider sCanny1    = slider( 10,  80,  20, "Canny 하한");
+        Slider sCanny2    = slider( 30, 150,  80, "Canny 상한");
+        // 선분
+        Slider sThreshold = slider( 10, 100,  35, "누적 임계값");
+        Slider sMinLen    = slider( 20, 200,  40, "최소 길이 (px)");
+        Slider sMaxGap    = slider(  2,  40,  10, "최대 갭 (px)");
+        // 병합
+        Slider sMergeDist = slider(  2,  40,  12, "병합 거리 (px)");
 
         // ── 범례 ─────────────────────────────────────────────────────────
         HBox legend = new HBox(10,
@@ -225,17 +233,22 @@ public class WallDetectorDialog {
         legend.setAlignment(Pos.CENTER_LEFT);
 
         // ── 오른쪽 파라미터 패널 ───────────────────────────────────────────
-        VBox paramPanel = new VBox(10,
-                sectionLabel("엣지 감지"),
-                sliderRow("Canny 하한",    sCanny1),
-                sliderRow("Canny 상한",    sCanny2),
-                sliderRow("누적 임계값",   sThreshold),
+        VBox paramPanel = new VBox(8,
+                sectionLabel("① 색상 필터 (유색 채움 제거)"),
+                sliderRow("검정 밝기 한계",  sBlackV),
+                sliderRow("채도 한계",       sBlackS),
                 new Separator(),
-                sectionLabel("선분 인식"),
+                sectionLabel("② 굵기 필터 (얇은 선 제거)"),
+                sliderRow("최소 굵기 (px)",  sThickPx),
+                new Separator(),
+                sectionLabel("③ 선분 인식"),
+                sliderRow("Canny 하한",     sCanny1),
+                sliderRow("Canny 상한",     sCanny2),
+                sliderRow("누적 임계값",    sThreshold),
                 sliderRow("최소 길이 (px)", sMinLen),
                 sliderRow("최대 갭 (px)",   sMaxGap),
                 new Separator(),
-                sectionLabel("병합"),
+                sectionLabel("④ 병합"),
                 sliderRow("병합 거리 (px)", sMergeDist),
                 new Separator(),
                 legend
@@ -296,7 +309,10 @@ public class WallDetectorDialog {
                     (int) sMinLen.getValue(),
                     (int) sMaxGap.getValue(),
                     (int) sMergeDist.getValue(),
-                    5.0);
+                    5.0,
+                    (int) sBlackV.getValue(),
+                    (int) sBlackS.getValue(),
+                    (int) sThickPx.getValue());
 
             if (taskRef[0] != null && taskRef[0].isRunning()) taskRef[0].cancel();
 
@@ -323,11 +339,14 @@ public class WallDetectorDialog {
         debounce.setOnFinished(e -> runDetect.run());
         Runnable schedule = () -> debounce.playFromStart();
 
+        sBlackV.valueProperty().addListener((o, ov, nv) -> schedule.run());
+        sBlackS.valueProperty().addListener((o, ov, nv) -> schedule.run());
+        sThickPx.valueProperty().addListener((o, ov, nv) -> schedule.run());
         sCanny1.valueProperty().addListener((o, ov, nv) -> schedule.run());
         sCanny2.valueProperty().addListener((o, ov, nv) -> schedule.run());
+        sThreshold.valueProperty().addListener((o, ov, nv) -> schedule.run());
         sMinLen.valueProperty().addListener((o, ov, nv) -> schedule.run());
         sMaxGap.valueProperty().addListener((o, ov, nv) -> schedule.run());
-        sThreshold.valueProperty().addListener((o, ov, nv) -> schedule.run());
         sMergeDist.valueProperty().addListener((o, ov, nv) -> schedule.run());
 
         runDetect.run();

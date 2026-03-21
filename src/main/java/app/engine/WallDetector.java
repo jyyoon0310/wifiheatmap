@@ -4,30 +4,58 @@ import org.bytedeco.opencv.opencv_core.*;
 import org.bytedeco.opencv.opencv_imgproc.Vec4iVector;
 import static org.bytedeco.opencv.global.opencv_core.*;
 import static org.bytedeco.opencv.global.opencv_imgproc.*;
+import static org.bytedeco.opencv.global.opencv_imgproc.THRESH_BINARY_INV;
 
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferByte;
 import java.util.*;
 
 /**
- * 평면도 이미지에서 벽(선분)을 자동 인식합니다.
- * OpenCV HoughLinesP 기반 + 근접 선분 병합.
+ * 평면도 이미지에서 굵은 검은 벽선만 자동 인식합니다.
+ *
+ * 파이프라인:
+ *  1. BGR → HSV 변환
+ *  2. "검은 픽셀" 이진 마스크  (V < blackMaxValue AND S < blackMaxSaturation)
+ *     - 유색 방 채움(주황·베이지·하늘색) 은 채도가 높아 자동 제거
+ *     - 회색/흰색 배경도 V 값이 높아 제거
+ *  3. Morphological Opening  (erode → dilate)
+ *     - kernel = thicknessPx × thicknessPx
+ *     - 두께 < thicknessPx 인 얇은 선(가구·문호·계단) 제거
+ *     - 두꺼운 벽선은 그대로 유지
+ *  4. 가우시안 블러 (Canny 노이즈 감소)
+ *  5. Canny 엣지
+ *  6. HoughLinesP
+ *  7. 근접 선분 병합
  */
 public class WallDetector {
 
     // ── 파라미터 ─────────────────────────────────────────────────────────────
 
     public record Params(
-            double cannyLow,       // Canny 하한 임계값 (기본: 40)
-            double cannyHigh,      // Canny 상한 임계값 (기본: 120)
-            int    houghThreshold, // HoughLinesP 누적 임계값 (기본: 30)
-            int    minLengthPx,    // 최소 선분 길이 px (기본: 30)
-            int    maxGapPx,       // 선분 최대 갭 px (기본: 8)
-            int    mergeDistPx,    // 병합 판단 수직 거리 px (기본: 10)
-            double angleTolDeg     // 각도 버킷 크기 deg (기본: 5)
+            double cannyLow,          // Canny 하한 (기본: 20)
+            double cannyHigh,         // Canny 상한 (기본: 80)
+            int    houghThreshold,    // HoughLinesP 누적 임계값 (기본: 35)
+            int    minLengthPx,       // 최소 선분 길이 px (기본: 40)
+            int    maxGapPx,          // 선분 최대 갭 px (기본: 10)
+            int    mergeDistPx,       // 병합 수직 거리 px (기본: 12)
+            double angleTolDeg,       // 각도 버킷 크기 deg (기본: 5.0)
+            int    blackMaxValue,     // HSV V 임계값 — 이 이하가 "검정" (기본: 80)
+            int    blackMaxSaturation,// HSV S 임계값 — 이 이하가 "무채색" (기본: 60)
+            int    thicknessPx        // 모폴로지 커널 크기 — 이 이하 굵기 제거 (기본: 3)
     ) {
+        /** 컬러 평면도(유색 방 채움 포함) 기본값 */
         public static Params defaults() {
-            return new Params(40, 120, 30, 30, 8, 10, 5.0);
+            return new Params(
+                    20, 80,   // canny
+                    35,       // houghThreshold
+                    40,       // minLengthPx
+                    10,       // maxGapPx
+                    12,       // mergeDistPx
+                    5.0,      // angleTolDeg
+                    80,       // blackMaxValue  — HSV V < 80
+                    60,       // blackMaxSaturation — HSV S < 60
+                    3         // thicknessPx  — erode 3×3 once
+            );
         }
     }
 
@@ -43,59 +71,76 @@ public class WallDetector {
     // ── 메인 감지 ─────────────────────────────────────────────────────────────
 
     public static List<Segment> detect(BufferedImage img, Params p) {
-        // 1. BufferedImage → BGR Mat
+        // ── 1. BufferedImage → BGR Mat ──────────────────────────────────────
         BufferedImage bgr = ensureType(img, BufferedImage.TYPE_3BYTE_BGR);
         byte[] pixels = ((DataBufferByte) bgr.getRaster().getDataBuffer()).getData();
         Mat src = new Mat(bgr.getHeight(), bgr.getWidth(), CV_8UC3);
         src.data().put(pixels);
 
-        // 2. 그레이스케일
-        Mat gray = new Mat();
-        cvtColor(src, gray, COLOR_BGR2GRAY);
+        // ── 2. BGR → HSV 변환 ───────────────────────────────────────────────
+        Mat hsv = new Mat();
+        cvtColor(src, hsv, COLOR_BGR2HSV);
 
-        // 3. 가우시안 블러 (노이즈 감소)
+        // ── 3. "검은 픽셀" 마스크 ─────────────────────────────────────────
+        //   HSV: H(0-179), S(0-255), V(0-255)
+        //   벽 검정선: S ≈ 0-60 (무채색), V ≈ 0-80 (어두움)
+        //   유색 채움: S > 60 (채도 높음)  → 마스크에서 제외
+        //   흰/회색 배경: V > 80 (밝음)    → 마스크에서 제외
+        //
+        //   JavaCV inRange() 는 Scalar 오버로드가 없어서
+        //   split → threshold → bitwise_and 로 대체
+        MatVector hsvChannels = new MatVector(3);
+        split(hsv, hsvChannels);
+        Mat mV = new Mat();   // V < blackMaxValue → 255
+        Mat mS = new Mat();   // S < blackMaxSaturation → 255
+        threshold(hsvChannels.get(2), mV, p.blackMaxValue(),      255, THRESH_BINARY_INV);
+        threshold(hsvChannels.get(1), mS, p.blackMaxSaturation(), 255, THRESH_BINARY_INV);
+        Mat blackMask = new Mat();
+        bitwise_and(mV, mS, blackMask);
+
+        // ── 4. Morphological Opening (굵기 필터) ───────────────────────────
+        //   Opening = Erosion → Dilation
+        //   erosion 커널이 thicknessPx×thicknessPx 이면,
+        //   두께 < thicknessPx 인 선분은 완전히 제거됨
+        int k = Math.max(3, p.thicknessPx() | 1); // 홀수 커널만 허용
+        Mat kernel = getStructuringElement(MORPH_RECT, new Size(k, k));
+        Mat opened = new Mat();
+        morphologyEx(blackMask, opened, MORPH_OPEN, kernel);
+
+        // 끊긴 구간 연결을 위한 소폭 팽창 (x방향 + y방향)
+        Mat connKernel = getStructuringElement(MORPH_RECT, new Size(3, 3));
+        Mat connected = new Mat();
+        dilate(opened, connected, connKernel);
+
+        // ── 5. 가우시안 블러 ────────────────────────────────────────────────
         Mat blurred = new Mat();
-        GaussianBlur(gray, blurred, new Size(5, 5), 0);
+        GaussianBlur(connected, blurred, new Size(3, 3), 0);
 
-        // 4. Canny 엣지
+        // ── 6. Canny 엣지 ────────────────────────────────────────────────
         Mat edges = new Mat();
         Canny(blurred, edges, p.cannyLow(), p.cannyHigh());
 
-        // 5. 모폴로지 팽창 — 끊긴 엣지 연결
-        Mat kernel = getStructuringElement(MORPH_RECT, new Size(3, 1));
-        Mat dilated = new Mat();
-        dilate(edges, dilated, kernel);
-
-        // 6. HoughLinesP
+        // ── 7. HoughLinesP ──────────────────────────────────────────────────
         Vec4iVector lines = new Vec4iVector();
-        HoughLinesP(dilated, lines, 1.0, Math.PI / 180.0,
+        HoughLinesP(edges, lines, 1.0, Math.PI / 180.0,
                 p.houghThreshold(), p.minLengthPx(), p.maxGapPx());
 
-        // 7. Vec4iVector → Segment 목록
+        // ── 8. Vec4iVector → Segment 목록 ───────────────────────────────────
         List<Segment> raw = new ArrayList<>();
         for (long i = 0; i < lines.size(); i++) {
             Scalar4i s = lines.get(i);
             raw.add(new Segment(s.get(0), s.get(1), s.get(2), s.get(3)));
         }
 
-        // 8. 근접 선분 병합
+        // ── 9. 근접 선분 병합 ────────────────────────────────────────────────
         return mergeSegments(raw, p.angleTolDeg(), p.mergeDistPx());
     }
 
     // ── 선분 병합 ─────────────────────────────────────────────────────────────
 
-    /**
-     * 거의 평행하고 가까운 선분들을 하나로 병합합니다.
-     *
-     * 알고리즘:
-     * 1. 각도 버킷으로 그룹화 (예: 0-5°, 5-10°, …)
-     * 2. 같은 버킷 내에서 중심점의 수직 오프셋이 mergeDistPx 이내인 것 병합
-     * 3. 병합된 그룹은 기준 방향으로 투영하여 최소~최대 구간으로 단일 선분화
-     */
     private static List<Segment> mergeSegments(List<Segment> segs, double bucketDeg, int distPx) {
         if (segs.isEmpty()) return segs;
 
-        // 각도 버킷으로 그룹화
         Map<Integer, List<Segment>> byAngle = new LinkedHashMap<>();
         for (Segment s : segs) {
             double a = normalizedAngleDeg(s);
@@ -105,18 +150,14 @@ public class WallDetector {
 
         List<Segment> result = new ArrayList<>();
         for (List<Segment> group : byAngle.values()) {
-            // 버킷 내 평균 각도로 기준 방향 결정
             double refAngleRad = Math.toRadians(
                     group.stream().mapToDouble(WallDetector::normalizedAngleDeg).average().orElse(0));
             double dx = Math.cos(refAngleRad);
             double dy = Math.sin(refAngleRad);
-            // 수직 방향 (법선)
             double nx = -dy, ny = dx;
 
-            // 수직 오프셋으로 정렬
             group.sort(Comparator.comparingDouble(s -> perpOffset(s, nx, ny)));
 
-            // 인접 선분 그리디 병합
             List<Segment> cluster = new ArrayList<>();
             cluster.add(group.get(0));
             double lastPerp = perpOffset(group.get(0), nx, ny);
@@ -126,7 +167,7 @@ public class WallDetector {
                 double perf = perpOffset(s, nx, ny);
                 if (Math.abs(perf - lastPerp) <= distPx) {
                     cluster.add(s);
-                    lastPerp = perf; // running update (last in cluster)
+                    lastPerp = perf;
                 } else {
                     result.add(collapseCluster(cluster, refAngleRad));
                     cluster = new ArrayList<>();
@@ -139,29 +180,24 @@ public class WallDetector {
         return result;
     }
 
-    /** 각도 [0, 180) 정규화 */
     private static double normalizedAngleDeg(Segment s) {
         double a = Math.toDegrees(Math.atan2(s.y2() - s.y1(), s.x2() - s.x1()));
-        while (a < 0)   a += 180;
+        while (a <   0) a += 180;
         while (a >= 180) a -= 180;
         return a;
     }
 
-    /** 선분 중점의 법선 방향 오프셋 */
     private static double perpOffset(Segment s, double nx, double ny) {
         double mx = (s.x1() + s.x2()) * 0.5;
         double my = (s.y1() + s.y2()) * 0.5;
         return mx * nx + my * ny;
     }
 
-    /** 클러스터를 기준 방향으로 투영해 단일 선분으로 병합 */
     private static Segment collapseCluster(List<Segment> cluster, double refRad) {
         if (cluster.size() == 1) return cluster.get(0);
         double dx = Math.cos(refRad), dy = Math.sin(refRad);
-        // 중심점 평균
         double cx = cluster.stream().mapToDouble(s -> (s.x1() + s.x2()) * 0.5).average().orElse(0);
         double cy = cluster.stream().mapToDouble(s -> (s.y1() + s.y2()) * 0.5).average().orElse(0);
-        // 기준 방향으로 투영 → 최소/최대 t 찾기
         double minT = Double.MAX_VALUE, maxT = -Double.MAX_VALUE;
         for (Segment s : cluster) {
             double t1 = (s.x1() - cx) * dx + (s.y1() - cy) * dy;
