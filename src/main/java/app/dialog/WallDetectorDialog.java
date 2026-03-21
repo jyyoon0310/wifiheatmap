@@ -22,6 +22,7 @@ import javafx.util.Duration;
 
 import java.awt.image.BufferedImage;
 import java.util.*;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -39,7 +40,7 @@ public class WallDetectorDialog {
     private static final double HIT_RADIUS_PX  = 8.0; // 클릭 판정 반경
 
     public static void show(Window owner, BufferedImage floorplan,
-                            Consumer<List<WallDetector.Segment>> onApply) {
+                            BiConsumer<List<WallDetector.Segment>, WallMaterial> onApply) {
         if (floorplan == null) return;
 
         Dialog<Void> dlg = new Dialog<>();
@@ -281,7 +282,9 @@ public class WallDetectorDialog {
                 for (int idx : selected) {
                     if (idx >= 0 && idx < all.size()) out.add(all.get(idx));
                 }
-                onApply.accept(out);
+                WallMaterial mat = matCombo.getValue();
+                if (mat == null) mat = WallMaterial.CONCRETE_WALL;
+                onApply.accept(out, mat);
             }
             return null;
         });

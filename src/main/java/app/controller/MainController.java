@@ -313,8 +313,7 @@ public class MainController {
             showInfo("먼저 평면도를 열어주세요.");
             return;
         }
-        WallDetectorDialog.show(stage, floorplanBI, segments -> {
-            WallMaterial mat = WallMaterial.CONCRETE_WALL;
+        WallDetectorDialog.show(stage, floorplanBI, (segments, mat) -> {
             for (app.engine.WallDetector.Segment seg : segments) {
                 app.model.Wall w = new app.model.Wall(
                         seg.x1(), seg.y1(), seg.x2(), seg.y2(), mat);
