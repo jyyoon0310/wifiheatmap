@@ -82,7 +82,8 @@
    ComboBox popup — glass cells with hover
    ═══════════════════════════════════════════════════════ */
 .combo-box-popup .list-view {
-    -fx-background-color: transparent;
+    /* 배경은 Java 코드(Styles.applyPopupStyle)에서 popupBg()로 설정.
+       이 CSS는 padding / border 만 담당 */
     -fx-border-color: transparent;
     -fx-padding: 3;
 }
@@ -90,15 +91,22 @@
     -fx-background-color: transparent;
     -fx-background-radius: 8;
     -fx-border-color: transparent;
-    -fx-padding: 7 12;
+    -fx-padding: 8 14;
+    /* 시스템 폰트 상속 */
+    -fx-font-size: 13px;
 }
 .combo-box-popup .list-view .list-cell:odd  { -fx-background-color: transparent; }
 .combo-box-popup .list-view .list-cell:even { -fx-background-color: transparent; }
-.combo-box-popup .list-view .list-cell:hover {
-    -fx-background-color: rgba(120,120,128,0.10);
+.combo-box-popup .list-view .list-cell:empty { -fx-background-color: transparent; }
+.combo-box-popup .list-view .list-cell:filled:hover {
+    -fx-background-color: rgba(120,120,128,0.12);
 }
 .combo-box-popup .list-view .list-cell:filled:selected {
-    -fx-background-color: rgba(0,100,210,0.14);
+    -fx-background-color: rgba(0,100,210,0.15);
+    -fx-text-fill: #0064D2;
+}
+.combo-box-popup .list-view .list-cell:filled:selected:hover {
+    -fx-background-color: rgba(0,100,210,0.22);
     -fx-text-fill: #0064D2;
 }
 

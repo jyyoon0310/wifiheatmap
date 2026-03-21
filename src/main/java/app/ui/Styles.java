@@ -63,7 +63,8 @@ public class Styles {
         return darkMode ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.75)";
     }
     private static String glassBody() {
-        return darkMode ? "rgba(34,34,36,0.96)" : "rgba(252,252,255,0.88)";
+        // 다이얼로그: 배경 비침 방지를 위해 불투명도 높임 (0.88 → 0.96)
+        return darkMode ? "rgba(34,34,36,0.96)" : "rgba(250,250,253,0.96)";
     }
     private static String glassBorder() {
         // Inner rim glow — white for light, subtle for dark
@@ -284,35 +285,90 @@ public class Styles {
     // ── ComboBox popup ────────────────────────────────────────────────────────
 
     /**
-     * Styles the floating popup window of a ComboBox as a Liquid Glass panel.
-     * Call on every ComboBox once after creation.
+     * Styles the floating popup window of a ComboBox as a solid Liquid Glass panel.
+     *
+     * ComboBox 팝업은 별도 PopupWindow(= 독립 Scene)로 열리므로
+     * 메인 Scene의 glass.css가 적용되지 않습니다.
+     * ComboBoxListViewSkin.getListView()로 직접 접근하여
+     *   1) popup Scene에 glass.css 추가
+     *   2) ListView 배경을 불투명 solid 로 설정
+     *   3) 팝업 컨테이너(ListView 부모)에 둥근 테두리 + 그림자 적용
      */
     public static void installComboPopupStyle(ComboBox<?> cb) {
         cb.showingProperty().addListener((o, ov, showing) -> {
             if (!showing) return;
             Platform.runLater(() -> {
                 try {
-                    // Popup container
-                    Node popup = cb.lookup(".combo-box-popup");
-                    if (popup != null) popup.setStyle(
-                            "-fx-background-color:" + glassSpecular() + "," + popupBg() + ";" +
-                            "-fx-background-insets:0,0.5;" +
-                            "-fx-background-radius:14;" +
-                            "-fx-border-color:" + glassBorder() + "," + borderSoft() + ";" +
-                            "-fx-border-insets:0,0.5;" +
-                            "-fx-border-radius:14,13.5;" +
-                            "-fx-border-width:0.5;" +
-                            "-fx-effect:" + popupShadow() + ";" +
-                            "-fx-padding:4;");
-                    // ListView inside popup
-                    Node lv = cb.lookup(".combo-box-popup .list-view");
-                    if (lv != null) lv.setStyle(
-                            "-fx-background-color:transparent;" +
-                            "-fx-border-color:transparent;" +
-                            "-fx-control-inner-background:transparent;");
+                    applyPopupStyle(cb);
                 } catch (Exception ignored) {}
             });
         });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void applyPopupStyle(ComboBox<?> cb) {
+        // ── ComboBoxListViewSkin 경로 (JavaFX 17+, 가장 신뢰성 높음) ───────
+        if (cb.getSkin() instanceof javafx.scene.control.skin.ComboBoxListViewSkin<?> skin
+                && skin.getPopupContent() instanceof javafx.scene.control.ListView<?> lv) {
+            // lv = popup 내부 ListView (getPopupContent() 는 public API)
+
+            // 1) popup Scene 에 glass.css 추가 (ComboBox 셀 hover/selected 스타일)
+            javafx.scene.Scene popupScene = lv.getScene();
+            if (popupScene != null) {
+                java.net.URL cssUrl = Styles.class.getResource("/glass.css");
+                if (cssUrl != null) {
+                    String urlStr = cssUrl.toExternalForm();
+                    if (!popupScene.getStylesheets().contains(urlStr))
+                        popupScene.getStylesheets().add(urlStr);
+                }
+            }
+
+            // 2) ListView: solid 불투명 배경
+            Runnable applyLv = () -> lv.setStyle(
+                    "-fx-background-color:" + popupBg() + ";" +
+                    "-fx-border-color:transparent;" +
+                    "-fx-padding:4;");
+            applyLv.run();
+            if (registerOnce(lv)) addThemeListener(applyLv);
+
+            // 3) 팝업 루트(= ListView 의 부모 컨테이너): 둥근 테두리 + 그림자
+            Node popupRoot = lv.getParent();
+            if (popupRoot != null) {
+                Runnable applyRoot = () -> popupRoot.setStyle(
+                        "-fx-background-color:" + popupBg() + ";" +
+                        "-fx-background-radius:14;" +
+                        "-fx-border-color:" + borderSoft() + ";" +
+                        "-fx-border-radius:14;" +
+                        "-fx-border-width:0.5;" +
+                        "-fx-effect:" + popupShadow() + ";");
+                applyRoot.run();
+                if (registerOnce(popupRoot)) addThemeListener(applyRoot);
+            }
+            return; // 성공
+        }
+
+        // ── Fallback: lookup 기반 (구버전 JavaFX 호환) ───────────────────────
+        Node popup = cb.lookup(".combo-box-popup");
+        if (popup != null) {
+            Runnable r = () -> popup.setStyle(
+                    "-fx-background-color:" + popupBg() + ";" +
+                    "-fx-background-radius:14;" +
+                    "-fx-border-color:" + borderSoft() + ";" +
+                    "-fx-border-radius:14;" +
+                    "-fx-border-width:0.5;" +
+                    "-fx-effect:" + popupShadow() + ";" +
+                    "-fx-padding:4;");
+            r.run();
+            if (registerOnce(popup)) addThemeListener(r);
+        }
+        Node lv = cb.lookup(".combo-box-popup .list-view");
+        if (lv != null) {
+            Runnable r = () -> lv.setStyle(
+                    "-fx-background-color:" + popupBg() + ";" +
+                    "-fx-border-color:transparent;");
+            r.run();
+            if (registerOnce(lv)) addThemeListener(r);
+        }
     }
 
     // ── Alert / Dialog ────────────────────────────────────────────────────────
