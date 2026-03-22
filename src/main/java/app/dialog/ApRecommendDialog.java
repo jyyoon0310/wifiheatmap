@@ -68,14 +68,20 @@ public class ApRecommendDialog {
 
         // ── 상태 ─────────────────────────────────────────────────────────
         ApRecommender.Result[] resultRef = {null};
-        ApRecommender.FloodResult[] floodRef = {null};
+
+        // 누적 마스크 (복수 클릭으로 합산)
+        int maskW = (canvasW + FLOOD_CELL_SIZE - 1) / FLOOD_CELL_SIZE;
+        int maskH = (canvasH + FLOOD_CELL_SIZE - 1) / FLOOD_CELL_SIZE;
+        boolean[] combinedMask = new boolean[maskW * maskH];
+        int[] totalFilledCells = {0};
+        int[] clickCount = {0};
 
         // 오버레이 이미지 (채워진 영역 표시용)
         WritableImage[] overlayRef = {null};
 
         // ── 설정 패널 ────────────────────────────────────────────────────
-        Label areaTitle = sectionLabel("① 집 내부를 클릭하세요");
-        Label areaHint = subLabel("도면 위에서 Wi-Fi가 필요한 영역\n(거실, 침실 등) 안쪽을 클릭하면\n벽 경계를 따라 자동으로 영역이\n잡힙니다.");
+        Label areaTitle = sectionLabel("① 방을 클릭하여 영역 추가");
+        Label areaHint = subLabel("거실, 침실 등 Wi-Fi가 필요한 방을\n하나씩 클릭하세요. 클릭할 때마다\n영역이 추가됩니다.");
         Label areaStatus = subLabel("클릭 대기 중...");
 
         Button resetAreaBtn = new Button("영역 초기화");
@@ -155,36 +161,54 @@ public class ApRecommendDialog {
                 scale);
         redraw.run();
 
-        // ── 클릭 → Flood Fill ────────────────────────────────────────────
+        // ── 클릭 → Flood Fill (복수 선택) ────────────────────────────────
         List<Wall> walls = new ArrayList<>(env.getWalls());
 
         canvas.setOnMouseClicked(e -> {
-            // 캔버스 좌표 → 원본 좌표
             int seedX = (int) (e.getX() / scale);
             int seedY = (int) (e.getY() / scale);
+
+            // 이미 채워진 영역을 클릭하면 무시
+            int checkMx = seedX / FLOOD_CELL_SIZE;
+            int checkMy = seedY / FLOOD_CELL_SIZE;
+            if (checkMx >= 0 && checkMx < maskW && checkMy >= 0 && checkMy < maskH
+                    && combinedMask[checkMy * maskW + checkMx]) {
+                return; // 이미 선택된 영역
+            }
 
             areaStatus.setText("영역 감지 중...");
 
             ApRecommender.FloodResult fr = ApRecommender.floodFill(
                     walls, canvasW, canvasH,
                     FLOOD_CELL_SIZE, seedX, seedY, FLOOD_WALL_THICK);
-            floodRef[0] = fr;
 
             if (fr.filledCells() < 10) {
                 areaStatus.setText("영역이 너무 작습니다.\n다른 곳을 클릭하세요.");
-                overlayRef[0] = null;
-                runBtn.setDisable(true);
-                redraw.run();
                 return;
             }
 
-            // 오버레이 이미지 생성
-            overlayRef[0] = buildOverlayImage(fr, pvW, pvH, FLOOD_CELL_SIZE, scale);
+            // 새 영역을 누적 마스크에 합산 (OR)
+            boolean[] newMask = fr.mask();
+            int added = 0;
+            for (int i = 0; i < combinedMask.length && i < newMask.length; i++) {
+                if (newMask[i] && !combinedMask[i]) {
+                    combinedMask[i] = true;
+                    added++;
+                }
+            }
+            totalFilledCells[0] += added;
+            clickCount[0]++;
 
-            // 면적 계산
+            // 누적 마스크로 오버레이 재생성
+            ApRecommender.FloodResult combined = new ApRecommender.FloodResult(
+                    combinedMask, maskW, maskH, totalFilledCells[0]);
+            overlayRef[0] = buildOverlayImage(combined, pvW, pvH, FLOOD_CELL_SIZE, scale);
+
+            // 면적
             double cellM = FLOOD_CELL_SIZE * env.getScaleMPerPx();
-            double areaM2 = fr.filledCells() * cellM * cellM;
-            areaStatus.setText(String.format("✓ 영역 감지 완료 (약 %.0f m²)", areaM2));
+            double areaM2 = totalFilledCells[0] * cellM * cellM;
+            areaStatus.setText(String.format("✓ %d개 영역 선택 (약 %.0f m²)",
+                    clickCount[0], areaM2));
 
             runBtn.setDisable(false);
             resultRef[0] = null;
@@ -193,7 +217,10 @@ public class ApRecommendDialog {
         });
 
         resetAreaBtn.setOnAction(e -> {
-            floodRef[0] = null; overlayRef[0] = null; resultRef[0] = null;
+            java.util.Arrays.fill(combinedMask, false);
+            totalFilledCells[0] = 0;
+            clickCount[0] = 0;
+            overlayRef[0] = null; resultRef[0] = null;
             runBtn.setDisable(true);
             areaStatus.setText("클릭 대기 중...");
             resultTitle.setText(""); resultDetail.setText("");
@@ -210,19 +237,21 @@ public class ApRecommendDialog {
                 taskRef[0].cancel(); runBtn.setText("추천 실행"); return;
             }
 
-            ApRecommender.FloodResult fr = floodRef[0];
-            if (fr == null) return;
+            if (totalFilledCells[0] < 10) return;
 
             Toggle selCount = countGroup.getSelectedToggle();
             int apCount = selCount != null ? (int) selCount.getUserData() : 2;
             Toggle selMode = modeGroup.getSelectedToggle();
             boolean precise = selMode != null && "precise".equals(selMode.getUserData());
 
+            // 누적 마스크 복사 (스레드 안전)
+            boolean[] maskCopy = java.util.Arrays.copyOf(combinedMask, combinedMask.length);
+
             ApRecommender.Params params = new ApRecommender.Params(
                     apCount, -65.0,
                     precise ? 20 : 30, precise ? 12 : 20,
                     precise, 300, Band.GHZ_5,
-                    fr.mask(), fr.maskW(), fr.maskH()
+                    maskCopy, maskW, maskH
             );
 
             runBtn.setText("중지");
