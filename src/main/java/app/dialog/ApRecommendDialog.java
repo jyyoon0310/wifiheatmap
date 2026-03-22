@@ -19,10 +19,12 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * AP 위치 추천 다이얼로그.
+ * AP 위치 추천 다이얼로그 — 직관적 UI.
  *
- * Phase 1 (Ray-cast) → Phase 2 (FDTD 검증) 2단계 표시.
- * 결과를 캔버스에 ★로 표시, "적용" 시 실제 AP로 추가.
+ * 사용자에게 보이는 것:
+ *   1) AP 개수 선택
+ *   2) "빠른 추천" / "정밀 추천" 토글
+ *   3) 추천 실행 → 결과 미리보기 → 적용
  */
 public class ApRecommendDialog {
 
@@ -38,7 +40,7 @@ public class ApRecommendDialog {
         Dialog<Void> dlg = new Dialog<>();
         dlg.setTitle("AP 위치 추천");
         if (owner != null) dlg.initOwner(owner);
-        dlg.getDialogPane().setPrefSize(920, 600);
+        dlg.getDialogPane().setPrefSize(860, 560);
 
         // ── 캔버스 ───────────────────────────────────────────────────────
         double scaleX = Math.min(1.0, PREVIEW_MAX_W / canvasW);
@@ -51,125 +53,112 @@ public class ApRecommendDialog {
         StackPane previewPane = new StackPane(canvas);
         Runnable stylePreview = () -> previewPane.setStyle(
                 "-fx-background-color:" + Styles.bgRow() + ";" +
-                "-fx-background-radius:10;");
+                "-fx-background-radius:12;");
         stylePreview.run();
         Styles.addThemeListener(stylePreview);
-        previewPane.setPadding(new Insets(4));
+        previewPane.setPadding(new Insets(6));
 
-        // ── 상태 변수 ────────────────────────────────────────────────────
+        // ── 상태 ─────────────────────────────────────────────────────────
         ApRecommender.Result[] resultRef = {null};
 
-        // ── 파라미터 패널 ────────────────────────────────────────────────
-        Label titleLbl = sectionLabel("추천 설정");
+        // ── 설정 패널 ────────────────────────────────────────────────────
+        // 1) AP 개수
+        Label countTitle = sectionLabel("몇 개의 AP를 배치할까요?");
+        HBox countRow = new HBox(8);
+        countRow.setAlignment(Pos.CENTER_LEFT);
+        ToggleGroup countGroup = new ToggleGroup();
+        int[] countOptions = {1, 2, 3, 4, 5};
+        ToggleButton[] countBtns = new ToggleButton[countOptions.length];
+        for (int i = 0; i < countOptions.length; i++) {
+            ToggleButton tb = new ToggleButton(String.valueOf(countOptions[i]));
+            tb.setToggleGroup(countGroup);
+            tb.setUserData(countOptions[i]);
+            tb.setPrefWidth(40);
+            tb.setPrefHeight(36);
+            Styles.styleToggle(tb);
+            countBtns[i] = tb;
+        }
+        countBtns[1].setSelected(true); // 기본 2개
+        countRow.getChildren().addAll(countBtns);
+        Label countUnit = subLabel("개");
 
-        Label apCountLbl = subLabel("AP 개수");
-        Spinner<Integer> apCountSp = new Spinner<>(1, 5, 2);
-        apCountSp.setEditable(true);
-        Styles.styleSpinner(apCountSp);
-        apCountSp.setMaxWidth(Double.MAX_VALUE);
+        HBox countBox = new HBox(8, countRow, countUnit);
+        countBox.setAlignment(Pos.CENTER_LEFT);
 
-        Label rssiLbl = subLabel("목표 RSSI (dBm)");
-        Slider rssiSlider = new Slider(-80, -50, -65);
-        rssiSlider.setShowTickLabels(true);
-        rssiSlider.setMajorTickUnit(5);
-        Label rssiValLbl = subLabel(String.valueOf((int) rssiSlider.getValue()));
-        rssiSlider.valueProperty().addListener((o, ov, nv) ->
-                rssiValLbl.setText(String.valueOf(nv.intValue())));
-        Runnable styleSl = () -> rssiSlider.setStyle(
-                "-fx-control-inner-background:" + Styles.bgRow() + ";" +
-                "-fx-accent:" + Styles.accent() + ";");
-        styleSl.run();
-        Styles.addThemeListener(styleSl);
+        // 2) 정밀도 토글
+        Label modeTitle = sectionLabel("추천 방식");
+        ToggleGroup modeGroup = new ToggleGroup();
 
-        Label gridLbl = subLabel("탐색 해상도 (px)");
-        Spinner<Integer> gridSp = new Spinner<>(10, 60, 25, 5);
-        gridSp.setEditable(true);
-        Styles.styleSpinner(gridSp);
-        gridSp.setMaxWidth(Double.MAX_VALUE);
+        ToggleButton fastBtn = new ToggleButton("⚡ 빠른 추천");
+        fastBtn.setToggleGroup(modeGroup);
+        fastBtn.setUserData("fast");
+        Styles.styleToggle(fastBtn);
 
-        CheckBox fdtdCheck = new CheckBox("FDTD 정밀 검증");
-        fdtdCheck.setSelected(true);
-        Runnable styleCb = () -> fdtdCheck.setStyle(
-                "-fx-text-fill:" + Styles.textMain() + ";" +
-                "-fx-font-size:12px;" +
-                "-fx-font-family:" + Styles.FONT_STACK + ";");
-        styleCb.run();
-        Styles.addThemeListener(styleCb);
+        ToggleButton preciseBtn = new ToggleButton("🔬 정밀 추천");
+        preciseBtn.setToggleGroup(modeGroup);
+        preciseBtn.setUserData("precise");
+        Styles.styleToggle(preciseBtn);
 
-        Label fdtdStepsLbl = subLabel("FDTD 스텝 수");
-        Spinner<Integer> fdtdStepsSp = new Spinner<>(100, 1000, 300, 50);
-        fdtdStepsSp.setEditable(true);
-        Styles.styleSpinner(fdtdStepsSp);
-        fdtdStepsSp.setMaxWidth(Double.MAX_VALUE);
+        fastBtn.setSelected(true);
 
-        Label bandLbl = subLabel("FDTD 대역");
-        ComboBox<Band> bandCombo = new ComboBox<>();
-        bandCombo.getItems().setAll(Band.values());
-        bandCombo.getSelectionModel().select(Band.GHZ_5);
-        bandCombo.setMaxWidth(Double.MAX_VALUE);
-        Runnable styleBC = () -> bandCombo.setStyle(Styles.comboBase());
-        styleBC.run();
-        Styles.addThemeListener(styleBC);
-        Styles.installComboPopupStyle(bandCombo);
+        HBox modeRow = new HBox(6, fastBtn, preciseBtn);
+        modeRow.setAlignment(Pos.CENTER_LEFT);
 
-        // ── 실행/상태 ────────────────────────────────────────────────────
+        Label modeHint = subLabel("빠른 추천: ~3초  |  정밀 추천: ~30초 (파동 시뮬레이션 포함)");
+
+        // 3) 실행 버튼
         Button runBtn = new Button("추천 실행");
         Styles.styleAccentButton(runBtn);
         runBtn.setMaxWidth(Double.MAX_VALUE);
+        runBtn.setPrefHeight(40);
 
+        // 4) 프로그레스
         ProgressBar progress = new ProgressBar(0);
         progress.setMaxWidth(Double.MAX_VALUE);
-        progress.setPrefHeight(6);
+        progress.setPrefHeight(5);
+        Runnable styleProg = () -> progress.setStyle(
+                "-fx-accent:" + Styles.accent() + ";");
+        styleProg.run();
+        Styles.addThemeListener(styleProg);
 
-        Label statusLbl = subLabel("설정 후 \"추천 실행\"을 누르세요.");
+        Label statusLbl = subLabel("AP 개수와 방식을 선택 후 실행하세요.");
 
-        // ── 결과 표시 ────────────────────────────────────────────────────
-        Label resultLbl = subLabel("");
+        // 5) 결과 영역
+        Label resultTitle = sectionLabel("");
+        Label resultDetail = subLabel("");
 
-        // ── 파라미터 패널 조립 ───────────────────────────────────────────
-        VBox paramPanel = new VBox(10,
-                titleLbl,
-                vbox(apCountLbl, apCountSp),
-                vbox(rssiLbl, new HBox(6, rssiSlider, rssiValLbl)),
-                vbox(gridLbl, gridSp),
-                new Separator(),
-                fdtdCheck,
-                vbox(fdtdStepsLbl, fdtdStepsSp),
-                vbox(bandLbl, bandCombo),
-                new Separator(),
-                runBtn,
-                progress,
-                statusLbl,
-                resultLbl
+        // ── 패널 조립 ────────────────────────────────────────────────────
+        Separator sep1 = styledSeparator();
+        Separator sep2 = styledSeparator();
+        Separator sep3 = styledSeparator();
+
+        VBox paramPanel = new VBox(12,
+                countTitle, countBox,
+                sep1,
+                modeTitle, modeRow, modeHint,
+                sep2,
+                runBtn, progress, statusLbl,
+                sep3,
+                resultTitle, resultDetail
         );
-        paramPanel.setPadding(new Insets(14));
-        paramPanel.setPrefWidth(240);
-        paramPanel.setMaxWidth(240);
+        paramPanel.setPadding(new Insets(16));
+        paramPanel.setPrefWidth(250);
+        paramPanel.setMaxWidth(250);
         Runnable stylePanel = () -> paramPanel.setStyle(
                 "-fx-background-color:" + Styles.bgPanel() + ";" +
-                "-fx-background-radius:10;" +
+                "-fx-background-radius:12;" +
                 "-fx-border-color:" + Styles.borderSoft() + ";" +
-                "-fx-border-radius:10;" +
+                "-fx-border-radius:12;" +
                 "-fx-border-width:0.5;");
         stylePanel.run();
         Styles.addThemeListener(stylePanel);
-        for (javafx.scene.Node n : paramPanel.getChildren()) {
-            if (n instanceof Separator sep) {
-                Runnable r = () -> sep.setStyle("-fx-background-color:" + Styles.borderSoft() + ";");
-                r.run(); Styles.addThemeListener(r);
-            }
-        }
-
-        // fdtdCheck ↔ fdtd controls 연동
-        fdtdStepsSp.disableProperty().bind(fdtdCheck.selectedProperty().not());
-        bandCombo.disableProperty().bind(fdtdCheck.selectedProperty().not());
 
         // ── 캔버스 초기 렌더 ─────────────────────────────────────────────
         Runnable redraw = () -> drawPreview(canvas, floorplanImage, pvW, pvH,
                 resultRef[0] != null ? resultRef[0].positions() : List.of(), scale);
         redraw.run();
 
-        // ── 실행 버튼 로직 ───────────────────────────────────────────────
+        // ── 실행 로직 ────────────────────────────────────────────────────
         Task<?>[] taskRef = {null};
 
         runBtn.setOnAction(e -> {
@@ -179,18 +168,29 @@ public class ApRecommendDialog {
                 return;
             }
 
+            // 선택된 AP 개수
+            Toggle selectedCount = countGroup.getSelectedToggle();
+            int apCount = selectedCount != null ? (int) selectedCount.getUserData() : 2;
+
+            // 정밀/빠름
+            Toggle selectedMode = modeGroup.getSelectedToggle();
+            boolean precise = selectedMode != null && "precise".equals(selectedMode.getUserData());
+
+            // 내부적으로 최적 파라미터 자동 결정
             ApRecommender.Params params = new ApRecommender.Params(
-                    apCountSp.getValue(),
-                    rssiSlider.getValue(),
-                    gridSp.getValue(),
-                    Math.max(10, gridSp.getValue() - 5),
-                    fdtdCheck.isSelected(),
-                    fdtdStepsSp.getValue(),
-                    bandCombo.getValue()
+                    apCount,
+                    -65.0,              // 목표 RSSI: -65 dBm (실내 권장)
+                    precise ? 20 : 30,  // 그리드 해상도: 정밀=20px, 빠름=30px
+                    precise ? 12 : 20,  // 측정 해상도
+                    precise,            // FDTD 사용 여부
+                    300,                // FDTD 스텝 (정밀 시)
+                    Band.GHZ_5          // 5GHz 기준 검증
             );
 
             runBtn.setText("중지");
-            progress.setProgress(-1); // indeterminate
+            progress.setProgress(-1);
+            resultTitle.setText("");
+            resultDetail.setText("");
 
             Task<ApRecommender.Result> task = new Task<>() {
                 @Override
@@ -203,10 +203,24 @@ public class ApRecommendDialog {
 
             task.setOnSucceeded(ev -> {
                 resultRef[0] = task.getValue();
-                runBtn.setText("추천 실행");
+                runBtn.setText("다시 실행");
                 progress.setProgress(1.0);
-                statusLbl.setText(resultRef[0].summary());
-                resultLbl.setText(formatResult(resultRef[0]));
+
+                ApRecommender.Result r = resultRef[0];
+                statusLbl.setText("완료!");
+
+                // 결과 표시
+                resultTitle.setText("📍 추천 결과");
+                StringBuilder sb = new StringBuilder();
+                sb.append(String.format("커버율: %.0f%%", r.coveragePercent()));
+                if (r.fdtdCoveragePercent() >= 0)
+                    sb.append(String.format(" (FDTD: %.0f%%)", r.fdtdCoveragePercent()));
+                sb.append("\n");
+                for (int i = 0; i < r.positions().size(); i++) {
+                    Point2D p = r.positions().get(i);
+                    sb.append(String.format("AP %d: (%.0f, %.0f)\n", i + 1, p.getX(), p.getY()));
+                }
+                resultDetail.setText(sb.toString().trim());
                 redraw.run();
             });
 
@@ -234,7 +248,7 @@ public class ApRecommendDialog {
         leftBox.setAlignment(Pos.TOP_CENTER);
         VBox.setVgrow(previewPane, Priority.ALWAYS);
 
-        HBox content = new HBox(12, leftBox, paramPanel);
+        HBox content = new HBox(14, leftBox, paramPanel);
         HBox.setHgrow(leftBox, Priority.ALWAYS);
         content.setPadding(new Insets(14));
         content.setStyle("-fx-background-color:transparent;");
@@ -265,48 +279,40 @@ public class ApRecommendDialog {
         g.clearRect(0, 0, w, h);
         g.drawImage(bgImage, 0, 0, w, h);
 
-        // 추천 AP 위치 표시
         for (int i = 0; i < positions.size(); i++) {
             Point2D p = positions.get(i);
             double cx = p.getX() * scale;
             double cy = p.getY() * scale;
 
+            // 범위 원 (커버리지 느낌)
+            g.setFill(Color.rgb(52, 120, 246, 0.10));
+            g.fillOval(cx - 40, cy - 40, 80, 80);
+
             // 글로우
             g.setFill(Color.rgb(52, 120, 246, 0.25));
-            g.fillOval(cx - 22, cy - 22, 44, 44);
+            g.fillOval(cx - 20, cy - 20, 40, 40);
 
             // 외곽 링
-            g.setStroke(Color.rgb(52, 120, 246, 0.8));
+            g.setStroke(Color.rgb(52, 120, 246, 0.85));
             g.setLineWidth(2.5);
-            g.strokeOval(cx - 16, cy - 16, 32, 32);
+            g.strokeOval(cx - 14, cy - 14, 28, 28);
 
             // 중심 원
-            g.setFill(Color.rgb(52, 120, 246, 1.0));
+            g.setFill(Color.rgb(52, 120, 246));
             g.fillOval(cx - 6, cy - 6, 12, 12);
 
             // 번호
             g.setFill(Color.WHITE);
-            g.setFont(javafx.scene.text.Font.font("SF Pro Text", javafx.scene.text.FontWeight.BOLD, 11));
-            String num = String.valueOf(i + 1);
-            g.fillText(num, cx - 3, cy + 4);
+            g.setFont(javafx.scene.text.Font.font("SF Pro Text",
+                    javafx.scene.text.FontWeight.BOLD, 10));
+            g.fillText(String.valueOf(i + 1), cx - 3, cy + 4);
 
             // 레이블
             g.setFill(Color.rgb(52, 120, 246));
-            g.setFont(javafx.scene.text.Font.font("SF Pro Text", javafx.scene.text.FontWeight.BOLD, 11));
+            g.setFont(javafx.scene.text.Font.font("SF Pro Text",
+                    javafx.scene.text.FontWeight.BOLD, 11));
             g.fillText("AP " + (i + 1), cx + 18, cy + 4);
         }
-    }
-
-    // ── 결과 텍스트 ──────────────────────────────────────────────────────────
-
-    private static String formatResult(ApRecommender.Result result) {
-        if (result.positions().isEmpty()) return "추천 결과 없음";
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < result.positions().size(); i++) {
-            Point2D p = result.positions().get(i);
-            sb.append(String.format("AP%d: (%.0f, %.0f)  ", i + 1, p.getX(), p.getY()));
-        }
-        return sb.toString().trim();
     }
 
     // ── 스타일 헬퍼 ──────────────────────────────────────────────────────────
@@ -315,7 +321,7 @@ public class ApRecommendDialog {
         Label l = new Label(text);
         Runnable r = () -> l.setStyle(
                 "-fx-text-fill:" + Styles.textMain() + ";" +
-                "-fx-font-size:13px;-fx-font-weight:700;" +
+                "-fx-font-size:13px;-fx-font-weight:600;" +
                 "-fx-font-family:" + Styles.FONT_STACK + ";");
         r.run();
         Styles.addThemeListener(r);
@@ -324,6 +330,7 @@ public class ApRecommendDialog {
 
     private static Label subLabel(String text) {
         Label l = new Label(text);
+        l.setWrapText(true);
         Runnable r = () -> l.setStyle(
                 "-fx-text-fill:" + Styles.textSub() + ";" +
                 "-fx-font-size:11px;" +
@@ -333,8 +340,11 @@ public class ApRecommendDialog {
         return l;
     }
 
-    private static VBox vbox(javafx.scene.Node... children) {
-        VBox b = new VBox(4, children);
-        return b;
+    private static Separator styledSeparator() {
+        Separator sep = new Separator();
+        Runnable r = () -> sep.setStyle("-fx-background-color:" + Styles.borderSoft() + ";");
+        r.run();
+        Styles.addThemeListener(r);
+        return sep;
     }
 }
