@@ -161,6 +161,7 @@ public class MainController {
         });
 
         window.getTopToolbar().setOnToolChanged(tool -> activateTool(tool, true));
+        window.getTopToolbar().setOnRecommendAp(this::openApRecommender);
 
         // 줌 박스
         try {
@@ -307,6 +308,37 @@ public class MainController {
         });
     }
 
+
+    private void openApRecommender() {
+        Image img = window.getCanvasView().getBaseImageView().getImage();
+        if (img == null) {
+            showInfo("먼저 평면도를 열어주세요.");
+            return;
+        }
+        if (!Double.isFinite(env.getScaleMPerPx()) || env.getScaleMPerPx() <= 0) {
+            showInfo("스케일을 먼저 설정해주세요.");
+            return;
+        }
+        int w = (int) img.getWidth();
+        int h = (int) img.getHeight();
+        env.setScaleMPerPx(state.getScaleMPerPx());
+        env.setPathLossN(state.getPathLossN());
+
+        app.dialog.ApRecommendDialog.show(stage, img, w, h, env, positions -> {
+            int idx = env.getAps().size() + 1;
+            for (javafx.geometry.Point2D pos : positions) {
+                AP ap = new AP();
+                ap.name = "추천-" + idx++;
+                ap.x = pos.getX();
+                ap.y = pos.getY();
+                ap.heightM = 2.5;
+                ap.enabled = true;
+                env.getAps().add(ap);
+            }
+            scheduleHeatmapRefreshIfVisible();
+            render();
+        });
+    }
 
     private void zoomAtViewportCenter(double factor) {
         var sp = window.getCanvasView().getCanvasSP();

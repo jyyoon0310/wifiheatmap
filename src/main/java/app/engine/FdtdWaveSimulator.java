@@ -230,6 +230,15 @@ public class FdtdWaveSimulator {
     public int pmlCells() { return pml; }
     public Band displayBandFilter() { return displayBandFilter; }
     public int sourceCount() { return sources.size(); }
+    public int gridNx() { return nx; }
+    public int gridNy() { return ny; }
+
+    /** FDTD power EMA 격자 직접 접근 (AP추천 FDTD 검증용). */
+    public double getPowerAt(int gx, int gy) {
+        if (gx < 0 || gx >= nx || gy < 0 || gy >= ny) return 0.0;
+        double v = powerEma[eIdx(gx, gy)];
+        return Double.isFinite(v) ? v : 0.0;
+    }
     public double courantNumber() { return C0 * dtSeconds * Math.sqrt(2.0) / dxMeters; }
     public String visualDebugSummary() { return lastVisualDebugSummary; }
 

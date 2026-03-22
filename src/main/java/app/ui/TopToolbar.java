@@ -26,6 +26,7 @@ public class TopToolbar {
     private Runnable onStopSolver;
     private Runnable onResetSolver;
     private Consumer<AppState.Tool> onToolChanged;
+    private Runnable onRecommendAp;
 
     private Runnable onZoomFit;
     private Runnable onZoom100;
@@ -106,6 +107,12 @@ public class TopToolbar {
         applyPill.run();
         Styles.addThemeListener(applyPill);
 
+        // ── AP 추천 버튼 ──────────────────────────────────────────────────
+        Button recommendBtn = new Button("AP 추천");
+        Styles.styleFlatButton(recommendBtn);
+        recommendBtn.setTooltip(new Tooltip("최적 AP 위치 추천 (Ray-cast + FDTD)"));
+        recommendBtn.setOnAction(e -> { if (onRecommendAp != null) onRecommendAp.run(); });
+
         // ── 히트맵 버튼 ────────────────────────────────────────────────────
         Button gen = new Button("히트맵 생성");
         Styles.styleAccentButton(gen);
@@ -148,6 +155,7 @@ public class TopToolbar {
                 new Separator(),
                 toolPill,
                 new Separator(),
+                recommendBtn,
                 gen, clear,
                 solverStartBtn, solverStopBtn, solverResetBtn,
                 spacer,
@@ -223,6 +231,7 @@ public class TopToolbar {
     public void setOnStopSolver(Runnable r)             { this.onStopSolver = r; }
     public void setOnResetSolver(Runnable r)            { this.onResetSolver = r; }
     public void setOnToolChanged(Consumer<AppState.Tool> c) { this.onToolChanged = c; }
+    public void setOnRecommendAp(Runnable r)             { this.onRecommendAp = r; }
 
     public void setOnZoomFit(Runnable r)  { this.onZoomFit  = r; }
     public void setOnZoom100(Runnable r)  { this.onZoom100  = r; }
