@@ -7,9 +7,7 @@ import javafx.geometry.Point2D;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 public class WifiEnvironment {
 
@@ -23,16 +21,12 @@ public class WifiEnvironment {
     // 근접 최소거리: 10 cm 고정
     private static final double MIN_DISTANCE_M = 0.10;
 
-    // ===== Debug path (overlay) tuning (match HeatmapGenerator) =====
-    private static final int MAX_REFLECTION_WALLS = 12;
-    private static final double REFLECTION_RADIUS_M = 15.0;
-    private static final double REFLECTION_LOS_RATIO_CUTOFF = 2.5;
+    // 근접 최소거리: 10 cm 고정 (이미 위에 있음)
 
-    private static final int MAX_DIFFRACTION_CORNERS = 16;
-    private static final double DIFFRACTION_RADIUS_M = 12.0;
-    private static final double DIFFRACTION_LOS_RATIO_CUTOFF = 2.8;
+    // ===== Debug path (overlay) tuning =====
+    // 공통 파라미터는 WifiMath 상수 사용 (REFLECTION_WALL_MAX 등)
+    /** 디버그 오버레이에서 LOS 대비 이 값(dB) 이상 약한 2차 경로는 표시 생략 */
     private static final double DEBUG_SECONDARY_MARGIN_DB = 6.0;
-    private static final double SECONDARY_PATH_RELATIVE_CUTOFF_DB = 10.0;
 
     public ObservableList<AP> getAps() { return aps; }
     public ObservableList<Wall> getWalls() { return walls; }
@@ -93,12 +87,12 @@ public class WifiEnvironment {
 
                     WifiMath.Path p = WifiMath.buildSingleBounceReflection(apPt, rxPt, w, walls, scaleMPerPx, reflLossDb, b);
                     if (p == null) continue;
-                    if (p.lengthMeters > dM * 2.5) continue;
+                    if (p.lengthMeters > dM * WifiMath.REFLECTION_LOS_RATIO) continue;
 
                     double baseLossRefl = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
                     double rssiRefl = rc.txPowerDbm + rc.antennaGain
                             - (baseLossRefl + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
-                    if (rssiRefl < rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB) continue;
+                    if (rssiRefl < rssiLos - WifiMath.SECONDARY_CUTOFF_DB) continue;
                     bandMw += Math.pow(10.0, rssiRefl / 10.0);
                 }
 
@@ -155,14 +149,14 @@ public class WifiEnvironment {
         double diffLossDb = WifiMath.knifeEdgeLossDb(hM, d1M, d2M, freqGhz);
         if (diffLossDb <= 0.0) return 0.0;
 
-        WifiMath.Path p = WifiMath.buildSingleCornerDiffraction(apPt, rxPt, corner, walls, scaleMPerPx, diffLossDb, band);
+        WifiMath.Path p = WifiMath.buildSingleCornerDiffraction(apPt, rxPt, corner, walls, scaleMPerPx, diffLossDb, band, ownerWall);
         if (p == null) return 0.0;
-        if (p.lengthMeters > losM * 2.8) return 0.0;
+        if (p.lengthMeters > losM * WifiMath.DIFFRACTION_LOS_RATIO) return 0.0;
 
         double baseLossDiff = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
         double rssiDiff = rc.txPowerDbm + rc.antennaGain
                 - (baseLossDiff + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
-        if (rssiDiff < rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB) return 0.0;
+        if (rssiDiff < rssiLos - WifiMath.SECONDARY_CUTOFF_DB) return 0.0;
         return Math.pow(10.0, rssiDiff / 10.0);
     }
 
@@ -217,27 +211,13 @@ public class WifiEnvironment {
                     losPath = new PropagationPath(PropagationPath.Type.LOS, apPt, rxPt, null);
                 }
 
-                // ===== Reflection candidates (same as HeatmapGenerator) =====
-                List<WallCand> wallCands = new ArrayList<>();
-                for (Wall w : walls) {
-                    if (w == null) continue;
-                    Point2D w1 = new Point2D(w.x1, w.y1);
-                    Point2D w2 = new Point2D(w.x2, w.y2);
-                    Point2D cpAp = WifiMath.closestPointOnSegment(apPt, w1, w2);
-                    Point2D cpRx = WifiMath.closestPointOnSegment(rxPt, w1, w2);
-                    double dApM = apPt.distance(cpAp) * scaleMPerPx;
-                    double dRxM = rxPt.distance(cpRx) * scaleMPerPx;
-                    double minM = Math.min(dApM, dRxM);
-                    if (minM <= REFLECTION_RADIUS_M) wallCands.add(new WallCand(w, minM));
-                }
-                wallCands.sort(Comparator.comparingDouble(a -> a.score));
-                if (wallCands.size() > MAX_REFLECTION_WALLS) {
-                    wallCands = wallCands.subList(0, MAX_REFLECTION_WALLS);
-                }
+                // ===== Reflection candidates =====
+                List<WifiMath.WallCand> wallCands =
+                        WifiMath.reflectionCandidates(apPt, rxPt, walls, scaleMPerPx);
 
                 double localBestReflRssi = -1e9;
                 PropagationPath reflPath = null;
-                for (WallCand wc : wallCands) {
+                for (WifiMath.WallCand wc : wallCands) {
                     Wall w = wc.wall;
                     WallMaterial mat = (w == null) ? null : w.getMaterial();
                     Point2D reflPt = WifiMath.reflectionPoint(apPt, rxPt, w);
@@ -248,12 +228,12 @@ public class WifiEnvironment {
                     WifiMath.Path p = WifiMath.buildSingleBounceReflection(
                             apPt, rxPt, w, walls, scaleMPerPx, reflLossDb, b);
                     if (p == null) continue;
-                    if (p.lengthMeters > dM * REFLECTION_LOS_RATIO_CUTOFF) continue;
+                    if (p.lengthMeters > dM * WifiMath.REFLECTION_LOS_RATIO) continue;
 
                     double baseLossRefl = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
                     double rssiRefl = rc.txPowerDbm + rc.antennaGain
                             - (baseLossRefl + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
-                    if (rssiRefl < rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB) continue;
+                    if (rssiRefl < rssiLos - WifiMath.SECONDARY_CUTOFF_DB) continue;
                     bandMw += Math.pow(10.0, rssiRefl / 10.0);
 
                     if (rssiRefl > localBestReflRssi) {
@@ -262,41 +242,16 @@ public class WifiEnvironment {
                     }
                 }
 
-                // ===== Diffraction candidates (same as HeatmapGenerator) =====
-                List<CornerCand> cornerRank = new ArrayList<>();
-                for (Wall w : walls) {
-                    if (w == null) continue;
-                    Point2D c1 = new Point2D(w.x1, w.y1);
-                    Point2D c2 = new Point2D(w.x2, w.y2);
-                    double c1Score = Math.min(apPt.distance(c1) * scaleMPerPx, rxPt.distance(c1) * scaleMPerPx);
-                    double c2Score = Math.min(apPt.distance(c2) * scaleMPerPx, rxPt.distance(c2) * scaleMPerPx);
-                    if (c1Score <= DIFFRACTION_RADIUS_M) cornerRank.add(new CornerCand(w, c1, c1Score));
-                    if (c2Score <= DIFFRACTION_RADIUS_M) cornerRank.add(new CornerCand(w, c2, c2Score));
-                }
-                cornerRank.sort(Comparator.comparingDouble(a -> a.score));
-
-                Set<Long> seen = new HashSet<>();
-                List<CornerCand> cornerCands = new ArrayList<>();
-                for (CornerCand cc : cornerRank) {
-                    int qx = (int) Math.round(cc.corner.getX());
-                    int qy = (int) Math.round(cc.corner.getY());
-                    long key = (((long) qx) << 32) ^ (qy & 0xffffffffL);
-                    if (!seen.add(key)) continue;
-
-                    int cross1 = WifiMath.wallCrossCount(apPt.getX(), apPt.getY(), cc.corner.getX(), cc.corner.getY(), walls, null);
-                    int cross2 = WifiMath.wallCrossCount(cc.corner.getX(), cc.corner.getY(), rxPt.getX(), rxPt.getY(), walls, null);
-                    if (cross1 >= 3 && cross2 >= 3) continue;
-
-                    cornerCands.add(cc);
-                    if (cornerCands.size() >= MAX_DIFFRACTION_CORNERS) break;
-                }
+                // ===== Diffraction candidates =====
+                List<WifiMath.CornerCand> cornerCands =
+                        WifiMath.diffractionCandidates(apPt, rxPt, walls, scaleMPerPx);
 
                 double localBestDiffRssi = -1e9;
                 PropagationPath diffPath = null;
-                for (CornerCand cc : cornerCands) {
+                for (WifiMath.CornerCand cc : cornerCands) {
                     Point2D corner = cc.corner;
                     double lenM = (apPt.distance(corner) + corner.distance(rxPt)) * scaleMPerPx;
-                    if (lenM > dM * DIFFRACTION_LOS_RATIO_CUTOFF) continue;
+                    if (lenM > dM * WifiMath.DIFFRACTION_LOS_RATIO) continue;
 
                     double d1M = apPt.distance(corner) * scaleMPerPx;
                     double d2M = corner.distance(rxPt) * scaleMPerPx;
@@ -322,13 +277,13 @@ public class WifiEnvironment {
                     if (diffLossDb <= 0.0) continue;
 
                     WifiMath.Path p = WifiMath.buildSingleCornerDiffraction(
-                            apPt, rxPt, corner, walls, scaleMPerPx, diffLossDb, b);
+                            apPt, rxPt, corner, walls, scaleMPerPx, diffLossDb, b, cc.wall);
                     if (p == null) continue;
 
                     double baseLossDiff = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
                     double rssiDiff = rc.txPowerDbm + rc.antennaGain
                             - (baseLossDiff + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
-                    if (rssiDiff < rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB) continue;
+                    if (rssiDiff < rssiLos - WifiMath.SECONDARY_CUTOFF_DB) continue;
                     bandMw += Math.pow(10.0, rssiDiff / 10.0);
 
                     if (rssiDiff > localBestDiffRssi) {
@@ -368,16 +323,4 @@ public class WifiEnvironment {
         return out;
     }
 
-    private static final class WallCand {
-        final Wall wall;
-        final double score;
-        WallCand(Wall wall, double score) { this.wall = wall; this.score = score; }
-    }
-
-    private static final class CornerCand {
-        final Wall wall;
-        final Point2D corner;
-        final double score;
-        CornerCand(Wall wall, Point2D corner, double score) { this.wall = wall; this.corner = corner; this.score = score; }
-    }
 }

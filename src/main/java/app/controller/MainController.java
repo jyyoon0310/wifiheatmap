@@ -124,9 +124,7 @@ public class MainController {
         state.setHeatmapModel(AppState.HeatmapModel.LEGACY);
         window.getTopToolbar().setHeatmapModel(AppState.HeatmapModel.LEGACY);
         window.getTopToolbar().setOnHeatmapModelChanged(mode -> {
-            // FDTD 히트맵은 잠시 비활성: Legacy 고정
-            state.setHeatmapModel(AppState.HeatmapModel.LEGACY);
-            window.getTopToolbar().setHeatmapModel(AppState.HeatmapModel.LEGACY);
+            if (mode != null) state.setHeatmapModel(mode);
         });
         window.getTopToolbar().setHeatmapSolverMode(state.getHeatmapSolverMode());
         window.getTopToolbar().setOnHeatmapSolverModeChanged(mode -> {
@@ -167,7 +165,7 @@ public class MainController {
             }
 
             if (tool == AppState.Tool.VIEW) {
-                try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
+                clearToolSelection();
             }
 
             updateCursorByMode();
@@ -206,7 +204,7 @@ public class MainController {
                     boolean ok = toolsController.applyScaleIfReady(() -> {
                         state.setTool(AppState.Tool.VIEW);
                         toolsController.onToolChanged(AppState.Tool.VIEW);
-                        try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
+                        clearToolSelection();
                     });
 
                     if (!ok) {
@@ -234,7 +232,7 @@ public class MainController {
                     toolsController.resetScale(() -> {
                         state.setTool(AppState.Tool.VIEW);
                         toolsController.onToolChanged(AppState.Tool.VIEW);
-                        try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
+                        clearToolSelection();
                     });
                     env.setScaleMPerPx(Double.NaN);
                     solverDirty = true;
@@ -370,7 +368,7 @@ public class MainController {
                 toolsController.clearApSelection();
                 toolsController.clearApInteraction();
                 toolsController.clearWallSelection();
-                try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
+                clearToolSelection();
                 stopPan();
                 updateCursorByMode();
                 render();
@@ -425,7 +423,7 @@ public class MainController {
             viewportController.centerViewport();
 
             state.setTool(AppState.Tool.VIEW);
-            try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
+            clearToolSelection();
             toolsController.onToolChanged(AppState.Tool.VIEW);
 
             stopPan();
@@ -457,6 +455,11 @@ public class MainController {
 
         int w = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getWidth()));
         int h = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getHeight()));
+
+        if (state.getHeatmapModel() == AppState.HeatmapModel.FDTD_TEZ) {
+            generateHeatmapFdtdAsync(w, h);
+            return;
+        }
 
         AppState.HeatmapSolverMode solverMode = state.getHeatmapSolverMode();
         double legendMin = state.legendMinProperty().get();
@@ -518,7 +521,9 @@ public class MainController {
                 window.getLeftPanel().getFdtdCustomReference(),
                 window.getLeftPanel().getFdtdWallPreset(),
                 window.getLeftPanel().isFdtdShowMaterialGrid(),
-                window.getLeftPanel().isFdtdShowPmlGrid()
+                window.getLeftPanel().isFdtdShowPmlGrid(),
+                window.getLeftPanel().getFdtdOfdmSubcarriers(),
+                window.getLeftPanel().getFdtdBandwidthHz()
         );
 
         FdtdHeatmapGenerator fdtdGen = new FdtdHeatmapGenerator(env, band);
@@ -682,6 +687,7 @@ public class MainController {
 
         if (solverDirty && !ensureSolverReady(false)) {
             stopSolver();
+            window.getBottomBar().setStatus("솔버 중지: 평면도를 먼저 열어주세요.");
             return;
         }
 
@@ -805,7 +811,7 @@ public class MainController {
                     () -> {
                         state.setTool(AppState.Tool.VIEW);
                         toolsController.onToolChanged(AppState.Tool.VIEW);
-                        try { window.getTopToolbar().clearToolSelection(); } catch (Exception ignored) {}
+                        clearToolSelection();
                         updateCursorByMode();
                     },
                     this::openWallMaterialDialog
@@ -902,6 +908,10 @@ public class MainController {
         List<RssiResult> current = currentMouseRssiRows();
         if (!current.isEmpty()) return current;
         return idleRssiRows();
+    }
+
+    private void clearToolSelection() {
+        clearToolSelection();
     }
 
     private List<RssiResult> idleRssiRows() {

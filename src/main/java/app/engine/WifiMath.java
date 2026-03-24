@@ -8,6 +8,14 @@ import javafx.scene.image.PixelReader;
 import javafx.scene.image.PixelWriter;
 import javafx.scene.image.WritableImage;
 import javafx.scene.paint.Color;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Wi-Fi 신호 계산 유틸:
@@ -180,6 +188,9 @@ public final class WifiMath {
 
     /**
      * Band-aware wall loss + 특정 벽 제외(ignoreWall).
+     * 교차 판정(segmentsIntersect) 기반: 경로가 벽 선분을 실제로 관통할 때만 감쇠 합산.
+     * soft-distance blending 제거 → 벽 밖으로 신호 누출 방지.
+     *
      * @param band null이면 2.4GHz로 취급
      */
     public static double wallLossAlong(double ax, double ay,
@@ -195,11 +206,8 @@ public final class WifiMath {
             if (ignoreWall != null && w == ignoreWall) continue;
             Point2D c = new Point2D(w.x1, w.y1);
             Point2D d = new Point2D(w.x2, w.y2);
-            double dist = segmentDistance(a, b, c, d);
-            if (dist <= WALL_SOFT_PX) {
-                double t = 1.0 - (dist / WALL_SOFT_PX);
-                double wgt = smoothstep(t);
-                sum += w.attenuationDb(band) * wgt;
+            if (segmentsIntersect(a, b, c, d)) {
+                sum += w.attenuationDb(band);
             }
         }
         return sum;
@@ -333,16 +341,15 @@ public final class WifiMath {
             if (w == null) continue;
             WallMaterial mat = w.getMaterial();
             if (mat == WallMaterial.DOOR || mat == WallMaterial.WINDOW) continue; // 문/창문은 감쇠만 적용하고 통과 허용
-            boolean isIgnoredWall = (ignoreWall != null && w == ignoreWall);
             Point2D w1 = new Point2D(w.x1, w.y1);
             Point2D w2 = new Point2D(w.x2, w.y2);
-            double dist = segmentDistance(a, b, w1, w2);
-            if (dist > tolPx) continue;
+            // 교차 판정 기반: 경로가 벽 선분을 실제로 관통할 때만 "막힘"으로 판정
+            if (!segmentsIntersect(a, b, w1, w2)) continue;
 
-            if (isIgnoredWall && ignorePoint != null) {
-                double dWall = pointToSegmentDistance(ignorePoint, w1, w2);
-                double dSeg = pointToSegmentDistance(ignorePoint, a, b);
-                if (dWall <= tolPx && dSeg <= tolPx) {
+            // ignoreWall: 반사/회절 기준 벽은 끝점 접촉(교차점이 ignorePoint와 일치)이면 제외
+            if (ignoreWall != null && w == ignoreWall && ignorePoint != null) {
+                Point2D ip = segmentIntersectionPoint(a, b, w1, w2);
+                if (ip != null && ip.distance(ignorePoint) <= tolPx) {
                     continue;
                 }
             }
@@ -366,6 +373,7 @@ public final class WifiMath {
         Point2D a = new Point2D(ax, ay);
         Point2D b = new Point2D(bx, by);
         for (Wall w : walls) {
+            if (w == null) continue;
             if (ignoreWall != null && w == ignoreWall) continue;
             if (segmentsIntersect(a, b,
                     new Point2D(w.x1, w.y1),
@@ -474,7 +482,7 @@ public final class WifiMath {
                                                     java.util.List<Wall> walls,
                                                     double scaleMPerPx,
                                                     double diffLossDb) {
-        return buildSingleCornerDiffraction(ap, rx, corner, walls, scaleMPerPx, diffLossDb, null);
+        return buildSingleCornerDiffraction(ap, rx, corner, walls, scaleMPerPx, diffLossDb, null, null);
     }
 
     public static Path buildSingleCornerDiffraction(Point2D ap,
@@ -484,14 +492,26 @@ public final class WifiMath {
                                                     double scaleMPerPx,
                                                     double diffLossDb,
                                                     Band band) {
+        return buildSingleCornerDiffraction(ap, rx, corner, walls, scaleMPerPx, diffLossDb, band, null);
+    }
+
+    public static Path buildSingleCornerDiffraction(Point2D ap,
+                                                    Point2D rx,
+                                                    Point2D corner,
+                                                    java.util.List<Wall> walls,
+                                                    double scaleMPerPx,
+                                                    double diffLossDb,
+                                                    Band band,
+                                                    Wall ownerWall) {
         // 경로 길이(m)
         double d1m = ap.distance(corner) * scaleMPerPx;
         double d2m = corner.distance(rx) * scaleMPerPx;
         double lenM = d1m + d2m;
 
         // 벽 관통 감쇠(dB): ap->corner + corner->rx
-        double wl1 = wallLossAlong(ap.getX(), ap.getY(), corner.getX(), corner.getY(), walls, (Wall) null, band);
-        double wl2 = wallLossAlong(corner.getX(), corner.getY(), rx.getX(), rx.getY(), walls, (Wall) null, band);
+        // ownerWall 제외: corner가 ownerWall의 끝점이므로 교차로 잘못 판정되는 것을 막음
+        double wl1 = wallLossAlong(ap.getX(), ap.getY(), corner.getX(), corner.getY(), walls, ownerWall, band);
+        double wl2 = wallLossAlong(corner.getX(), corner.getY(), rx.getX(), rx.getY(), walls, ownerWall, band);
         double wallLossDb = wl1 + wl2;
 
         return new Path(lenM, wallLossDb, diffLossDb, corner, null);
@@ -698,5 +718,211 @@ public final class WifiMath {
 
         // 로그-거리 경로손실 모델: PL(d) = PL0 + 10 n log10(d / d0), d0 = 1m
         return pl0 + 10.0 * n * Math.log10(d / 1.0);
+    }
+
+    // ===== 반사/회절 후보 공통 상수 & 헬퍼 =====
+
+    /** 반사 후보 벽 최대 개수 */
+    public static final int    REFLECTION_WALL_MAX    = 12;
+    /** 반사 후보로 포함할 최대 거리(m): AP 또는 RX까지의 최소 거리 기준 */
+    public static final double REFLECTION_RADIUS_M    = 15.0;
+    /** 반사 경로 길이가 LOS의 이 배를 초과하면 제외 */
+    public static final double REFLECTION_LOS_RATIO   = 2.5;
+    /** 회절 후보 코너 최대 개수 */
+    public static final int    DIFFRACTION_CORNER_MAX = 16;
+    /** 회절 후보로 포함할 최대 거리(m) */
+    public static final double DIFFRACTION_RADIUS_M   = 12.0;
+    /** 회절 경로 길이가 LOS의 이 배를 초과하면 제외 */
+    public static final double DIFFRACTION_LOS_RATIO  = 2.8;
+    /** 2차 경로(반사/회절) RSSI가 LOS보다 이 값(dB) 이상 약하면 제외 */
+    public static final double SECONDARY_CUTOFF_DB    = 10.0;
+
+    /** 반사 후보 벽 (거리순 정렬된 결과) */
+    public static final class WallCand {
+        public final Wall wall;
+        public final double score; // 작을수록 더 가까움
+        public WallCand(Wall wall, double score) { this.wall = wall; this.score = score; }
+    }
+
+    /** 회절 후보 코너 (거리순 정렬된 결과) */
+    public static final class CornerCand {
+        public final Wall wall;     // 코너가 속한 벽
+        public final Point2D corner;
+        public final double score;  // 작을수록 더 가까움
+        public CornerCand(Wall wall, Point2D corner, double score) {
+            this.wall = wall; this.corner = corner; this.score = score;
+        }
+    }
+
+    /**
+     * AP와 RX 위치를 기준으로 반사 후보 벽 목록을 반환한다.
+     * - AP 또는 RX까지의 최소 거리가 REFLECTION_RADIUS_M 이내인 벽만 포함
+     * - 거리(score) 오름차순 정렬, 최대 REFLECTION_WALL_MAX개
+     */
+    public static List<WallCand> reflectionCandidates(Point2D apPt,
+                                                      Point2D rxPt,
+                                                      List<Wall> walls,
+                                                      double scaleMPerPx) {
+        List<WallCand> cands = new ArrayList<>();
+        for (Wall w : walls) {
+            if (w == null) continue;
+            Point2D w1 = new Point2D(w.x1, w.y1);
+            Point2D w2 = new Point2D(w.x2, w.y2);
+            Point2D cpAp = closestPointOnSegment(apPt, w1, w2);
+            Point2D cpRx = closestPointOnSegment(rxPt, w1, w2);
+            double dApM = apPt.distance(cpAp) * scaleMPerPx;
+            double dRxM = rxPt.distance(cpRx) * scaleMPerPx;
+            double minM = Math.min(dApM, dRxM);
+            if (minM <= REFLECTION_RADIUS_M) {
+                cands.add(new WallCand(w, minM));
+            }
+        }
+        cands.sort(Comparator.comparingDouble(c -> c.score));
+        if (cands.size() > REFLECTION_WALL_MAX) {
+            cands = cands.subList(0, REFLECTION_WALL_MAX);
+        }
+        return cands;
+    }
+
+    /**
+     * AP와 RX 위치를 기준으로 회절 후보 코너 목록을 반환한다.
+     * - 각 벽의 두 끝점을 후보로 추가, DIFFRACTION_RADIUS_M 이내만 포함
+     * - 중복 좌표 제거, 3개 이상 벽을 양쪽 모두 관통하는 후보 제외
+     * - 거리(score) 오름차순 정렬, 최대 DIFFRACTION_CORNER_MAX개
+     */
+    public static List<CornerCand> diffractionCandidates(Point2D apPt,
+                                                         Point2D rxPt,
+                                                         List<Wall> walls,
+                                                         double scaleMPerPx) {
+        // 1단계: 거리 필터 + 정렬
+        List<CornerCand> ranked = new ArrayList<>();
+        for (Wall w : walls) {
+            if (w == null) continue;
+            Point2D c1 = new Point2D(w.x1, w.y1);
+            Point2D c2 = new Point2D(w.x2, w.y2);
+            double s1 = Math.min(apPt.distance(c1) * scaleMPerPx, rxPt.distance(c1) * scaleMPerPx);
+            double s2 = Math.min(apPt.distance(c2) * scaleMPerPx, rxPt.distance(c2) * scaleMPerPx);
+            if (s1 <= DIFFRACTION_RADIUS_M) ranked.add(new CornerCand(w, c1, s1));
+            if (s2 <= DIFFRACTION_RADIUS_M) ranked.add(new CornerCand(w, c2, s2));
+        }
+        ranked.sort(Comparator.comparingDouble(c -> c.score));
+
+        // 2단계: 중복 제거 + 과도 차단 필터
+        Set<Long> seen = new HashSet<>();
+        List<CornerCand> result = new ArrayList<>();
+        for (CornerCand cc : ranked) {
+            int qx = (int) Math.round(cc.corner.getX());
+            int qy = (int) Math.round(cc.corner.getY());
+            long key = (((long) qx) << 32) ^ (qy & 0xffffffffL);
+            if (!seen.add(key)) continue;
+
+            int cross1 = wallCrossCount(apPt.getX(), apPt.getY(),
+                    cc.corner.getX(), cc.corner.getY(), walls, cc.wall);
+            int cross2 = wallCrossCount(cc.corner.getX(), cc.corner.getY(),
+                    rxPt.getX(), rxPt.getY(), walls, cc.wall);
+            if (cross1 >= 3 && cross2 >= 3) continue;
+
+            result.add(cc);
+            if (result.size() >= DIFFRACTION_CORNER_MAX) break;
+        }
+        return result;
+    }
+
+    // ─── 후보 캐싱 최적화용 헬퍼 ──────────────────────────────────────────────
+
+    /**
+     * 단일 기준점 기준으로 REFLECTION_RADIUS_M 이내 반사 후보 벽 목록 반환 (거리 오름차순).
+     * AP-local 또는 RX-local 각각 한 번씩 계산한 뒤 mergeWallCands로 병합하면
+     * reflectionCandidates(apPt, rxPt, ...) 와 동일한 결과를 얻는다.
+     */
+    public static List<WallCand> wallsNearPoint(Point2D pt, List<Wall> walls, double scaleMPerPx) {
+        List<WallCand> cands = new ArrayList<>();
+        for (Wall w : walls) {
+            if (w == null) continue;
+            Point2D w1 = new Point2D(w.x1, w.y1);
+            Point2D w2 = new Point2D(w.x2, w.y2);
+            Point2D cp = closestPointOnSegment(pt, w1, w2);
+            double dM = pt.distance(cp) * scaleMPerPx;
+            if (dM <= REFLECTION_RADIUS_M) cands.add(new WallCand(w, dM));
+        }
+        cands.sort(Comparator.comparingDouble(c -> c.score));
+        return cands;
+    }
+
+    /**
+     * AP-local / RX-local 반사 후보 목록을 병합한다.
+     * 같은 Wall 인스턴스가 양쪽에 있으면 min(score)를 사용하고,
+     * 결과를 score 오름차순 정렬 후 REFLECTION_WALL_MAX개로 제한한다.
+     */
+    public static List<WallCand> mergeWallCands(List<WallCand> apCands, List<WallCand> rxCands) {
+        IdentityHashMap<Wall, Double> scoreMap = new IdentityHashMap<>();
+        for (WallCand c : apCands) scoreMap.put(c.wall, c.score);
+        for (WallCand c : rxCands) scoreMap.merge(c.wall, c.score, Math::min);
+        List<WallCand> merged = new ArrayList<>(scoreMap.size());
+        scoreMap.forEach((w, s) -> merged.add(new WallCand(w, s)));
+        merged.sort(Comparator.comparingDouble(c -> c.score));
+        return merged.size() > REFLECTION_WALL_MAX ? new ArrayList<>(merged.subList(0, REFLECTION_WALL_MAX)) : merged;
+    }
+
+    /**
+     * 단일 기준점 기준으로 DIFFRACTION_RADIUS_M 이내 회절 코너 목록 반환 (stage-1 전용).
+     * dedup/cross-filter 없음 — mergeCornerCands가 stage-2를 처리한다.
+     */
+    public static List<CornerCand> cornersNearPoint(Point2D pt, List<Wall> walls, double scaleMPerPx) {
+        List<CornerCand> cands = new ArrayList<>();
+        for (Wall w : walls) {
+            if (w == null) continue;
+            Point2D c1 = new Point2D(w.x1, w.y1);
+            Point2D c2 = new Point2D(w.x2, w.y2);
+            double s1 = pt.distance(c1) * scaleMPerPx;
+            double s2 = pt.distance(c2) * scaleMPerPx;
+            if (s1 <= DIFFRACTION_RADIUS_M) cands.add(new CornerCand(w, c1, s1));
+            if (s2 <= DIFFRACTION_RADIUS_M) cands.add(new CornerCand(w, c2, s2));
+        }
+        return cands;
+    }
+
+    /**
+     * AP-local / RX-local 회절 코너 목록을 병합하고 stage-2(dedup, cross-filter)를 적용한다.
+     * diffractionCandidates(apPt, rxPt, ...) 와 동일한 결과를 반환하지만,
+     * 벽 스캔을 AP-local / RX-local로 분리 계산한 뒤 이 메서드로 합칠 수 있다.
+     */
+    public static List<CornerCand> mergeCornerCands(List<CornerCand> apCands,
+                                                     List<CornerCand> rxCands,
+                                                     List<Wall> walls,
+                                                     Point2D apPt,
+                                                     Point2D rxPt) {
+        // 좌표 기반 중복 제거 + min score
+        LinkedHashMap<Long, CornerCand> best = new LinkedHashMap<>();
+        for (CornerCand cc : apCands) {
+            long key = cornerKey(cc.corner);
+            best.merge(key, cc, (a, b) -> a.score <= b.score ? a : b);
+        }
+        for (CornerCand cc : rxCands) {
+            long key = cornerKey(cc.corner);
+            best.merge(key, cc, (a, b) -> a.score <= b.score ? a : b);
+        }
+
+        List<CornerCand> ranked = new ArrayList<>(best.values());
+        ranked.sort(Comparator.comparingDouble(c -> c.score));
+
+        // cross-filter (과도한 벽 차단 코너 제외)
+        List<CornerCand> result = new ArrayList<>();
+        for (CornerCand cc : ranked) {
+            int cross1 = wallCrossCount(apPt.getX(), apPt.getY(),
+                    cc.corner.getX(), cc.corner.getY(), walls, cc.wall);
+            int cross2 = wallCrossCount(cc.corner.getX(), cc.corner.getY(),
+                    rxPt.getX(), rxPt.getY(), walls, cc.wall);
+            if (cross1 >= 3 && cross2 >= 3) continue;
+            result.add(cc);
+            if (result.size() >= DIFFRACTION_CORNER_MAX) break;
+        }
+        return result;
+    }
+
+    private static long cornerKey(Point2D corner) {
+        int qx = (int) Math.round(corner.getX());
+        int qy = (int) Math.round(corner.getY());
+        return (((long) qx) << 32) ^ (qy & 0xffffffffL);
     }
 }

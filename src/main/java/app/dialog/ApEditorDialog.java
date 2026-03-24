@@ -106,9 +106,11 @@ public class ApEditorDialog {
         try {
             if (vf instanceof SpinnerValueFactory.DoubleSpinnerValueFactory df) {
                 double v = Double.parseDouble(text);
+                v = Math.max(df.getMin(), Math.min(df.getMax(), v));
                 df.setValue(v);
             } else if (vf instanceof SpinnerValueFactory.IntegerSpinnerValueFactory inf) {
                 int v = Integer.parseInt(text);
+                v = Math.max(inf.getMin(), Math.min(inf.getMax(), v));
                 inf.setValue(v);
             }
         } catch (NumberFormatException ignored) { }

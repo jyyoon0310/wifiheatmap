@@ -42,7 +42,6 @@ public class CanvasView {
         viewportPane = new StackPane(zoomGroup);
         viewportPane.setAlignment(Pos.CENTER);
         viewportPane.setPickOnBounds(true);
-        viewportPane.setStyle("-fx-background-color: " + Styles.BG_APP + ";");
 
         canvasSP = new ScrollPane(viewportPane);
         canvasSP.setPannable(false);
@@ -50,10 +49,17 @@ public class CanvasView {
         canvasSP.setFitToHeight(false);
         canvasSP.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         canvasSP.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        canvasSP.setStyle("-fx-background: " + Styles.BG_APP + "; -fx-background-color: " + Styles.BG_APP + "; -fx-border-color: transparent;");
 
         root = new StackPane(canvasSP);
-        root.setStyle("-fx-background-color: " + Styles.BG_APP + ";");
+
+        Runnable applyBg = () -> {
+            String bg = Styles.bgApp();
+            viewportPane.setStyle("-fx-background-color:" + bg + ";");
+            canvasSP.setStyle("-fx-background:" + bg + ";-fx-background-color:" + bg + ";-fx-border-color:transparent;");
+            root.setStyle("-fx-background-color:" + bg + ";");
+        };
+        applyBg.run();
+        Styles.addThemeListener(applyBg);
     }
 
     // ===== getters =====

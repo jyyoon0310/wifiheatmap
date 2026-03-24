@@ -27,6 +27,7 @@ public class BottomBar {
     private final Spinner<Double> clientHeightSpinner = new Spinner<>(0.1, 5.0, 1.0, 0.1);
     private final Button applyBtn = new Button("적용");
     private final Label currentRssiLabel = new Label("- dBm");
+    private final Label statusLabel = new Label();
     private final Label legendMinLabel = new Label("-96 dBm");
     private final Label legendMaxLabel = new Label("-10 dBm");
     private final StackPane legendPane = new StackPane();
@@ -42,11 +43,12 @@ public class BottomBar {
 
     public BottomBar() {
         Label label = new Label("Client Height (m)");
-        label.setStyle(
-                "-fx-text-fill: " + Styles.TEXT_SUB + ";" +
+        Runnable applyLabel = () -> label.setStyle(
+                "-fx-text-fill: " + Styles.textSub() + ";" +
                 "-fx-font-size: 12px;" +
-                "-fx-font-family: " + FONT_STACK + ";"
-        );
+                "-fx-font-family: " + FONT_STACK + ";");
+        applyLabel.run();
+        Styles.addThemeListener(applyLabel);
 
         clientHeightSpinner.setEditable(true);
         Styles.styleSpinner(clientHeightSpinner);
@@ -103,20 +105,32 @@ public class BottomBar {
             onApplyClientHeight.accept(clientHeightSpinner.getValue());
         });
 
+        Runnable applyStatus = () -> statusLabel.setStyle(
+                "-fx-text-fill: " + Styles.textSub() + ";" +
+                "-fx-font-size: 12px;" +
+                "-fx-font-family: " + FONT_STACK + ";");
+        applyStatus.run();
+        Styles.addThemeListener(applyStatus);
+
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        root.getChildren().addAll(label, clientHeightSpinner, applyBtn, spacer, currentRssiLabel, legendPane);
+        root.getChildren().addAll(label, clientHeightSpinner, applyBtn, spacer, statusLabel, currentRssiLabel, legendPane);
         root.setPadding(new Insets(8, 10, 8, 10));
-        root.setStyle(
-                "-fx-alignment: center-left;" +
-                        "-fx-background-color: " + Styles.BG_APP + ";" +
-                        "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
-                        "-fx-border-width: 1 0 0 0;"
-        );
+        Runnable applyRoot = () -> root.setStyle(
+                "-fx-alignment:center-left;" +
+                "-fx-background-color:" + Styles.bgApp() + ";" +
+                "-fx-border-color:" + Styles.borderSoft() + ";" +
+                "-fx-border-width:1 0 0 0;");
+        applyRoot.run();
+        Styles.addThemeListener(applyRoot);
     }
 
     public Node getNode() {
         return root;
+    }
+
+    public void setStatus(String message) {
+        statusLabel.setText(message == null ? "" : message);
     }
 
     public void setOnApplyClientHeight(DoubleConsumer onApplyClientHeight) {
@@ -149,7 +163,7 @@ public class BottomBar {
             currentRssiLabel.setStyle("-fx-text-fill: " + colorHex + ";" + RSSI_LABEL_BASE_STYLE);
         } else {
             currentRssiLabel.setText("- dBm");
-            currentRssiLabel.setStyle("-fx-text-fill: " + Styles.TEXT_SUB + ";" + RSSI_LABEL_BASE_STYLE);
+            currentRssiLabel.setStyle("-fx-text-fill: " + Styles.textSub() + ";" + RSSI_LABEL_BASE_STYLE);
         }
     }
 

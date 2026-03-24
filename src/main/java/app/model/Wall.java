@@ -9,8 +9,8 @@ public class Wall {
     private WallMaterial material = WallMaterial.CUSTOM;
 
     // Per-band attenuation (dB)
-    public double attenuationDb24 = material.defaultAttenuationDb();
-    public double attenuationDb5  = material.defaultAttenuationDb();
+    public double attenuationDb24 = material.defaultAttenuation24Db();
+    public double attenuationDb5  = material.defaultAttenuation5Db();
 
     // Backward compatible (treat as 2.4GHz)
     public double attenuationDb   = attenuationDb24;

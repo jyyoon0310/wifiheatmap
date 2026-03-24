@@ -117,7 +117,11 @@ public final class TezFdtdSolver {
 
     public Result run(BiConsumer<Integer, Double> progressStepAndTimeNs) {
         int totalSteps = Math.max(10, cfg.totalSteps);
-        double period = 1.0 / cfg.frequencyHz;
+        // OFDM 활성 시 최저 서브캐리어 주파수 기준으로 period 계산 → 가장 긴 주기로 RMS 윈도우 안정화
+        double lowestFreq = (cfg.ofdmSubcarriers > 1 && cfg.bandwidthHz > 0.0)
+                ? Math.max(1.0, cfg.frequencyHz - cfg.bandwidthHz / 2.0)
+                : cfg.frequencyHz;
+        double period = 1.0 / lowestFreq;
         int periodSteps = Math.max(1, (int) Math.round(period / dt));
         int rampSteps = Math.max(0, (int) Math.round(cfg.rampTimeSeconds / dt));
         int rmsWindowSteps = Math.max(periodSteps, cfg.rmsCycles * periodSteps);
@@ -274,7 +278,7 @@ public final class TezFdtdSolver {
     private void injectSource(int step) {
         double t = step * dt;
         double ramp;
-        if (cfg.rampTimeSeconds <= 1.0e-15) {
+        if (cfg.rampTimeSeconds < 1.0e-9) {
             ramp = 1.0;
         } else {
             double u = Math.min(1.0, t / cfg.rampTimeSeconds);
@@ -284,7 +288,22 @@ public final class TezFdtdSolver {
         // CW source: Ez += A * sin(2π f t) * ramp
         // 셀 면적으로 정규화하여 해상도(dx) 변경 시에도 일관된 전계 강도 유지
         double normalizedAmp = cfg.sourceAmplitude / (dx * dy);
-        double src = normalizedAmp * Math.sin(2.0 * Math.PI * cfg.frequencyHz * t) * ramp;
+        double src;
+        int ofdmN = cfg.ofdmSubcarriers;
+        if (ofdmN <= 1 || cfg.bandwidthHz <= 0.0) {
+            // 단일 주파수 (기존 동작)
+            src = normalizedAmp * Math.sin(2.0 * Math.PI * cfg.frequencyHz * t) * ramp;
+        } else {
+            // OFDM: 중심 주파수 기준 ±BW/2 범위에 N개 서브캐리어를 균등 배치해 합산
+            // 각 서브캐리어를 1/N으로 정규화 → 전체 진폭 동일 유지
+            double fStart = cfg.frequencyHz - cfg.bandwidthHz / 2.0;
+            double fStep  = cfg.bandwidthHz / (ofdmN - 1);
+            double sum = 0.0;
+            for (int i = 0; i < ofdmN; i++) {
+                sum += Math.sin(2.0 * Math.PI * (fStart + i * fStep) * t);
+            }
+            src = normalizedAmp * (sum / ofdmN) * ramp;
+        }
 
         // split-field 일관성을 위해 Ezx/Ezy에 절반씩 주입
         ezx[sourceX][sourceY] += 0.5 * src;

@@ -16,7 +16,14 @@ public class MainWindow {
     private final BottomBar bottomBar = new BottomBar();
 
     public MainWindow(Stage stage) {
-        root.setStyle("-fx-background-color: " + Styles.BG_APP + ";");
+        stage.setMinWidth(900);
+        stage.setMinHeight(600);
+
+        Runnable applyRoot = () -> root.setStyle(
+                "-fx-background-color:" + Styles.bgApp() + ";" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";");
+        applyRoot.run();
+        Styles.addThemeListener(applyRoot);
 
         // Top
         root.setTop(topToolbar.getNode());
@@ -28,12 +35,13 @@ public class MainWindow {
         leftSP.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         leftSP.setPrefViewportWidth(360);
 
-        leftSP.setStyle(
-                "-fx-background: " + Styles.BG_PANEL + ";" +
-                        "-fx-background-color: " + Styles.BG_PANEL + ";" +
-                        "-fx-border-color: " + Styles.BORDER_SOFT + ";" +
-                        "-fx-border-width: 0 1 0 0;"
-        );
+        // 왼쪽 패널: 미세한 frosted 표면
+        Runnable applyLeftSP = () -> leftSP.setStyle(
+                "-fx-background-color:rgba(242,242,247,0.92);" +
+                "-fx-border-color:" + Styles.borderSoft() + ";" +
+                "-fx-border-width:0 0.5 0 0;");
+        applyLeftSP.run();
+        Styles.addThemeListener(applyLeftSP);
         root.setLeft(leftSP);
 
         // Center

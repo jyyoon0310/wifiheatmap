@@ -8,11 +8,10 @@ import javafx.scene.image.WritableImage;
 import javafx.scene.paint.Color;
 
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.ServiceLoader;
-import java.util.Set;
 
 /**
  * WifiEnvironment를 기반으로 히트맵 이미지를 생성하는 클래스.
@@ -26,30 +25,6 @@ public class HeatmapGenerator {
     private static final GpuHeatmapSolver GPU_SOLVER = loadGpuSolver();
     private volatile boolean usedGpuLastRun = false;
     private volatile boolean gpuFallbackLastRun = false;
-
-    // ===== Reflection(1-bounce) 튜닝 =====
-    private static final int MAX_REFLECTION_WALLS = 12;
-    private static final double REFLECTION_RADIUS_M = 15.0;
-    private static final double REFLECTION_LOS_RATIO_CUTOFF = 2.5;
-
-    // ===== Diffraction(코너) 튜닝 =====
-    private static final int MAX_DIFFRACTION_CORNERS = 16;
-    private static final double DIFFRACTION_RADIUS_M = 12.0;
-    private static final double DIFFRACTION_LOS_RATIO_CUTOFF = 2.8;
-    private static final double SECONDARY_PATH_RELATIVE_CUTOFF_DB = 10.0;
-
-    private static final class WallCand {
-        final Wall wall;
-        final double score; // 작을수록 더 가까움
-        WallCand(Wall wall, double score) { this.wall = wall; this.score = score; }
-    }
-
-    private static final class CornerCand {
-        final Wall wall;
-        final Point2D corner;
-        final double score; // 작을수록 더 가까움
-        CornerCand(Wall wall, Point2D corner, double score) { this.wall = wall; this.corner = corner; this.score = score; }
-    }
 
     public HeatmapGenerator(WifiEnvironment env) {
         this(env, AppState.HeatmapSolverMode.CPU);
@@ -130,6 +105,18 @@ public class HeatmapGenerator {
 
         int sub = 3; // 3x3 슈퍼샘플링
 
+        // ── AP별 반사/회절 후보 사전 계산 (AP 위치는 픽셀마다 변하지 않음) ──────────
+        // wallCands = walls within REFLECTION_RADIUS_M of AP (per AP, once)
+        // cornerCands = corners within DIFFRACTION_RADIUS_M of AP (per AP, once)
+        // 픽셀 루프 내에서는 RX-local만 추가 계산하고 merge → O(AP×W×H) → O(W×H)
+        Map<AP, List<WifiMath.WallCand>> apWallCands = new IdentityHashMap<>();
+        Map<AP, List<WifiMath.CornerCand>> apCornerCands = new IdentityHashMap<>();
+        for (AP ap : enabled) {
+            Point2D apPt = new Point2D(ap.x, ap.y);
+            apWallCands.put(ap, WifiMath.wallsNearPoint(apPt, walls, scaleMPerPx));
+            apCornerCands.put(ap, WifiMath.cornersNearPoint(apPt, walls, scaleMPerPx));
+        }
+
         for (int yy = 0; yy < height; yy += gridStepPx) {
             for (int xx = 0; xx < width; xx += gridStepPx) {
 
@@ -144,9 +131,15 @@ public class HeatmapGenerator {
 
                         double strongest = -1e9;
 
+                        // RX-local 후보: 이 샘플 포인트 기준으로 한 번만 계산
+                        Point2D rxPt = new Point2D(px, py);
+                        List<WifiMath.WallCand> rxWallCands =
+                                WifiMath.wallsNearPoint(rxPt, walls, scaleMPerPx);
+                        List<WifiMath.CornerCand> rxCornerCands =
+                                WifiMath.cornersNearPoint(rxPt, walls, scaleMPerPx);
+
                         for (AP ap : enabled) {
                             Point2D apPt = new Point2D(ap.x, ap.y);
-                            Point2D rxPt = new Point2D(px, py);
 
                             // 1) 3D 거리(m): 2D 수평거리 + 높이차
                             double d2dM = apPt.distance(rxPt) * scaleMPerPx;
@@ -156,56 +149,12 @@ public class HeatmapGenerator {
 
                             double bestRssi = -1e9;
 
-                            // ===== 반사 후보 벽을 가까운 것 위주로 제한 (성능 보호) =====
-                            List<WallCand> wallCands = new ArrayList<>();
-                            for (Wall w : walls) {
-                                if (w == null) continue;
-                                Point2D w1 = new Point2D(w.x1, w.y1);
-                                Point2D w2 = new Point2D(w.x2, w.y2);
-                                Point2D cpAp = WifiMath.closestPointOnSegment(apPt, w1, w2);
-                                Point2D cpRx = WifiMath.closestPointOnSegment(rxPt, w1, w2);
-                                double dApM = apPt.distance(cpAp) * scaleMPerPx;
-                                double dRxM = rxPt.distance(cpRx) * scaleMPerPx;
-                                double minM = Math.min(dApM, dRxM);
-                                if (minM <= REFLECTION_RADIUS_M) {
-                                    wallCands.add(new WallCand(w, minM));
-                                }
-                            }
-                            wallCands.sort(Comparator.comparingDouble(a -> a.score));
-                            if (wallCands.size() > MAX_REFLECTION_WALLS) {
-                                wallCands = wallCands.subList(0, MAX_REFLECTION_WALLS);
-                            }
-
-                            // ===== 회절 코너 후보 생성(거리 랭킹 + 중복 제거 + 간단 필터) =====
-                            List<CornerCand> cornerRank = new ArrayList<>();
-                            for (Wall w : walls) {
-                                if (w == null) continue;
-                                Point2D c1 = new Point2D(w.x1, w.y1);
-                                Point2D c2 = new Point2D(w.x2, w.y2);
-
-                                double c1Score = Math.min(apPt.distance(c1) * scaleMPerPx, rxPt.distance(c1) * scaleMPerPx);
-                                double c2Score = Math.min(apPt.distance(c2) * scaleMPerPx, rxPt.distance(c2) * scaleMPerPx);
-                                if (c1Score <= DIFFRACTION_RADIUS_M) cornerRank.add(new CornerCand(w, c1, c1Score));
-                                if (c2Score <= DIFFRACTION_RADIUS_M) cornerRank.add(new CornerCand(w, c2, c2Score));
-                            }
-
-                            cornerRank.sort(Comparator.comparingDouble(a -> a.score));
-
-                            Set<Long> seen = new HashSet<>();
-                            List<CornerCand> cornerCands = new ArrayList<>();
-                            for (CornerCand cc : cornerRank) {
-                                int qx = (int) Math.round(cc.corner.getX());
-                                int qy = (int) Math.round(cc.corner.getY());
-                                long key = (((long) qx) << 32) ^ (qy & 0xffffffffL);
-                                if (!seen.add(key)) continue;
-
-                                int cross1 = WifiMath.wallCrossCount(apPt.getX(), apPt.getY(), cc.corner.getX(), cc.corner.getY(), walls, null);
-                                int cross2 = WifiMath.wallCrossCount(cc.corner.getX(), cc.corner.getY(), rxPt.getX(), rxPt.getY(), walls, null);
-                                if (cross1 >= 3 && cross2 >= 3) continue;
-
-                                cornerCands.add(cc);
-                                if (cornerCands.size() >= MAX_DIFFRACTION_CORNERS) break;
-                            }
+                            // ===== 반사/회절 후보 병합 (AP-local + RX-local) =====
+                            List<WifiMath.WallCand> wallCands =
+                                    WifiMath.mergeWallCands(apWallCands.get(ap), rxWallCands);
+                            List<WifiMath.CornerCand> cornerCands =
+                                    WifiMath.mergeCornerCands(apCornerCands.get(ap), rxCornerCands,
+                                            walls, apPt, rxPt);
 
                             for (Band b : Band.values()) {
                                 RadioConfig rc = ap.radios.get(b);
@@ -226,7 +175,7 @@ public class HeatmapGenerator {
                                 double losM = dM;
 
                                 // 2) 1차 반사
-                                for (WallCand wc : wallCands) {
+                                for (WifiMath.WallCand wc : wallCands) {
                                     Wall w = wc.wall;
                                     WallMaterial mat = (w == null) ? null : w.getMaterial();
                                     Point2D reflPt = WifiMath.reflectionPoint(apPt, rxPt, w);
@@ -237,20 +186,20 @@ public class HeatmapGenerator {
                                     WifiMath.Path p = WifiMath.buildSingleBounceReflection(
                                             apPt, rxPt, w, walls, scaleMPerPx, reflLossDb, b);
                                     if (p == null) continue;
-                                    if (p.lengthMeters > losM * REFLECTION_LOS_RATIO_CUTOFF) continue;
+                                    if (p.lengthMeters > losM * WifiMath.REFLECTION_LOS_RATIO) continue;
 
                                     double baseLossRefl = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
                                     double rssiRefl = rc.txPowerDbm + rc.antennaGain
                                             - (baseLossRefl + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
-                                    if (rssiRefl < rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB) continue;
+                                    if (rssiRefl < rssiLos - WifiMath.SECONDARY_CUTOFF_DB) continue;
                                     bandMw += Math.pow(10.0, rssiRefl / 10.0);
                                 }
 
                                 // 3) 1차 회절(코너)
-                                for (CornerCand cc : cornerCands) {
+                                for (WifiMath.CornerCand cc : cornerCands) {
                                     Point2D corner = cc.corner;
                                     double lenM = (apPt.distance(corner) + corner.distance(rxPt)) * scaleMPerPx;
-                                    if (lenM > losM * DIFFRACTION_LOS_RATIO_CUTOFF) continue;
+                                    if (lenM > losM * WifiMath.DIFFRACTION_LOS_RATIO) continue;
 
                                     double d1M = apPt.distance(corner) * scaleMPerPx;
                                     double d2M = corner.distance(rxPt) * scaleMPerPx;
@@ -276,13 +225,13 @@ public class HeatmapGenerator {
                                     if (diffLossDb <= 0.0) continue;
 
                                     WifiMath.Path p = WifiMath.buildSingleCornerDiffraction(
-                                            apPt, rxPt, corner, walls, scaleMPerPx, diffLossDb, b);
+                                            apPt, rxPt, corner, walls, scaleMPerPx, diffLossDb, b, cc.wall);
                                     if (p == null) continue;
 
                                     double baseLossDiff = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
                                     double rssiDiff = rc.txPowerDbm + rc.antennaGain
                                             - (baseLossDiff + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
-                                    if (rssiDiff < rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB) continue;
+                                    if (rssiDiff < rssiLos - WifiMath.SECONDARY_CUTOFF_DB) continue;
                                     bandMw += Math.pow(10.0, rssiDiff / 10.0);
                                 }
 
