@@ -29,10 +29,11 @@ public class ApRecommender {
             int fdtdSteps,
             Band fdtdBand,
             boolean[] coverageMask,   // canvasW × canvasH 비트맵 (null=전체)
-            int maskW, int maskH      // mask 해상도
+            int maskW, int maskH,     // mask 해상도
+            int maskCellSize          // 마스크 셀 크기 (px) — floodFill 시 사용한 값
     ) {
         public static Params defaults() {
-            return new Params(2, -65.0, 25, 15, true, 300, Band.GHZ_5, null, 0, 0);
+            return new Params(2, -65.0, 25, 15, true, 6000, Band.GHZ_5, null, 0, 0, 1);
         }
     }
 
@@ -41,8 +42,31 @@ public class ApRecommender {
             List<Point2D> positions,
             double coveragePercent,
             double fdtdCoveragePercent,
-            String summary
+            String summary,
+            FdtdSignalStats fdtdStats   // null if FDTD not used
     ) {}
+
+    /** FDTD 시뮬레이션에서 측정된 신호 품질 통계 */
+    public record FdtdSignalStats(
+            double minRssi,          // 최약 신호 (dBm)
+            double maxRssi,          // 최강 신호 (dBm)
+            double avgRssi,          // 평균 신호 (dBm)
+            double medianRssi,       // 중앙값 (dBm)
+            double stdDev,           // 표준편차 (낮을수록 균일)
+            double pct5Rssi,         // 하위 5% 신호 (dBm) — 최악 지점 대표
+            int strongCount,         // 강한 신호 (-55 이상) 측정점 수
+            int goodCount,           // 양호 (-65 이상) 측정점 수
+            int weakCount,           // 약함 (-75 이상) 측정점 수
+            int deadCount,           // 사각지대 (-75 미만) 측정점 수
+            int totalPoints          // 전체 측정점
+    ) {
+        /** 신호 균일도 (0~100%, 높을수록 균일) */
+        public double uniformityPercent() {
+            if (totalPoints == 0) return 0;
+            // 표준편차 기반: stdDev=0이면 100%, stdDev≥15이면 ~0%
+            return Math.max(0, 100.0 * (1.0 - stdDev / 15.0));
+        }
+    }
 
     private record CandidateScore(int px, int py, double score) {}
 
@@ -122,15 +146,15 @@ public class ApRecommender {
         int mw = params.maskW;
         int mh = params.maskH;
 
-        // cellSize 역산 (mask → canvas 변환용)
-        int cellSize = (mask != null && mw > 0) ? Math.max(1, canvasW / mw) : 1;
+        // 마스크 셀 크기 (다이얼로그에서 전달받은 정확한 값 사용)
+        int cellSize = (mask != null) ? Math.max(1, params.maskCellSize) : 1;
 
         // ── 1. 후보 위치 생성 ────────────────────────────────────────────────
         statusCallback.accept("후보 위치 생성 중...");
         List<Point2D> candidates = buildCandidateGrid(canvasW, canvasH,
                 params.gridStepPx, walls, mask, mw, mh, cellSize);
         if (candidates.isEmpty()) {
-            return new Result(List.of(), 0, -1, "유효한 후보 위치가 없습니다.");
+            return new Result(List.of(), 0, -1, "유효한 후보 위치가 없습니다.", null);
         }
 
         List<Point2D> measurePoints = buildMeasureGrid(canvasW, canvasH,
@@ -165,19 +189,50 @@ public class ApRecommender {
         double rayCoverage = measurePoints.isEmpty() ? 0
                 : 100.0 * coveredSet.size() / measurePoints.size();
 
-        // ── 3. Phase 2: FDTD 검증 (옵션) ────────────────────────────────────
+        // ── 3. Phase 2: FDTD 검증 + 피드백 루프 ──────────────────────────────
+        // 조건: 커버율 80% 이상 AND 균일도 50% 이상이면 수용
         double fdtdCoverage = -1;
+        FdtdSignalStats finalStats = null;
         if (params.useFdtd && !chosen.isEmpty()) {
-            statusCallback.accept("파동 시뮬레이션으로 검증 중...");
-            fdtdCoverage = runFdtdValidation(env, chosen, templateAp,
-                    canvasW, canvasH, measurePoints, params, statusCallback);
+            int maxRefinements = 3;
+            double acceptableCoverageRatio = 0.80;
+            double acceptableUniformity = 50.0;
+
+            for (int round = 0; round <= maxRefinements; round++) {
+                String label = round == 0 ? "파동 시뮬레이션으로 검증 중..."
+                        : String.format("FDTD 피드백 %d차 — AP 위치 미세조정 중...", round);
+                statusCallback.accept(label);
+
+                FdtdValidationResult vr = runFdtdValidation(env, chosen, templateAp,
+                        canvasW, canvasH, measurePoints, params, statusCallback);
+                fdtdCoverage = vr.coveragePercent;
+                finalStats = vr.stats;
+
+                if (fdtdCoverage < 0) break;
+
+                boolean coverageOk = fdtdCoverage >= rayCoverage * acceptableCoverageRatio;
+                boolean uniformityOk = finalStats == null
+                        || finalStats.uniformityPercent() >= acceptableUniformity;
+
+                if ((coverageOk && uniformityOk) || round == maxRefinements) break;
+
+                // 피드백 사유 표시
+                String reason = !coverageOk
+                        ? String.format("커버율 %.0f%% 부족", fdtdCoverage)
+                        : String.format("균일도 %.0f%% 부족", finalStats.uniformityPercent());
+                statusCallback.accept(reason + " — AP 위치 조정 중...");
+
+                // 미커버 + 약신호 지점 모두를 포함하여 AP를 이동
+                List<Integer> weakIndices = collectWeakIndices(vr, finalStats);
+                chosen = refineApPositions(chosen, measurePoints, weakIndices,
+                        mask, mw, mh, cellSize, walls, params.gridStepPx);
+            }
         }
 
-        String summary = String.format("커버율: %.0f%%", rayCoverage);
-        if (fdtdCoverage >= 0) summary += String.format(" (FDTD: %.0f%%)", fdtdCoverage);
-        statusCallback.accept("완료! " + summary);
+        String summary = buildSummary(rayCoverage, fdtdCoverage, finalStats);
+        statusCallback.accept("완료! " + summary.split("\n")[0]);
 
-        return new Result(chosen, rayCoverage, fdtdCoverage, summary);
+        return new Result(chosen, rayCoverage, fdtdCoverage, summary, finalStats);
     }
 
     // ── 후보 그리드 (마스크 필터) ────────────────────────────────────────────
@@ -217,6 +272,14 @@ public class ApRecommender {
     }
 
     // ── 후보 병렬 평가 ──────────────────────────────────────────────────────
+    //
+    // 점수 = 커버 수 × 1000
+    //      + 최약 신호 보너스 (min RSSI가 높을수록 좋음)
+    //      + 균일도 보너스 (표준편차가 낮을수록 좋음)
+    //      + 평균 RSSI
+    //
+    // → 커버 수가 같으면 "최약 지점이 강하고 균일한" 배치가 선택됨
+    //
     private static CandidateScore evaluateCandidatesParallel(
             WifiEnvironment baseEnv, List<Point2D> candidates,
             List<Point2D> measurePoints, Params params,
@@ -237,17 +300,47 @@ public class ApRecommender {
 
                 int newCovered = 0;
                 double rssiSum = 0;
+                double minRssi = 0;  // 미커버 포인트 중 최약값
+                double sqSum = 0;
+                int uncoveredCount = 0;
+
                 for (int i = 0; i < measurePoints.size(); i++) {
                     if (alreadyCovered.contains(i)) continue;
                     Point2D mp = measurePoints.get(i);
                     double rssi = testEnv.sampleRssiAt((int) mp.getX(), (int) mp.getY());
-                    if (rssi >= params.targetRssiDbm) newCovered++;
                     rssiSum += rssi;
+                    sqSum += rssi * rssi;
+                    uncoveredCount++;
+
+                    if (rssi >= params.targetRssiDbm) {
+                        newCovered++;
+                    }
+                    if (uncoveredCount == 1 || rssi < minRssi) {
+                        minRssi = rssi;
+                    }
                 }
 
-                double avgRssi = measurePoints.isEmpty() ? -100 : rssiSum / measurePoints.size();
-                return new CandidateScore((int) cand.getX(), (int) cand.getY(),
-                        newCovered * 100.0 + avgRssi);
+                if (uncoveredCount == 0) {
+                    return new CandidateScore((int) cand.getX(), (int) cand.getY(), 0);
+                }
+
+                double avgRssi = rssiSum / uncoveredCount;
+                double variance = (sqSum / uncoveredCount) - (avgRssi * avgRssi);
+                double stdDev = Math.sqrt(Math.max(0, variance));
+
+                // 점수 구성:
+                // 1) 커버 수 (가장 중요) — ×1000으로 큰 가중치
+                // 2) 최약 신호 보너스 — min이 -80이면 0점, -40이면 +40점
+                double minBonus = Math.max(0, minRssi + 80);  // -80 기준으로 0~40
+                // 3) 균일도 보너스 — stdDev=0이면 +20, stdDev≥20이면 0
+                double uniformBonus = Math.max(0, 20.0 - stdDev);
+                // 4) 평균 RSSI
+                double score = newCovered * 1000.0
+                        + minBonus * 10.0    // 최약 신호 올리기 (×10 가중)
+                        + uniformBonus * 5.0 // 균일도 (×5 가중)
+                        + avgRssi;           // 평균은 미세 조정용
+
+                return new CandidateScore((int) cand.getX(), (int) cand.getY(), score);
             }));
         }
 
@@ -259,8 +352,12 @@ public class ApRecommender {
         return best;
     }
 
+    // ── FDTD 검증 결과 ──────────────────────────────────────────────────────
+    private record FdtdValidationResult(double coveragePercent, List<Integer> uncoveredIndices,
+                                        FdtdSignalStats stats, double[] perPointRssi) {}
+
     // ── FDTD 검증 ───────────────────────────────────────────────────────────
-    private static double runFdtdValidation(WifiEnvironment env, List<Point2D> apPositions,
+    private static FdtdValidationResult runFdtdValidation(WifiEnvironment env, List<Point2D> apPositions,
                                             AP templateAp, int canvasW, int canvasH,
                                             List<Point2D> measurePoints, Params params,
                                             Consumer<String> statusCallback) {
@@ -273,7 +370,7 @@ public class ApRecommender {
                     fdtdEnv, canvasW, canvasH, cellPx, params.fdtdBand);
 
             int totalSteps = params.fdtdSteps;
-            int batchSize = 50;
+            int batchSize = 100;
             for (int s = 0; s < totalSteps; s += batchSize) {
                 sim.step(Math.min(batchSize, totalSteps - s));
                 statusCallback.accept(String.format("파동 시뮬레이션 %d%%...",
@@ -283,6 +380,13 @@ public class ApRecommender {
             int pml = sim.pmlCells();
             int gNx = sim.gridNx(), gNy = sim.gridNy();
 
+            // AP의 실제 EIRP 사용 (txPower + antennaGain)
+            RadioConfig radio = templateAp.radios.get(params.fdtdBand);
+            double eirpDbm = (radio != null)
+                    ? radio.txPowerDbm + radio.antennaGain
+                    : RadioConfig.FIXED_TX_POWER_DBM + RadioConfig.DEFAULT_ANTENNA_GAIN_DBI;
+
+            // AP 근처에서 기준 전력(refPower) 측정
             double refPower = 1.0e-20;
             for (Point2D ap : apPositions) {
                 int gx = (int) (ap.getX() / cellPx) + pml;
@@ -294,20 +398,123 @@ public class ApRecommender {
                     }
             }
 
+            // 각 측정점에서 RSSI 수집 + 커버 판정
             int covered = 0;
-            for (Point2D mp : measurePoints) {
+            List<Integer> uncovered = new ArrayList<>();
+            List<Double> allRssi = new ArrayList<>(measurePoints.size());
+
+            for (int i = 0; i < measurePoints.size(); i++) {
+                Point2D mp = measurePoints.get(i);
                 int gx = (int) (mp.getX() / cellPx) + pml;
                 int gy = (int) (mp.getY() / cellPx) + pml;
-                if (gx < 0 || gx >= gNx || gy < 0 || gy >= gNy) continue;
-                double db = 10.0 * Math.log10(Math.max(sim.getPowerAt(gx, gy), 1e-30) / refPower);
-                if (22.0 + db >= params.targetRssiDbm) covered++;
+                if (gx < 0 || gx >= gNx || gy < 0 || gy >= gNy) {
+                    uncovered.add(i);
+                    allRssi.add(-100.0);
+                    continue;
+                }
+                double pathLossDb = 10.0 * Math.log10(
+                        Math.max(sim.getPowerAt(gx, gy), 1e-30) / refPower);
+                double rssiDbm = eirpDbm + pathLossDb;
+                allRssi.add(rssiDbm);
+
+                if (rssiDbm >= params.targetRssiDbm) {
+                    covered++;
+                } else {
+                    uncovered.add(i);
+                }
             }
 
-            return measurePoints.isEmpty() ? 0 : 100.0 * covered / measurePoints.size();
+            double pct = measurePoints.isEmpty() ? 0 : 100.0 * covered / measurePoints.size();
+            FdtdSignalStats stats = computeSignalStats(allRssi);
+            double[] rssiArray = allRssi.stream().mapToDouble(Double::doubleValue).toArray();
+            return new FdtdValidationResult(pct, uncovered, stats, rssiArray);
         } catch (Exception e) {
             statusCallback.accept("FDTD 검증 실패: " + e.getMessage());
-            return -1;
+            return new FdtdValidationResult(-1, List.of(), null, new double[0]);
         }
+    }
+
+    // ── 약신호 + 미커버 인덱스 수집 ────────────────────────────────────────
+    // 미커버 포인트 + 커버됐지만 하위 20% 약신호인 포인트를 합쳐서 반환
+    private static List<Integer> collectWeakIndices(FdtdValidationResult vr, FdtdSignalStats stats) {
+        Set<Integer> indices = new LinkedHashSet<>(vr.uncoveredIndices);
+
+        if (vr.perPointRssi != null && stats != null) {
+            // 하위 20% 문턱: pct5 ~ median 사이에서 약한 쪽 20%
+            double weakThreshold = stats.pct5Rssi
+                    + (stats.medianRssi - stats.pct5Rssi) * 0.4;
+            for (int i = 0; i < vr.perPointRssi.length; i++) {
+                if (vr.perPointRssi[i] < weakThreshold) {
+                    indices.add(i);
+                }
+            }
+        }
+
+        return new ArrayList<>(indices);
+    }
+
+    // ── FDTD 피드백: 약신호 영역 방향으로 AP 위치 미세조정 ─────────────────
+    private static List<Point2D> refineApPositions(List<Point2D> currentPositions,
+                                                    List<Point2D> measurePoints,
+                                                    List<Integer> uncoveredIndices,
+                                                    boolean[] mask, int mw, int mh, int cellSize,
+                                                    List<Wall> walls, int gridStep) {
+        if (uncoveredIndices.isEmpty()) return currentPositions;
+
+        // 미커버 측정점들의 좌표 수집
+        List<Point2D> uncoveredPts = new ArrayList<>();
+        for (int idx : uncoveredIndices) {
+            if (idx >= 0 && idx < measurePoints.size())
+                uncoveredPts.add(measurePoints.get(idx));
+        }
+        if (uncoveredPts.isEmpty()) return currentPositions;
+
+        List<Point2D> refined = new ArrayList<>(currentPositions);
+
+        for (int apIdx = 0; apIdx < refined.size(); apIdx++) {
+            Point2D ap = refined.get(apIdx);
+
+            // 이 AP에 가장 가까운 미커버 포인트들의 가중 중심 계산
+            double pullX = 0, pullY = 0, totalWeight = 0;
+            for (Point2D uc : uncoveredPts) {
+                double dist = ap.distance(uc);
+                double weight = 1.0 / (dist + 1.0); // 가까울수록 높은 가중치
+                pullX += (uc.getX() - ap.getX()) * weight;
+                pullY += (uc.getY() - ap.getY()) * weight;
+                totalWeight += weight;
+            }
+
+            if (totalWeight <= 0) continue;
+            pullX /= totalWeight;
+            pullY /= totalWeight;
+
+            // 이동량 제한 (gridStep의 2배까지)
+            double pullDist = Math.hypot(pullX, pullY);
+            double maxShift = gridStep * 2.0;
+            if (pullDist > maxShift) {
+                double scale = maxShift / pullDist;
+                pullX *= scale;
+                pullY *= scale;
+            }
+
+            int newX = (int) (ap.getX() + pullX);
+            int newY = (int) (ap.getY() + pullY);
+
+            // 마스크 범위 내인지 확인
+            if (mask != null) {
+                int mx = newX / cellSize, my = newY / cellSize;
+                if (mx < 0 || mx >= mw || my < 0 || my >= mh || !mask[my * mw + mx]) {
+                    continue; // 마스크 밖이면 이동 안 함
+                }
+            }
+
+            // 벽 위가 아닌지 확인
+            if (isOnWall(newX, newY, walls, 6.0)) continue;
+
+            refined.set(apIdx, new Point2D(newX, newY));
+        }
+
+        return refined;
     }
 
     // ── 벽 래스터화 (Bresenham + 두께) ──────────────────────────────────────
@@ -411,5 +618,60 @@ public class ApRecommender {
             if (env.sampleRssiAt((int) mp.getX(), (int) mp.getY()) >= targetRssi)
                 coveredSet.add(i);
         }
+    }
+
+    // ── FDTD 신호 통계 계산 ──────────────────────────────────────────────────
+    private static FdtdSignalStats computeSignalStats(List<Double> rssiValues) {
+        if (rssiValues.isEmpty()) {
+            return new FdtdSignalStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
+        int n = rssiValues.size();
+        double min = Double.MAX_VALUE, max = -Double.MAX_VALUE, sum = 0;
+        int strong = 0, good = 0, weak = 0, dead = 0;
+
+        for (double r : rssiValues) {
+            if (r < min) min = r;
+            if (r > max) max = r;
+            sum += r;
+            if (r >= -55) strong++;
+            else if (r >= -65) good++;
+            else if (r >= -75) weak++;
+            else dead++;
+        }
+
+        double avg = sum / n;
+
+        // 표준편차
+        double variance = 0;
+        for (double r : rssiValues) {
+            double diff = r - avg;
+            variance += diff * diff;
+        }
+        double stdDev = Math.sqrt(variance / n);
+
+        // 중앙값 + 하위 5%
+        double[] sorted = rssiValues.stream().mapToDouble(Double::doubleValue).sorted().toArray();
+        double median = sorted[n / 2];
+        int pct5Idx = Math.max(0, (int) (n * 0.05));
+        double pct5 = sorted[pct5Idx];
+
+        return new FdtdSignalStats(min, max, avg, median, stdDev, pct5,
+                strong, good, weak, dead, n);
+    }
+
+    // ── 결과 요약 텍스트 ────────────────────────────────────────────────────
+    private static String buildSummary(double rayCoverage, double fdtdCoverage,
+                                       FdtdSignalStats stats) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("커버율: %.0f%%", rayCoverage));
+        if (fdtdCoverage >= 0) sb.append(String.format(" (FDTD: %.0f%%)", fdtdCoverage));
+
+        if (stats != null) {
+            sb.append(String.format("\n평균 %.0f dBm / 최약 %.0f dBm / 균일도 %.0f%%",
+                    stats.avgRssi, stats.minRssi, stats.uniformityPercent()));
+            sb.append(String.format("\n강함(%d) 양호(%d) 약함(%d) 사각(%d)",
+                    stats.strongCount, stats.goodCount, stats.weakCount, stats.deadCount));
+        }
+        return sb.toString();
     }
 }

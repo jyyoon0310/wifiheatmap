@@ -1,5 +1,6 @@
 package app.controller;
 
+import app.engine.DpmPathGrid;
 import app.engine.HeatmapGenerator;
 import app.model.AP;
 import app.model.AppState;
@@ -97,6 +98,7 @@ public class MainController {
     private Band solverBandSignature = null;
     private String solverDebugText = "debug: -";
     private Task<HeatmapGenerator.HeatmapResult> legacyHeatmapTask;
+    private volatile java.util.Map<AP, java.util.Map<Band, DpmPathGrid>> cachedDpmGrids;
     private OnboardingStep onboardingStep = OnboardingStep.NONE;
 
     public MainController(Stage stage) {
@@ -162,6 +164,34 @@ public class MainController {
 
         window.getTopToolbar().setOnToolChanged(tool -> activateTool(tool, true));
         window.getTopToolbar().setOnRecommendAp(this::openApRecommender);
+
+        // 히트맵 엔진 모델 선택 (Toolbar ↔ LeftPanel 동기화)
+        window.getTopToolbar().setHeatmapModel(state.getHeatmapModel());
+        window.getTopToolbar().setHeatmapSolverMode(state.getHeatmapSolverMode());
+        window.getTopToolbar().setOnHeatmapModelChanged(mode -> {
+            if (mode != null) {
+                state.setHeatmapModel(mode);
+                window.getLeftPanel().setHeatmapModel(mode);
+                heatmapImage = null;
+                scheduleHeatmapRefreshIfVisible();
+            }
+        });
+        window.getTopToolbar().setOnHeatmapSolverModeChanged(mode -> {
+            if (mode != null) {
+                state.setHeatmapSolverMode(mode);
+                heatmapImage = null;
+                scheduleHeatmapRefreshIfVisible();
+            }
+        });
+        window.getLeftPanel().setHeatmapModel(state.getHeatmapModel());
+        window.getLeftPanel().setOnHeatmapModelChanged(mode -> {
+            if (mode != null) {
+                state.setHeatmapModel(mode);
+                window.getTopToolbar().setHeatmapModel(mode);
+                heatmapImage = null;
+                scheduleHeatmapRefreshIfVisible();
+            }
+        });
 
         // 줌 박스
         try {
@@ -246,6 +276,13 @@ public class MainController {
                 toolsController::clearWallSelection
         );
         window.getLeftPanel().setOnSelectWall(wall -> toolsController.setSelectedWall(wall, this::render));
+        window.getLeftPanel().setOnApPresetChanged(preset -> {
+            AP ap = toolsController.getSelectedAp();
+            if (ap == null) return;
+            preset.applyTo(ap);
+            window.getLeftPanel().refreshApFields();
+            render();
+        });
         window.getLeftPanel().setOnSolverConfigChanged(() -> {
             solverConfigDirty = true;
             render();
@@ -452,6 +489,7 @@ public class MainController {
             window.getCanvasView().getDrawCanvas().setHeight(fx.getHeight());
 
             heatmapImage = null;
+            cachedDpmGrids = null;
             solverOverlayImage = null;
             invalidateSolverAll();
             if (legacyHeatmapTask != null) {
@@ -796,6 +834,7 @@ public class MainController {
         toolsController.clearWallSelection();
 
         heatmapImage = null;
+        cachedDpmGrids = null;
         solverOverlayImage = null;
         invalidateSolverAll();
         if (legacyHeatmapTask != null) {
@@ -878,7 +917,8 @@ public class MainController {
         int w = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getWidth()));
         int h = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getHeight()));
 
-        HeatmapGenerator generator = new HeatmapGenerator(env);
+        HeatmapGenerator generator = new HeatmapGenerator(env,
+                state.getHeatmapSolverMode(), state.getHeatmapModel());
         int gridStep = computeAdaptiveGridStep(env);
         int smoothRadius = computeAdaptiveSmoothRadius(gridStep);
         double legendMin = state.legendMinProperty().get();
@@ -899,6 +939,9 @@ public class MainController {
         legacyHeatmapTask.setOnSucceeded(e -> {
             HeatmapGenerator.HeatmapResult result = legacyHeatmapTask.getValue();
             legacyHeatmapTask = null;
+
+            // DPM 그리드 캐시 저장 (마우스 호버 RSSI에서 사용)
+            this.cachedDpmGrids = result.dpmGrids;
 
             // JavaFX Application Thread에서 WritableImage 생성 (안전)
             WritableImage img = new WritableImage(result.width, result.height);
@@ -957,8 +1000,15 @@ public class MainController {
         return 6;
     }
 
-    /** gridStep에 맞게 smoothRadius도 자동 연동 */
+    /** gridStep에 맞게 smoothRadius도 자동 연동. DPM은 cellPx 기반으로 더 넓게. */
     private int computeAdaptiveSmoothRadius(int gridStep) {
+        if (state.getHeatmapModel() == AppState.HeatmapModel.DPM) {
+            double scaleMPerPx = state.getScaleMPerPx();
+            if (Double.isFinite(scaleMPerPx) && scaleMPerPx > 0) {
+                double cellPx = DpmPathGrid.GRID_CELL_M / scaleMPerPx;
+                return Math.min(50, Math.max(4, (int)(cellPx * 1.2)));
+            }
+        }
         return Math.max(4, gridStep);
     }
 
@@ -1308,7 +1358,13 @@ public class MainController {
                 return;
             }
 
-            if (state.getTool() == AppState.Tool.VIEW || state.getTool() == AppState.Tool.SOLVER) {
+            if (state.getTool() == AppState.Tool.SOLVER) {
+                return;
+            }
+
+            // VIEW 모드: 벽 클릭 선택 (빈 곳 클릭 시 선택 해제)
+            if (state.getTool() == AppState.Tool.VIEW) {
+                toolsController.selectWallNear(e.getX(), e.getY(), this::render);
                 return;
             }
 
@@ -1419,7 +1475,39 @@ public class MainController {
         if (!hasMouseProbe) return List.of();
         if (window.getCanvasView().getBaseImageView().getImage() == null) return List.of();
         if (!Double.isFinite(env.getScaleMPerPx()) || env.getScaleMPerPx() <= 0.0) return List.of();
+
+        // DPM 모드: 캐시된 Dijkstra 그리드에서 RSSI 계산
+        if (state.getHeatmapModel() == AppState.HeatmapModel.DPM && cachedDpmGrids != null) {
+            return sampleRssiFromDpmGrids((int) Math.round(mouseProbeX), (int) Math.round(mouseProbeY));
+        }
         return env.sampleRssiAllAt((int) Math.round(mouseProbeX), (int) Math.round(mouseProbeY));
+    }
+
+    /**
+     * DPM 그리드 캐시에서 특정 픽셀의 RSSI를 계산한다.
+     * 히트맵 생성 시 사용한 것과 동일한 경로 손실 값을 사용하므로
+     * 마우스 호버 RSSI와 히트맵 색상이 일치한다.
+     */
+    private List<RssiResult> sampleRssiFromDpmGrids(int px, int py) {
+        var grids = this.cachedDpmGrids;
+        if (grids == null) return List.of();
+        List<RssiResult> results = new java.util.ArrayList<>();
+        for (AP ap : env.getAps()) {
+            if (ap == null || !ap.enabled) continue;
+            var bandGrids = grids.get(ap);
+            if (bandGrids == null) continue;
+            for (Band b : Band.values()) {
+                RadioConfig rc = ap.radios.get(b);
+                if (rc == null || !rc.enabled) continue;
+                DpmPathGrid grid = bandGrids.get(b);
+                if (grid == null) continue;
+                double plDb = grid.getPathLossDb(px, py);
+                double rssi = rc.txPowerDbm + rc.antennaGain - plDb - rc.bandwidthPenaltyDb();
+                results.add(new RssiResult(ap.name, rc.ssid, b, rssi));
+            }
+        }
+        results.sort(java.util.Comparator.comparingDouble((RssiResult r) -> r.rssiDbm).reversed());
+        return results;
     }
 
     private double currentMouseStrongestRssi() {

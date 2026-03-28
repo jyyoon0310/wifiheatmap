@@ -250,8 +250,8 @@ public class ApRecommendDialog {
             ApRecommender.Params params = new ApRecommender.Params(
                     apCount, -65.0,
                     precise ? 20 : 30, precise ? 12 : 20,
-                    precise, 300, Band.GHZ_5,
-                    maskCopy, maskW, maskH
+                    precise, 6000, Band.GHZ_5,
+                    maskCopy, maskW, maskH, FLOOD_CELL_SIZE
             );
 
             runBtn.setText("중지");
@@ -270,12 +270,9 @@ public class ApRecommendDialog {
                 runBtn.setText("다시 실행");
                 progress.setProgress(1.0);
                 ApRecommender.Result r = resultRef[0];
-                resultTitle.setText("📍 추천 결과");
+                resultTitle.setText("추천 결과");
                 StringBuilder sb = new StringBuilder();
-                sb.append(String.format("커버율: %.0f%%", r.coveragePercent()));
-                if (r.fdtdCoveragePercent() >= 0)
-                    sb.append(String.format(" (FDTD: %.0f%%)", r.fdtdCoveragePercent()));
-                sb.append("\n");
+                sb.append(r.summary()).append("\n");
                 for (int i = 0; i < r.positions().size(); i++) {
                     Point2D p = r.positions().get(i);
                     sb.append(String.format("AP %d: (%.0f, %.0f)\n", i + 1, p.getX(), p.getY()));

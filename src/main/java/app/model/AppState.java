@@ -5,6 +5,8 @@ import javafx.beans.property.*;
 public class AppState {
 
     public enum Tool { VIEW, SCALE, AP, WALL, SOLVER }
+    public enum HeatmapSolverMode { CPU, GPU }
+    public enum HeatmapModel { LEGACY, DPM, FDTD_TEZ }
 
     // 현재 도구 모드
     private final ObjectProperty<Tool> tool = new SimpleObjectProperty<>(Tool.VIEW);
@@ -26,6 +28,10 @@ public class AppState {
     // 모델 고정 파라미터(네가 고정한다고 했던 값)
     private final DoubleProperty pathLossN = new SimpleDoubleProperty(3.5);
     private final IntegerProperty smoothRadiusPx = new SimpleIntegerProperty(8);
+    private final ObjectProperty<HeatmapSolverMode> heatmapSolverMode =
+            new SimpleObjectProperty<>(HeatmapSolverMode.CPU);
+    private final ObjectProperty<HeatmapModel> heatmapModel =
+            new SimpleObjectProperty<>(HeatmapModel.LEGACY);
 
     // ===== getters / properties =====
     public ObjectProperty<Tool> toolProperty() { return tool; }
@@ -59,4 +65,16 @@ public class AppState {
 
     public IntegerProperty smoothRadiusPxProperty() { return smoothRadiusPx; }
     public int getSmoothRadiusPx() { return smoothRadiusPx.get(); }
+
+    public ObjectProperty<HeatmapSolverMode> heatmapSolverModeProperty() { return heatmapSolverMode; }
+    public HeatmapSolverMode getHeatmapSolverMode() { return heatmapSolverMode.get(); }
+    public void setHeatmapSolverMode(HeatmapSolverMode mode) {
+        heatmapSolverMode.set(mode == null ? HeatmapSolverMode.CPU : mode);
+    }
+
+    public ObjectProperty<HeatmapModel> heatmapModelProperty() { return heatmapModel; }
+    public HeatmapModel getHeatmapModel() { return heatmapModel.get(); }
+    public void setHeatmapModel(HeatmapModel model) {
+        heatmapModel.set(model == null ? HeatmapModel.LEGACY : model);
+    }
 }

@@ -12,19 +12,18 @@ package app.model;
  */
 public enum WallMaterial {
 
-    // ===== Screenshot presets (2.4 / 5 GHz) =====
-    BOOKSHELF("책장", "bookshelf", 2, 2, "#8D6E63", 4, 1.99, 0.0, 0.0047, 1.0718), // Wood
-    CUBICLE("칸막이", "cubicle", 2, 2, "#607D8B", 4, 1.48, 0.0, 0.0011, 1.0750), // Ceiling board
-    DRY_WALL("석고보드", "drywall", 3, 3, "#B0BEC5", 6, 2.73, 0.0, 0.0085, 0.9395), // Plasterboard
-    BRICK_WALL("벽돌벽", "brick", 5, 15, "#C62828", 10, 3.91, 0.0, 0.0238, 0.16),
-    // 일반 유리창(저방사 코팅 없는 clear glass) 기준 기본치: 2.4GHz 2dB, 5GHz 4dB
-    WINDOW("창문", "glass", 2, 4, "#26C6DA", 6, 6.31, 0.0, 0.0036, 1.3394),
-    // 실내 목재문 기준 기본치(여러 실측 가이드 범위의 중앙값에 가깝게 설정): 약 3~4dB(2.4), 4~6dB(5)
-    DOOR("문", "door", 3, 5, "#FB8C00", 6, 1.99, 0.0, 0.0047, 1.0718), // Wood
-    ELEVATOR_SHAFT("엘리베이터 샤프트", "elevator", 10, 10, "#6A1B9A", 12, 1.0, 0.0, 1.0e7, 0.0), // Metal
+    // ===== 재질 프리셋 (ITU-R P.2040 + NIST IR 6055 + COST 231 실측 기반) =====
+    // 반사 손실: Fresnel 계수 기반 (낮을수록 반사 강함)
+    BOOKSHELF("책장", "bookshelf", 2, 3, "#8D6E63", 4, 1.99, 0.0, 0.0047, 1.0718), // Wood — 5GHz: 2→3 (문헌 3-4)
+    CUBICLE("칸막이", "cubicle", 2, 3, "#607D8B", 4, 1.48, 0.0, 0.0011, 1.0750), // Ceiling board — 5GHz: 2→3
+    DRY_WALL("석고보드", "drywall", 3, 5, "#B0BEC5", 6, 2.73, 0.0, 0.0085, 0.9395), // Plasterboard — 5GHz: 3→5 (문헌 4-6)
+    BRICK_WALL("벽돌벽", "brick", 6, 13, "#C62828", 10, 3.91, 0.0, 0.0238, 0.16), // 2.4: 5→6, 5GHz: 15→13 (NIST 6-12 / 12-18 중앙)
+    WINDOW("창문", "glass", 2, 4, "#26C6DA", 6, 6.31, 0.0, 0.0036, 1.3394), // OK (문헌 1-3 / 3-5)
+    DOOR("문", "door", 3, 5, "#FB8C00", 6, 1.99, 0.0, 0.0047, 1.0718), // OK (문헌 3-6 / 4-8)
+    ELEVATOR_SHAFT("엘리베이터 샤프트", "elevator", 13, 15, "#6A1B9A", 1, 1.0, 0.0, 1.0e7, 0.0), // 반사 12→1 (금속 거의 완전 반사), 감쇠 10→13/15
 
     // ===== Backward compatibility / optional presets =====
-    CONCRETE_WALL("콘크리트벽", "wall", 14, 14, "#424242", 10, 5.24, 0.0, 0.0462, 0.7822),
+    CONCRETE_WALL("콘크리트벽", "wall", 14, 18, "#424242", 8, 5.24, 0.0, 0.0462, 0.7822), // 5GHz: 18 (NIST 102mm=22, 아파트 내벽 120-150mm 기준 보정)
 
     // 사용자 지정(스피너로 직접 입력하는 경우)
     CUSTOM("사용자지정", "wall", 0, 0, "#212121", 8, Double.NaN, 0.0, 0.0, 0.0);

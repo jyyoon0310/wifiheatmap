@@ -10,6 +10,7 @@ import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.util.StringConverter;
 
 import java.util.function.Consumer;
 
@@ -27,6 +28,13 @@ public class TopToolbar {
     private Runnable onResetSolver;
     private Consumer<AppState.Tool> onToolChanged;
     private Runnable onRecommendAp;
+    private Consumer<AppState.HeatmapModel> onHeatmapModelChanged;
+    private Consumer<AppState.HeatmapSolverMode> onHeatmapSolverModeChanged;
+
+    private final ComboBox<AppState.HeatmapModel> heatmapModelCombo = new ComboBox<>();
+    private final ComboBox<AppState.HeatmapSolverMode> solverModeCombo = new ComboBox<>();
+    private boolean suppressHeatmapModelNotify = false;
+    private boolean suppressSolverNotify = false;
 
     private Runnable onZoomFit;
     private Runnable onZoom100;
@@ -107,6 +115,72 @@ public class TopToolbar {
         applyPill.run();
         Styles.addThemeListener(applyPill);
 
+        // ── 히트맵 엔진 모델 콤보 ──────────────────────────────────────────
+        heatmapModelCombo.getItems().setAll(AppState.HeatmapModel.values());
+        heatmapModelCombo.setConverter(new StringConverter<>() {
+            @Override public String toString(AppState.HeatmapModel m) {
+                if (m == null) return "Legacy";
+                return switch (m) {
+                    case LEGACY   -> "Legacy";
+                    case DPM      -> "DPM";
+                    case FDTD_TEZ -> "FDTD";
+                };
+            }
+            @Override public AppState.HeatmapModel fromString(String s) { return null; }
+        });
+        heatmapModelCombo.setCellFactory(list -> new ListCell<>() {
+            @Override protected void updateItem(AppState.HeatmapModel item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? "" : heatmapModelCombo.getConverter().toString(item));
+            }
+        });
+        heatmapModelCombo.setButtonCell(new ListCell<>() {
+            @Override protected void updateItem(AppState.HeatmapModel item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? "" : heatmapModelCombo.getConverter().toString(item));
+            }
+        });
+        heatmapModelCombo.getSelectionModel().select(AppState.HeatmapModel.LEGACY);
+        heatmapModelCombo.setOnAction(e -> {
+            if (suppressHeatmapModelNotify) return;
+            if (onHeatmapModelChanged != null) onHeatmapModelChanged.accept(heatmapModelCombo.getValue());
+        });
+        Runnable applyModelCombo = () -> heatmapModelCombo.setStyle(Styles.comboBase());
+        applyModelCombo.run();
+        Styles.addThemeListener(applyModelCombo);
+        Styles.installComboPopupStyle(heatmapModelCombo);
+
+        // ── 솔버 모드 콤보 ─────────────────────────────────────────────────
+        solverModeCombo.getItems().setAll(AppState.HeatmapSolverMode.values());
+        solverModeCombo.setConverter(new StringConverter<>() {
+            @Override public String toString(AppState.HeatmapSolverMode m) {
+                return m == AppState.HeatmapSolverMode.GPU ? "Solver: GPU" : "Solver: CPU";
+            }
+            @Override public AppState.HeatmapSolverMode fromString(String s) { return null; }
+        });
+        solverModeCombo.setCellFactory(list -> new ListCell<>() {
+            @Override protected void updateItem(AppState.HeatmapSolverMode item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? "" :
+                        (item == AppState.HeatmapSolverMode.GPU ? "GPU (실험)" : "CPU"));
+            }
+        });
+        solverModeCombo.setButtonCell(new ListCell<>() {
+            @Override protected void updateItem(AppState.HeatmapSolverMode item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? "" : solverModeCombo.getConverter().toString(item));
+            }
+        });
+        solverModeCombo.getSelectionModel().select(AppState.HeatmapSolverMode.CPU);
+        solverModeCombo.setOnAction(e -> {
+            if (suppressSolverNotify) return;
+            if (onHeatmapSolverModeChanged != null) onHeatmapSolverModeChanged.accept(solverModeCombo.getValue());
+        });
+        Runnable applySolverCombo = () -> solverModeCombo.setStyle(Styles.comboBase());
+        applySolverCombo.run();
+        Styles.addThemeListener(applySolverCombo);
+        Styles.installComboPopupStyle(solverModeCombo);
+
         // ── AP 추천 버튼 ──────────────────────────────────────────────────
         Button recommendBtn = new Button("AP 추천");
         Styles.styleFlatButton(recommendBtn);
@@ -156,7 +230,7 @@ public class TopToolbar {
                 toolPill,
                 new Separator(),
                 recommendBtn,
-                gen, clear,
+                heatmapModelCombo, gen, clear, solverModeCombo,
                 solverStartBtn, solverStopBtn, solverResetBtn,
                 spacer,
                 zoomBox,
@@ -232,6 +306,20 @@ public class TopToolbar {
     public void setOnResetSolver(Runnable r)            { this.onResetSolver = r; }
     public void setOnToolChanged(Consumer<AppState.Tool> c) { this.onToolChanged = c; }
     public void setOnRecommendAp(Runnable r)             { this.onRecommendAp = r; }
+    public void setOnHeatmapModelChanged(Consumer<AppState.HeatmapModel> c) { this.onHeatmapModelChanged = c; }
+    public void setOnHeatmapSolverModeChanged(Consumer<AppState.HeatmapSolverMode> c) { this.onHeatmapSolverModeChanged = c; }
+
+    public void setHeatmapModel(AppState.HeatmapModel mode) {
+        suppressHeatmapModelNotify = true;
+        heatmapModelCombo.getSelectionModel().select(mode == null ? AppState.HeatmapModel.LEGACY : mode);
+        suppressHeatmapModelNotify = false;
+    }
+
+    public void setHeatmapSolverMode(AppState.HeatmapSolverMode mode) {
+        suppressSolverNotify = true;
+        solverModeCombo.getSelectionModel().select(mode == null ? AppState.HeatmapSolverMode.CPU : mode);
+        suppressSolverNotify = false;
+    }
 
     public void setOnZoomFit(Runnable r)  { this.onZoomFit  = r; }
     public void setOnZoom100(Runnable r)  { this.onZoom100  = r; }

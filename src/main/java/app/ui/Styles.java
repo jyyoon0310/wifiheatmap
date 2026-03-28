@@ -76,7 +76,7 @@ public class Styles {
                 : "dropshadow(gaussian,rgba(0,0,0,0.13),24,0.08,0,5)";
     }
     private static String inputBg() {
-        return darkMode ? "#2C2C2E" : "rgba(255,255,255,0.92)";
+        return darkMode ? "rgba(44,44,46,0.90)" : "rgba(255,255,255,0.72)";
     }
     private static String btnBg() {
         return darkMode ? "#2C2C2E" : "rgba(255,255,255,0.82)";
@@ -88,7 +88,7 @@ public class Styles {
         return darkMode ? "#1C1C1E" : "rgba(210,210,220,0.95)";
     }
     private static String popupBg() {
-        return darkMode ? "#242426" : "#FFFFFF";
+        return darkMode ? "rgba(36,36,38,0.95)" : "rgba(252,252,255,0.82)";
     }
     private static String popupShadow() {
         return darkMode

@@ -1,5 +1,6 @@
 package app.ui;
 import app.model.AP;
+import app.model.ApPreset;
 import app.model.AppState;
 import app.model.Band;
 import app.model.RadioConfig;
@@ -43,6 +44,8 @@ public class LeftPanel {
     // RSSI 표시
     private final VBox rssiCard;
     private final VBox rssiRows = new VBox(4);
+    private final ComboBox<AppState.HeatmapModel> engineCombo = new ComboBox<>();
+    private Consumer<AppState.HeatmapModel> onHeatmapModelChanged = m -> {};
 
     // 스케일 입력
     private final VBox scaleCard;
@@ -52,6 +55,8 @@ public class LeftPanel {
 
     // AP 상세 편집
     private final VBox apDetailsCard;
+    private final ComboBox<ApPreset> apPresetCombo = new ComboBox<>();
+    private java.util.function.Consumer<ApPreset> onApPresetChanged;
     private final TextField apNameField = new TextField();
     private final CheckBox apEnabledCheck = new CheckBox("AP 활성화");
     private final TextField apHeightField = new TextField("1.0");
@@ -83,6 +88,8 @@ public class LeftPanel {
 
     // Wall 상세 편집
     private final VBox wallDetailsCard;
+    private final TextField wallNameField = new TextField();
+    private final Label wallInfoLabel = new Label("-");
     private final ComboBox<WallMaterial> wallMaterialCombo = new ComboBox<>();
     private final TextField wall24Field = new TextField();
     private final TextField wall5Field = new TextField();
@@ -151,8 +158,35 @@ public class LeftPanel {
         row.setFillHeight(true);
         HBox.setHgrow(realMetersField, Priority.NEVER);
 
+        engineCombo.getItems().setAll(AppState.HeatmapModel.values());
+        engineCombo.setConverter(new StringConverter<>() {
+            @Override public String toString(AppState.HeatmapModel m) {
+                if (m == null) return "Legacy";
+                return switch (m) {
+                    case LEGACY   -> "Legacy (Ray-cast)";
+                    case DPM      -> "DPM (지배경로)";
+                    case FDTD_TEZ -> "FDTD (파동 시뮬)";
+                };
+            }
+            @Override public AppState.HeatmapModel fromString(String s) { return null; }
+        });
+        engineCombo.getSelectionModel().select(AppState.HeatmapModel.LEGACY);
+        engineCombo.setMaxWidth(Double.MAX_VALUE);
+        Runnable applyEngineCombo = () -> engineCombo.setStyle(Styles.comboBase());
+        applyEngineCombo.run();
+        Styles.addThemeListener(applyEngineCombo);
+        Styles.installComboPopupStyle(engineCombo);
+        engineCombo.setOnAction(e -> onHeatmapModelChanged.accept(engineCombo.getValue()));
+
+        Label engineLabel = new Label("히트맵 엔진");
+        Runnable applyEngineLabel = () -> engineLabel.setStyle(
+                "-fx-text-fill:" + Styles.textSub() + ";-fx-font-size:11px;");
+        applyEngineLabel.run();
+        Styles.addThemeListener(applyEngineLabel);
+
         rssiCard = Styles.card(
                 "RSSI (Mouse)",
+                new VBox(4, engineLabel, engineCombo),
                 rssiRows
         );
         rssiRows.setPadding(new Insets(2, 0, 0, 0));
@@ -308,17 +342,33 @@ public class LeftPanel {
         HBox apButtons = new HBox(8, applyApBtn, deleteApBtn);
 
         // AP 카드 레이블 + CheckBox 테마 리스너
+        Label presetLbl = new Label("공유기 프리셋");
         Label apNameLbl = new Label("이름");
         Label apHeightLbl = new Label("AP 높이(m)");
-        for (Label lbl : new Label[]{apNameLbl, apHeightLbl}) {
+        for (Label lbl : new Label[]{presetLbl, apNameLbl, apHeightLbl}) {
             Runnable r = () -> lbl.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
             r.run(); Styles.addThemeListener(r);
         }
         Runnable applyApEnabledChk = () -> apEnabledCheck.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
         applyApEnabledChk.run(); Styles.addThemeListener(applyApEnabledChk);
 
+        // 공유기 프리셋 ComboBox
+        apPresetCombo.getItems().addAll(ApPreset.values());
+        apPresetCombo.setValue(ApPreset.CUSTOM);
+        apPresetCombo.setStyle(Styles.comboBase());
+        apPresetCombo.setMaxWidth(Double.MAX_VALUE);
+        Styles.addThemeListener(() -> apPresetCombo.setStyle(Styles.comboBase()));
+        Styles.installComboPopupStyle(apPresetCombo);
+        apPresetCombo.setOnAction(e -> {
+            ApPreset preset = apPresetCombo.getValue();
+            if (preset != null && preset != ApPreset.CUSTOM && onApPresetChanged != null) {
+                onApPresetChanged.accept(preset);
+            }
+        });
+
         apDetailsCard = Styles.card(
                 "AP Details",
+                new VBox(6, presetLbl, apPresetCombo),
                 new VBox(6, apNameLbl, apNameField),
                 apEnabledCheck,
                 new VBox(4, apHeightLbl, apHeightField),
@@ -354,15 +404,28 @@ public class LeftPanel {
             }
         });
 
-        Label wallMatLbl = new Label("재질");
-        Label wall24Lbl  = new Label("2.4GHz 감쇠(dB)");
-        Label wall5Lbl   = new Label("5GHz 감쇠(dB)");
-        for (Label lbl : new Label[]{wallMatLbl, wall24Lbl, wall5Lbl}) {
+        Label wallNameLbl = new Label("이름 (선택)");
+        Label wallInfoLbl = new Label("위치/길이");
+        Label wallMatLbl  = new Label("재질");
+        Label wall24Lbl   = new Label("2.4GHz 감쇠(dB)");
+        Label wall5Lbl    = new Label("5GHz 감쇠(dB)");
+        for (Label lbl : new Label[]{wallNameLbl, wallInfoLbl, wallMatLbl, wall24Lbl, wall5Lbl}) {
             Runnable r = () -> lbl.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
             r.run(); Styles.addThemeListener(r);
         }
+        Styles.styleTextField(wallNameField);
+        wallNameField.setPromptText("예) 외벽, 침실 경계");
+
+        Runnable applyWallInfo = () -> wallInfoLabel.setStyle(
+                "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px; -fx-font-family: monospace;");
+        applyWallInfo.run(); Styles.addThemeListener(applyWallInfo);
+        wallInfoLabel.setWrapText(true);
+
         wallDetailsCard = Styles.card(
                 "Wall Details",
+                new VBox(4, wallNameLbl, wallNameField),
+                new VBox(4, wallInfoLbl, wallInfoLabel),
+                new Separator(),
                 new VBox(4, wallMatLbl, wallMaterialCombo),
                 new VBox(4, wall24Lbl, wall24Field),
                 new VBox(4, wall5Lbl, wall5Field),
@@ -390,8 +453,12 @@ public class LeftPanel {
                     setStyle("-fx-background-color:transparent;");
                     return;
                 }
-                String label = item.getMaterial() == null ? "벽" : item.getMaterial().labelKo();
-                setText(String.format("벽 %d  –  %s", getIndex() + 1, label));
+                String matLabel = item.getMaterial() == null ? "벽" : item.getMaterial().labelKo();
+                String name = (item.label != null && !item.label.isBlank()) ? item.label : null;
+                String display = name != null
+                        ? String.format("%d. %s  –  %s", getIndex() + 1, name, matLabel)
+                        : String.format("벽 %d  –  %s", getIndex() + 1, matLabel);
+                setText(display);
                 restyle();
             }
             private void restyle() {
@@ -508,6 +575,12 @@ public class LeftPanel {
         }
 
         currentAp = ap;
+        apPresetCombo.setValue(ApPreset.CUSTOM);
+        refreshApFields();
+    }
+
+    /** 현재 선택된 AP의 필드를 강제로 다시 채운다 (프리셋 적용 후 갱신용). */
+    public void refreshApFields() {
         boolean hasSelection = (currentAp != null);
 
         applyApBtn.setDisable(!hasSelection);
@@ -542,11 +615,15 @@ public class LeftPanel {
         deleteWallBtn.setDisable(!hasSelection);
 
         if (!hasSelection) {
+            wallNameField.clear();
+            wallInfoLabel.setText("-");
             wallMaterialCombo.getSelectionModel().select(WallMaterial.CONCRETE_WALL);
             wall24Field.clear();
             wall5Field.clear();
             selectWallInList(null);
         } else {
+            wallNameField.setText(currentWall.label == null ? "" : currentWall.label);
+            wallInfoLabel.setText(buildWallInfoText(currentWall));
             wallMaterialCombo.getSelectionModel().select(currentWall.getMaterial());
             wall24Field.setText(String.format("%.1f", currentWall.attenuationDb24));
             wall5Field.setText(String.format("%.1f", currentWall.attenuationDb5));
@@ -633,6 +710,19 @@ public class LeftPanel {
 
     public void setRssiResults(List<RssiResult> rows) {
         updateRssiRows(rows == null ? List.of() : rows);
+    }
+
+    public void setHeatmapModel(AppState.HeatmapModel model) {
+        engineCombo.getSelectionModel().select(
+                model == null ? AppState.HeatmapModel.LEGACY : model);
+    }
+
+    public void setOnHeatmapModelChanged(Consumer<AppState.HeatmapModel> c) {
+        this.onHeatmapModelChanged = (c != null) ? c : m -> {};
+    }
+
+    public void setOnApPresetChanged(java.util.function.Consumer<ApPreset> c) {
+        this.onApPresetChanged = c;
     }
 
     public boolean isShowPathsEnabled() {
@@ -871,11 +961,13 @@ public class LeftPanel {
     private void applyWallEdits() {
         if (currentWall == null) return;
 
+        // 이름 저장
+        currentWall.label = wallNameField.getText() == null ? "" : wallNameField.getText().trim();
+
         WallMaterial selected = wallMaterialCombo.getValue();
         if (selected == null) selected = currentWall.getMaterial();
 
         if (selected != null && selected != WallMaterial.CUSTOM) {
-            // 프리셋 재질 선택 시에는 프리셋 재질 상태를 유지한다.
             currentWall.setMaterial(selected);
         } else {
             double a24 = parseDoubleOr(wall24Field.getText(), currentWall.attenuationDb24);
@@ -883,7 +975,26 @@ public class LeftPanel {
             currentWall.setAttenuationDb(a24, a5);
         }
 
+        // 리스트 셀 갱신 (이름 변경 반영)
+        wallListView.refresh();
         onWallChanged.run();
+    }
+
+    /** 벽의 좌표/길이 정보 문자열을 생성한다. */
+    private String buildWallInfoText(Wall w) {
+        double scale = (envRef != null && Double.isFinite(envRef.getScaleMPerPx()) && envRef.getScaleMPerPx() > 0)
+                ? envRef.getScaleMPerPx() : 0.0;
+        if (scale <= 0) {
+            // 스케일 미설정: 픽셀 단위 표시
+            double lenPx = Math.hypot(w.x2 - w.x1, w.y2 - w.y1);
+            return String.format("시작  (%.0f, %.0f) px%n끝    (%.0f, %.0f) px%n길이  %.0f px",
+                    w.x1, w.y1, w.x2, w.y2, lenPx);
+        }
+        double x1m = w.x1 * scale, y1m = w.y1 * scale;
+        double x2m = w.x2 * scale, y2m = w.y2 * scale;
+        double lenM = Math.hypot(w.x2 - w.x1, w.y2 - w.y1) * scale;
+        return String.format("시작  (%.2f, %.2f) m%n끝    (%.2f, %.2f) m%n길이  %.2f m",
+                x1m, y1m, x2m, y2m, lenM);
     }
 
     private void deleteCurrentWall() {

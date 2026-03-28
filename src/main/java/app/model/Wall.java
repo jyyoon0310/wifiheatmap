@@ -6,6 +6,9 @@ package app.model;
 public class Wall {
     public double x1, y1, x2, y2;
 
+    /** 사용자 정의 이름 (선택사항, 빈 문자열이면 자동 생성 레이블 사용) */
+    public String label = "";
+
     private WallMaterial material = WallMaterial.CUSTOM;
 
     // Per-band attenuation (dB)

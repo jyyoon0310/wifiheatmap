@@ -1,5 +1,6 @@
 package app.engine;
 
+import app.model.AppState;
 import app.model.RadioConfig;
 import app.model.*;
 import javafx.geometry.Point2D;
@@ -35,19 +36,30 @@ public class HeatmapGenerator {
         public final int smoothRadiusPx;
         public final boolean usedGpu;
         public final boolean gpuFallback;
+        /** DPM 모드에서 생성된 그리드 캐시 (Legacy/FDTD면 null) */
+        public final java.util.Map<AP, java.util.Map<Band, DpmPathGrid>> dpmGrids;
 
         public HeatmapResult(int[] argbPixels, int width, int height, int smoothRadiusPx,
                              boolean usedGpu, boolean gpuFallback) {
+            this(argbPixels, width, height, smoothRadiusPx, usedGpu, gpuFallback, null);
+        }
+
+        public HeatmapResult(int[] argbPixels, int width, int height, int smoothRadiusPx,
+                             boolean usedGpu, boolean gpuFallback,
+                             java.util.Map<AP, java.util.Map<Band, DpmPathGrid>> dpmGrids) {
             this.argbPixels = argbPixels;
             this.width = width;
             this.height = height;
             this.smoothRadiusPx = smoothRadiusPx;
             this.usedGpu = usedGpu;
             this.gpuFallback = gpuFallback;
+            this.dpmGrids = dpmGrids;
         }
     }
 
     private final WifiEnvironment env;
+    private final AppState.HeatmapSolverMode solverMode;
+    private final AppState.HeatmapModel heatmapModel;
     private static final GpuHeatmapSolver GPU_SOLVER = loadGpuSolver();
     private boolean usedGpuLastRun = false;
     private boolean gpuFallbackLastRun = false;
@@ -55,26 +67,26 @@ public class HeatmapGenerator {
     // ===== Reflection(1-bounce) 튜닝 =====
     // 후보 12→8: 통계적으로 근거리 상위 8개 벽이 반사 기여의 95%+ 차지.
     // 오차 < 0.5dB (LOS 통과 구간 기준), 탐색 비용 ~33% 절감.
-    private static final int MAX_REFLECTION_WALLS = 8;
-    private static final double REFLECTION_RADIUS_M = 15.0;
-    private static final double REFLECTION_LOS_RATIO_CUTOFF = 2.5;
+    private static final int MAX_REFLECTION_WALLS = 12;  // 8→12: 더 많은 반사 경로 허용
+    private static final double REFLECTION_RADIUS_M = 20.0; // 15→20m: 넓은 반사 탐색
+    private static final double REFLECTION_LOS_RATIO_CUTOFF = 3.0; // 2.5→3.0: 먼 벽 반사 허용
 
     // ===== Diffraction(코너) 튜닝 =====
-    private static final int MAX_DIFFRACTION_CORNERS = 16;
-    private static final double DIFFRACTION_RADIUS_M = 18.0;  // 12→18m: 발코니 코너까지 닿도록 확대
-    private static final double DIFFRACTION_LOS_RATIO_CUTOFF = 2.8;
-    private static final double SECONDARY_PATH_RELATIVE_CUTOFF_DB = 10.0;
+    private static final int MAX_DIFFRACTION_CORNERS = 24;   // 16→24: 복잡한 실내에서 코너 누락 방지
+    private static final double DIFFRACTION_RADIUS_M = 25.0; // 18→25m: 대형 아파트 전체 커버
+    private static final double DIFFRACTION_LOS_RATIO_CUTOFF = 3.5; // 2.8→3.5: 우회 경로 허용 확대
+    // COST 231 / WINNER II: 반사·회절 경로는 LOS 대비 20 dB 약해도 유효 (10→20)
+    private static final double SECONDARY_PATH_RELATIVE_CUTOFF_DB = 20.0;
     // 그늘 영역에서 반사/회절이 완전히 잘리지 않도록 절대 하한선 설정
-    // LOS가 매우 약한 경우에도 -100 dBm 이상인 반사/회절은 합산에 참여
-    private static final double MIN_SECONDARY_RSSI_DBM = -100.0;
+    private static final double MIN_SECONDARY_RSSI_DBM = -90.0; // -100→-90: 수신 감도 하한
 
     // ===== 2차 회절(corner → corner) 튜닝 =====
     // 복도를 돌아 드레스룸/발코니 같은 깊은 그늘 영역에 신호를 전달하는 경로
-    private static final int MAX_DOUBLE_DIFFRACTION_PAIRS = 8;  // 계산량 제어 (쌍의 수)
-    // 2차 회절 전용 코너풀: 1차(18m)보다 넓은 반경으로 발코니 끝 코너까지 포함
-    private static final int MAX_DOUBLE_DIFFRACTION_CORNERS = 24;
-    private static final double DOUBLE_DIFFRACTION_CORNER_RADIUS_M = 22.0; // 코너풀 탐색 반경
-    private static final double DOUBLE_DIFFRACTION_LOS_RATIO_CUTOFF = 3.5; // 직선 대비 최대 경로 배율
+    private static final int MAX_DOUBLE_DIFFRACTION_PAIRS = 16;  // 8→16: 복잡한 구조 대응
+    // 2차 회절 전용 코너풀: 1차보다 넓은 반경으로 발코니 끝 코너까지 포함
+    private static final int MAX_DOUBLE_DIFFRACTION_CORNERS = 32; // 24→32
+    private static final double DOUBLE_DIFFRACTION_CORNER_RADIUS_M = 30.0; // 22→30m: 대형 평면도 대응
+    private static final double DOUBLE_DIFFRACTION_LOS_RATIO_CUTOFF = 4.5; // 3.5→4.5: 복도 꺾임 허용
 
     // ===== Adaptive Sampling 튜닝 =====
     /** 인접 그리드 꼭짓점 간 dBm 차이가 이 값을 초과하면 세분화 */
@@ -96,7 +108,14 @@ public class HeatmapGenerator {
     }
 
     public HeatmapGenerator(WifiEnvironment env) {
+        this(env, AppState.HeatmapSolverMode.CPU, AppState.HeatmapModel.LEGACY);
+    }
+
+    public HeatmapGenerator(WifiEnvironment env, AppState.HeatmapSolverMode solverMode,
+                            AppState.HeatmapModel model) {
         this.env = env;
+        this.solverMode = (solverMode == null) ? AppState.HeatmapSolverMode.CPU : solverMode;
+        this.heatmapModel = (model == null) ? AppState.HeatmapModel.LEGACY : model;
     }
 
     public HeatmapResult generate(int width,
@@ -106,9 +125,31 @@ public class HeatmapGenerator {
                                    double legendMaxDbm,
                                    int smoothRadiusPx,
                                    Consumer<Double> progressCallback) {
-        // 현재 히트맵은 CPU 경로만 사용한다.
+        // DPM 모드: GPU/CPU 선택과 무관한 별도 경로
+        if (heatmapModel == AppState.HeatmapModel.DPM) {
+            usedGpuLastRun = false;
+            gpuFallbackLastRun = false;
+            return generateDpm(width, height, gridStepPx, legendMinDbm, legendMaxDbm,
+                    smoothRadiusPx, progressCallback);
+        }
+
+        // GPU 모드
+        if (solverMode == AppState.HeatmapSolverMode.GPU && GPU_SOLVER != null) {
+            WritableImage gpuImg = GPU_SOLVER.generate(env, width, height, gridStepPx,
+                    legendMinDbm, legendMaxDbm, smoothRadiusPx);
+            if (gpuImg != null) {
+                usedGpuLastRun = true;
+                gpuFallbackLastRun = false;
+                if (progressCallback != null) progressCallback.accept(1.0);
+                int[] px = new int[width * height];
+                gpuImg.getPixelReader().getPixels(0, 0, width, height,
+                        javafx.scene.image.PixelFormat.getIntArgbInstance(), px, 0, width);
+                return new HeatmapResult(px, width, height, 0, true, false);
+            }
+            gpuFallbackLastRun = true;
+        }
+
         usedGpuLastRun = false;
-        gpuFallbackLastRun = false;
         return generateCpu(width, height, gridStepPx, legendMinDbm, legendMaxDbm, smoothRadiusPx, progressCallback);
     }
 
@@ -122,6 +163,127 @@ public class HeatmapGenerator {
 
     public static boolean isGpuAvailable() {
         return GPU_SOLVER != null;
+    }
+
+    /**
+     * DPM (Dominant Path Model) 히트맵 생성.
+     *
+     * 각 (AP, 밴드) 조합에 대해 DpmPathGrid.runDijkstra()로
+     * 최소 경로 손실 지배 경로를 미리 계산한 뒤 픽셀별로 PL을 조회한다.
+     */
+    /**
+     * DPM 히트맵 생성 — 백그라운드 스레드 안전 (int[] 사용, WritableImage 미생성).
+     *
+     * WritableImage는 JavaFX Application Thread에서만 생성해야 하므로,
+     * 픽셀 데이터를 int[] ARGB 배열로 계산하고 HeatmapResult로 반환한다.
+     * blur는 MainController의 setOnSucceeded(FX thread)에서 처리한다.
+     */
+    private HeatmapResult generateDpm(int width, int height, int gridStepPx,
+                                       double legendMinDbm, double legendMaxDbm,
+                                       int smoothRadiusPx,
+                                       Consumer<Double> progressCallback) {
+        List<AP> aps = new ArrayList<>(env.getAps());
+        List<Wall> walls = new ArrayList<>(env.getWalls());
+        double scaleMPerPx = env.getScaleMPerPx();
+
+        List<AP> enabled = new ArrayList<>();
+        for (AP ap : aps) {
+            if (ap != null && ap.enabled) enabled.add(ap);
+        }
+
+        int[] argb = new int[width * height]; // 투명(0) 초기값
+
+        if (enabled.isEmpty() || !Double.isFinite(scaleMPerPx) || scaleMPerPx <= 0) {
+            if (progressCallback != null) progressCallback.accept(1.0);
+            return new HeatmapResult(argb, width, height, smoothRadiusPx, false, false);
+        }
+
+        // ── AP별·밴드별 Dijkstra 사전 계산 (진행률 0→35%) ──────────────
+        java.util.Map<AP, java.util.Map<Band, DpmPathGrid>> grids = new java.util.IdentityHashMap<>();
+        int totalAps = enabled.size();
+        int doneAps = 0;
+        for (AP ap : enabled) {
+            java.util.Map<Band, DpmPathGrid> bandGrids = new java.util.EnumMap<>(Band.class);
+            for (Band b : Band.values()) {
+                RadioConfig rc = ap.radios.get(b);
+                if (rc == null || !rc.enabled) continue;
+                DpmPathGrid grid = new DpmPathGrid(width, height, scaleMPerPx, walls, b);
+                grid.runDijkstra(ap.x, ap.y, rc.centerFreqGhz());
+                bandGrids.put(b, grid);
+            }
+            if (!bandGrids.isEmpty()) grids.put(ap, bandGrids);
+            doneAps++;
+            if (progressCallback != null) progressCallback.accept(0.35 * doneAps / totalAps);
+        }
+
+        // ── 픽셀 렌더링 (진행률 35→95%) — int[] 직접 기록 ─────────────
+        int sub = 3;
+        int totalRows = (height + gridStepPx - 1) / gridStepPx;
+        int doneRows  = 0;
+        double range  = legendMaxDbm - legendMinDbm;
+
+        for (int yy = 0; yy < height; yy += gridStepPx) {
+            for (int xx = 0; xx < width; xx += gridStepPx) {
+                double mwSum  = 0.0;
+                int    samples = 0;
+
+                for (int sy = 0; sy < sub; sy++) {
+                    for (int sx2 = 0; sx2 < sub; sx2++) {
+                        int spx = Math.min(width  - 1, xx + (sx2 * gridStepPx + gridStepPx / 2) / sub);
+                        int spy = Math.min(height - 1, yy + (sy  * gridStepPx + gridStepPx / 2) / sub);
+                        double strongest = -1e9;
+
+                        for (AP ap : enabled) {
+                            java.util.Map<Band, DpmPathGrid> bandGrids = grids.get(ap);
+                            if (bandGrids == null) continue;
+                            double bestRssi = -1e9;
+                            for (Band b : Band.values()) {
+                                RadioConfig rc = ap.radios.get(b);
+                                if (rc == null || !rc.enabled) continue;
+                                DpmPathGrid grid = bandGrids.get(b);
+                                if (grid == null) continue;
+                                double plDb = grid.getPathLossDb(spx, spy);
+                                double rssi = rc.txPowerDbm + rc.antennaGain
+                                        - plDb - rc.bandwidthPenaltyDb();
+                                if (rssi > bestRssi) bestRssi = rssi;
+                            }
+                            if (bestRssi > strongest) strongest = bestRssi;
+                        }
+
+                        if (strongest > -1e9) {
+                            mwSum += Math.pow(10.0, strongest / 10.0);
+                            samples++;
+                        }
+                    }
+                }
+
+                if (samples > 0) {
+                    double avgDbm = 10.0 * Math.log10(mwSum / samples);
+                    // Color → int ARGB (백그라운드 스레드 안전: Color 객체만 사용)
+                    Color c = WifiMath.rssiToColor(avgDbm, legendMinDbm, legendMaxDbm);
+                    int pixel = colorToArgb(c);
+
+                    // gridStepPx × gridStepPx 블록 채우기 (int[] 직접 기록)
+                    int yMax = Math.min(height, yy + gridStepPx);
+                    int xMax = Math.min(width,  xx + gridStepPx);
+                    for (int fy = yy; fy < yMax; fy++) {
+                        int rowBase = fy * width;
+                        for (int fx = xx; fx < xMax; fx++) {
+                            argb[rowBase + fx] = pixel;
+                        }
+                    }
+                }
+            }
+            doneRows++;
+            if (progressCallback != null) {
+                progressCallback.accept(0.35 + 0.60 * doneRows / totalRows);
+            }
+        }
+
+        if (progressCallback != null) progressCallback.accept(1.0);
+
+        // blur는 MainController의 setOnSucceeded(FX Thread)에서 처리
+        return new HeatmapResult(argb, width, height, smoothRadiusPx, false, false, grids);
     }
 
     private HeatmapResult generateCpu(int width,
@@ -485,7 +647,7 @@ public class HeatmapGenerator {
                 if (!seen.add(key)) continue;
                 int cross1 = WifiMath.wallCrossCount(apPt.getX(), apPt.getY(), cc.corner.getX(), cc.corner.getY(), walls, null);
                 int cross2 = WifiMath.wallCrossCount(cc.corner.getX(), cc.corner.getY(), rxPt.getX(), rxPt.getY(), walls, null);
-                if (cross1 >= 3 && cross2 >= 3) continue;
+                if (cross1 >= 4 && cross2 >= 4) continue; // 3→4: 실내 복잡 구조에서 유효 회절 허용 (COST 231)
                 cornerCands.add(cc);
                 if (cornerCands.size() >= MAX_DIFFRACTION_CORNERS) break;
             }
@@ -528,8 +690,13 @@ public class HeatmapGenerator {
                 double wallLoss = losWallLossPerBand[bandIdx];
                 double bandMw = 0.0;
 
+                // ITU-R P.1238 기반 주파수별 N 보정: 5GHz는 실내 다중경로가 풍부해 실효 N이 낮음
+                // Residential: 2.4GHz N=28, 5GHz N=30 → 비율 0.933 적용 (지수 exponent에 적용)
+                double bandNFactor = (freqGhz > 2.5) ? Math.pow(2.4 / freqGhz, 0.10) : 1.0;
+                double effectiveN = pathLossN * bandNFactor;
+
                 // LOS
-                double baseLossLos = WifiMath.pathLossDb(dM, freqGhz, pathLossN);
+                double baseLossLos = WifiMath.pathLossDb(dM, freqGhz, effectiveN);
                 double nearCompLos = WifiMath.nearFieldBandCompensationDb(dM, freqGhz);
                 boolean losLikely = wallLoss <= 1.0e-6;
                 double bfGainLos = WifiMath.beamformingGainDb(b, dM, losLikely);
@@ -549,11 +716,11 @@ public class HeatmapGenerator {
                     WifiMath.Path p = WifiMath.buildSingleBounceReflection(apPt, rxPt, w, walls, scaleMPerPx, reflLossDb, b);
                     if (p == null) continue;
                     if (p.lengthMeters > losM * REFLECTION_LOS_RATIO_CUTOFF) continue;
-                    double baseLossRefl = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
+                    double baseLossRefl = WifiMath.pathLossDb(p.lengthMeters, freqGhz, effectiveN);
                     double nearCompRefl = WifiMath.nearFieldBandCompensationDb(p.lengthMeters, freqGhz);
                     double rssiRefl = rc.txPowerDbm + rc.antennaGain + nearCompRefl
                             - (baseLossRefl + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
-                    double reflCutoff = Math.min(rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB, MIN_SECONDARY_RSSI_DBM);
+                    double reflCutoff = Math.max(rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB, MIN_SECONDARY_RSSI_DBM);
                     if (rssiRefl < reflCutoff) continue;
                     bandMw += Math.pow(10.0, rssiRefl / 10.0);
                 }
@@ -589,11 +756,11 @@ public class HeatmapGenerator {
                     if (diffLossDb <= 0.0) continue;
                     WifiMath.Path p = WifiMath.buildSingleCornerDiffraction(apPt, rxPt, corner, walls, scaleMPerPx, diffLossDb, b);
                     if (p == null) continue;
-                    double baseLossDiff = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
+                    double baseLossDiff = WifiMath.pathLossDb(p.lengthMeters, freqGhz, effectiveN);
                     double nearCompDiff = WifiMath.nearFieldBandCompensationDb(p.lengthMeters, freqGhz);
                     double rssiDiff = rc.txPowerDbm + rc.antennaGain + nearCompDiff
                             - (baseLossDiff + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
-                    double diffCutoff = Math.min(rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB, MIN_SECONDARY_RSSI_DBM);
+                    double diffCutoff = Math.max(rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB, MIN_SECONDARY_RSSI_DBM);
                     if (rssiDiff < diffCutoff) continue;
                     bandMw += Math.pow(10.0, rssiDiff / 10.0);
                 }
@@ -654,11 +821,11 @@ public class HeatmapGenerator {
                         double totalDiffLossDb = diffLoss1 + diffLoss2;
                         WifiMath.Path p = WifiMath.buildDoubleCornerDiffraction(apPt, rxPt, c1, c2, walls, scaleMPerPx, totalDiffLossDb, b);
                         if (p == null) continue;
-                        double baseLossD2 = WifiMath.pathLossDb(p.lengthMeters, freqGhz, pathLossN);
+                        double baseLossD2 = WifiMath.pathLossDb(p.lengthMeters, freqGhz, effectiveN);
                         double nearCompD2 = WifiMath.nearFieldBandCompensationDb(p.lengthMeters, freqGhz);
                         double rssiD2 = rc.txPowerDbm + rc.antennaGain + nearCompD2
                                 - (baseLossD2 + p.wallLossDb + p.extraLossDb + bwPenaltyDb);
-                        double d2Cutoff = Math.min(rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB, MIN_SECONDARY_RSSI_DBM);
+                        double d2Cutoff = Math.max(rssiLos - SECONDARY_PATH_RELATIVE_CUTOFF_DB, MIN_SECONDARY_RSSI_DBM);
                         if (rssiD2 < d2Cutoff) continue;
                         bandMw += Math.pow(10.0, rssiD2 / 10.0);
                         pairsAdded++;

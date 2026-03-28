@@ -41,7 +41,10 @@ public final class WifiMath {
     // AP 근접 구간에서는 단말 AGC/포화 및 안테나 패턴 요인으로 밴드별 RSSI 차이가 압축되는 경향이 있다.
     // 이를 반영하기 위한 "근접 밴드 보정" 유효 거리 구간(m).
     private static final double NEAR_BAND_COMP_START_M = 1.0;
-    private static final double NEAR_BAND_COMP_END_M = 4.0;
+    private static final double NEAR_BAND_COMP_END_M = 4.0; // 선형 100%→0% 구간 끝
+    // 4m 이후 지수 감쇠 시상수(m): 실내 다중경로로 5GHz가 FSPL보다 덜 약해지는 효과 반영
+    // 실측 기반: 아파트 스케일(5~12m)에서 5GHz는 2.4GHz 대비 실효 차이 2~3 dB 수준
+    private static final double NEAR_BAND_COMP_DECAY_TAU_M = 6.0;
     // 간단 MU-MIMO/TxBF 근사 이득(LOS에서만). 밴드가 높을수록 상대 이득이 조금 더 크다고 가정.
     private static final double BF_GAIN_24_DB = 0.8;
     private static final double BF_GAIN_5_DB = 2.8;
@@ -1181,12 +1184,19 @@ public final class WifiMath {
         double freqDeltaDb = 20.0 * Math.log10(freq / 2.4);
         if (freqDeltaDb <= 0.0) return 0.0;
 
+        // d <= 1m: 100% 보정 (FSPL 차이 전부 상쇄)
         if (dMeters <= NEAR_BAND_COMP_START_M) return freqDeltaDb;
-        if (dMeters >= NEAR_BAND_COMP_END_M) return 0.0;
 
-        double t = (NEAR_BAND_COMP_END_M - dMeters) / (NEAR_BAND_COMP_END_M - NEAR_BAND_COMP_START_M);
-        t = Math.max(0.0, Math.min(1.0, t));
-        return freqDeltaDb * t;
+        // 1m ~ 4m: 선형 감쇠 (기존 동일)
+        if (dMeters < NEAR_BAND_COMP_END_M) {
+            double t = (NEAR_BAND_COMP_END_M - dMeters) / (NEAR_BAND_COMP_END_M - NEAR_BAND_COMP_START_M);
+            return freqDeltaDb * t;
+        }
+
+        // 4m 이후: 지수 감쇠 — 실내 다중경로로 5GHz FSPL 격차가 점진적으로 압축되는 효과
+        // 실측 데이터: 아파트 5~10m 구간에서 5GHz ≈ 2.4GHz + 2~3 dB (FSPL 이론 6.4 dB보다 훨씬 작음)
+        double excess = dMeters - NEAR_BAND_COMP_END_M;
+        return freqDeltaDb * Math.exp(-excess / NEAR_BAND_COMP_DECAY_TAU_M);
     }
 
     /**
