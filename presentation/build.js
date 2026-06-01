@@ -153,40 +153,42 @@ function numTitle(slide, x, y, n, title, color, w) {
 // ============================================================
 (() => {
   const s = pres.addSlide(); bg(s, C.light);
-  header(s, "PART 1 · FDTD", "제대로 굴러가게 한 3가지 + 벽을 숫자로");
+  header(s, "PART 1 · FDTD", "안정적인 시뮬레이션을 위한 3가지 장치");
 
   const cols = [
-    { bar: C.teal, t: "톱니바퀴처럼 엇갈린 배치", term: "(Yee 격자)",
-      body: "전기장과 자기장을 같은 칸이 아니라 반 칸씩 어긋나게 둡니다. 톱니바퀴 맞물리듯 — 계산이 안정적이고 정확해집니다." },
-    { bar: C.orange, t: "안전한 시간 간격", term: "(CFL 조건)",
+    { bar: C.teal, t: "톱니바퀴처럼 엇갈린 배치", term: "Yee 격자",
+      body: "전기장과 자기장을 같은 칸이 아니라 반 칸씩 어긋나게 둡니다. 톱니바퀴가 맞물리듯, 계산이 안정적이고 정확해집니다." },
+    { bar: C.orange, t: "안전한 시간 간격", term: "CFL 조건",
       body: "한 스텝의 시간이 너무 길면 물결이 칸을 건너뛰어 계산이 폭주(발산)합니다. 그래서 한계의 0.90배로만 전진합니다.",
       code: "Δt = 0.90 · Δx / (c·√2)" },
-    { bar: C.green, t: "경계의 메아리 차단", term: "(PML 흡수층)",
+    { bar: C.green, t: "경계의 메아리 차단", term: "PML 흡수층",
       body: "방 끝에서 물결이 튕겨 되돌아오면 가짜 간섭이 생깁니다. 가장자리에 ‘흡수 스펀지’ 층을 둬 끝없는 공간처럼 만듭니다." },
   ];
   const cw = 3.93, cg = 0.17, y0 = 1.8, ch = 3.35;
   cols.forEach((col, i) => {
     const x = 0.6 + i * (cw + cg);
     card(s, x, y0, cw, ch, col.bar);
-    s.addShape(pres.shapes.OVAL, { x: x + 0.28, y: y0 + 0.28, w: 0.42, h: 0.42, fill: { color: col.bar } });
-    s.addText(String(i + 1), { x: x + 0.28, y: y0 + 0.28, w: 0.42, h: 0.42, fontFace: FONT, fontSize: 14, bold: true, color: "FFFFFF", align: "center", valign: "middle", margin: 0 });
-    s.addText([{ text: col.t, options: { bold: true, color: C.ink } }, { text: "  " + col.term, options: { color: C.muted, fontSize: 11 } }],
-      { x: x + 0.8, y: y0 + 0.28, w: cw - 1.0, h: 0.45, fontFace: FONT, fontSize: 13.5, valign: "middle", margin: 0 });
-    s.addText(col.body, { x: x + 0.3, y: y0 + 0.95, w: cw - 0.6, h: 1.55, fontFace: FONT, fontSize: 12, color: C.body, valign: "top", margin: 0, lineSpacingMultiple: 1.08 });
+    s.addShape(pres.shapes.OVAL, { x: x + 0.3, y: y0 + 0.32, w: 0.42, h: 0.42, fill: { color: col.bar } });
+    s.addText(String(i + 1), { x: x + 0.3, y: y0 + 0.32, w: 0.42, h: 0.42, fontFace: FONT, fontSize: 14, bold: true, color: "FFFFFF", align: "center", valign: "middle", margin: 0 });
+    // 제목(굵게) + 용어(아래줄, 음영) — 2줄 고정으로 줄바꿈 깨짐 방지
+    s.addText(col.t, { x: x + 0.84, y: y0 + 0.28, w: cw - 1.05, h: 0.4, fontFace: FONT, fontSize: 13.5, bold: true, color: C.ink, valign: "middle", margin: 0 });
+    s.addText(col.term, { x: x + 0.84, y: y0 + 0.66, w: cw - 1.05, h: 0.3, fontFace: FONT, fontSize: 10.5, color: C.muted, valign: "middle", margin: 0 });
+    s.addText(col.body, { x: x + 0.3, y: y0 + 1.2, w: cw - 0.6, h: 1.5, fontFace: FONT, fontSize: 12, color: C.body, valign: "top", margin: 0, lineSpacingMultiple: 1.1 });
+    // 수식 박스: 세 카드 모두 같은 하단 위치 — 2번만 채우고 나머진 비워 균형 유지
     if (col.code) {
-      s.addShape(pres.shapes.RECTANGLE, { x: x + 0.3, y: y0 + 2.55, w: cw - 0.6, h: 0.55, fill: { color: "0E2233" } });
-      s.addText(col.code, { x: x + 0.3, y: y0 + 2.55, w: cw - 0.6, h: 0.55, fontFace: "Consolas", fontSize: 12.5, bold: true, color: C.cyan, align: "center", valign: "middle", margin: 0 });
+      s.addShape(pres.shapes.RECTANGLE, { x: x + 0.3, y: y0 + 2.62, w: cw - 0.6, h: 0.5, fill: { color: "0E2233" } });
+      s.addText(col.code, { x: x + 0.3, y: y0 + 2.62, w: cw - 0.6, h: 0.5, fontFace: "Consolas", fontSize: 12.5, bold: true, color: C.cyan, align: "center", valign: "middle", margin: 0 });
     }
   });
 
-  // 벽을 숫자로 band
+  // 벽을 숫자로 band — 제목·본문을 왼쪽 정렬로 자연스럽게 이어붙임
   card(s, 0.6, 5.4, 12.13, 1.2, C.amber);
-  s.addText("벽을 숫자로 새긴다", { x: 0.9, y: 5.55, w: 3.2, h: 0.4, fontFace: FONT, fontSize: 14.5, bold: true, color: C.ink, valign: "middle", margin: 0 });
+  s.addText("+  벽을 숫자로 새긴다", { x: 0.9, y: 5.58, w: 2.9, h: 0.4, fontFace: FONT, fontSize: 14, bold: true, color: C.ink, valign: "middle", margin: 0 });
   s.addText([
-    { text: "각 칸에 재질의 전기적 성질(유전율 εr, 전도율 σ)을 기록 → ", options: { color: C.body } },
-    { text: "콘크리트·유리·석고보드가 전파를 서로 다르게 막고 통과시키도록", options: { bold: true, color: C.ink } },
-    { text: " 자연히 반영됩니다.", options: { color: C.body } },
-  ], { x: 4.0, y: 5.55, w: 8.5, h: 0.95, fontFace: FONT, fontSize: 12.5, valign: "middle", margin: 0, lineSpacingMultiple: 1.06 });
+    { text: "각 칸에 재질의 전기적 성질(유전율 εr, 전도율 σ)을 기록하면, ", options: { color: C.body } },
+    { text: "콘크리트·유리·석고보드가 전파를 서로 다르게 막고 통과시키는 현상", options: { bold: true, color: C.ink } },
+    { text: "이 저절로 재현됩니다.", options: { color: C.body } },
+  ], { x: 3.55, y: 5.58, w: 8.9, h: 0.85, fontFace: FONT, fontSize: 12.5, valign: "middle", margin: 0, lineSpacingMultiple: 1.06 });
   footer(s, 4);
 })();
 
