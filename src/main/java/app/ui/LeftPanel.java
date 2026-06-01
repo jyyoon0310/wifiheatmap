@@ -9,6 +9,7 @@ import app.model.Wall;
 import app.model.WallMaterial;
 import app.model.WifiEnvironment;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
@@ -24,8 +25,12 @@ import javafx.scene.control.Separator;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.util.StringConverter;
+import javafx.scene.layout.ColumnConstraints;
+import javafx.scene.layout.FlowPane;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.control.ListView;
@@ -44,8 +49,19 @@ public class LeftPanel {
     // RSSI 표시
     private final VBox rssiCard;
     private final VBox rssiRows = new VBox(4);
-    private final ComboBox<AppState.HeatmapModel> engineCombo = new ComboBox<>();
-    private Consumer<AppState.HeatmapModel> onHeatmapModelChanged = m -> {};
+
+    // 결과 보기 카드 — 큰 헤드라인 + 비율 색바 + 범례 + 코칭 메시지
+    // 색바 순서는 좌→우 "약함→강함" — BottomBar legend와 동일 방향
+    private final VBox resultCard;
+    private final Label resultHeadlineLabel = new Label("—");       // 큰 %
+    private final Label resultHeadlineSubLabel = new Label("");      // "신호 양호 공간 비율"
+    private final Label resultCoachLabel = new Label("");            // 색바 아래 코칭 메시지
+    private final GridPane resultBarRow = new GridPane();            // 4단계 비율 색바 (색만)
+    private final StackPane[] resultBarCells = new StackPane[4];     // 약함/주의/양호/강함
+    private final ColumnConstraints[] resultBarCols = new ColumnConstraints[4]; // 칸별 비율(%)
+    private final FlowPane resultLegend = new FlowPane(12, 4);       // 색바 아래 범례
+    private final HBox[]  resultLegendItems  = new HBox[4];          // 범례 항목 (점+텍스트)
+    private final Label[] resultLegendLabels = new Label[4];         // 범례 항목 텍스트
 
     // 스케일 입력
     private final VBox scaleCard;
@@ -83,8 +99,8 @@ public class LeftPanel {
     private final ComboBox<Integer> bw6Combo = createIntCombo(20, 40, 80, 160, 320);
     private final CheckBox enabled6Check = new CheckBox("활성화");
 
-    private final Button applyApBtn = new Button("Apply");
-    private final Button deleteApBtn = new Button("Delete");
+    private final Button applyApBtn = new Button("적용");
+    private final Button deleteApBtn = new Button("삭제");
 
     // Wall 상세 편집
     private final VBox wallDetailsCard;
@@ -93,17 +109,21 @@ public class LeftPanel {
     private final ComboBox<WallMaterial> wallMaterialCombo = new ComboBox<>();
     private final TextField wall24Field = new TextField();
     private final TextField wall5Field = new TextField();
-    private final Button applyWallBtn = new Button("Apply");
-    private final Button deleteWallBtn = new Button("Delete");
+    private final Button applyWallBtn = new Button("적용");
+    private final Button deleteWallBtn = new Button("삭제");
     private final VBox wallListCard;
     private final ListView<Wall> wallListView = new ListView<>();
+
+    // 벽 그리기 완료 → AP 추천 진입 (WALL 모드에서만 노출)
+    private VBox wallDoneCard;
+    private final Button wallDoneBtn = new Button("벽 그리기 완료 → AP 추천");
+    private Runnable onWallDone = () -> {};
 
     // Solver 패널
     private final VBox solverCard;
     private final ComboBox<Integer> solverCellCombo = createIntCombo(2, 3, 4, 6, 8, 10);
     private final ComboBox<Integer> solverSubStepsCombo = createIntCombo(1, 2, 4, 6, 8);
     private final ComboBox<Integer> solverRenderSkipCombo = createIntCombo(1, 2, 3, 4, 5);
-    private final ComboBox<String> solverBandCombo = new ComboBox<>();
     private final CheckBox solverOverlayCheck = new CheckBox("오버레이 표시");
 
     private final Label solverStateLabel = new Label("대기");
@@ -129,21 +149,18 @@ public class LeftPanel {
     private boolean syncingWallSelection = false;
     private boolean solverToolActive = false;
     private boolean scaleVisible = false;
+    private boolean wallToolActive = false;
 
     public LeftPanel() {
         root.setPadding(new Insets(10));
-        Runnable applyRoot = () -> root.setStyle("-fx-background-color: " + Styles.bgPanel() + ";");
-        applyRoot.run();
-        Styles.addThemeListener(applyRoot);
+        Themed.bind(root, () -> "-fx-background-color: " + Styles.bgPanel() + ";");
 
         // --- Scale card ---
-        Label hint = new Label("두 점 클릭 후 실제거리 입력");
-        Runnable applyHint = () -> hint.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
-        applyHint.run(); Styles.addThemeListener(applyHint);
+        Label hint = Themed.bind(new Label("두 점 클릭 후 실제거리 입력"),
+                () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
 
-        Label distLbl = new Label("두 점 실제거리(m)");
-        Runnable applyDistLbl = () -> distLbl.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
-        applyDistLbl.run(); Styles.addThemeListener(applyDistLbl);
+        Label distLbl = Themed.bind(new Label("두 점 실제거리(m)"),
+                () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
 
         Styles.styleTextField(realMetersField);
         realMetersField.setPrefWidth(150);
@@ -158,37 +175,13 @@ public class LeftPanel {
         row.setFillHeight(true);
         HBox.setHgrow(realMetersField, Priority.NEVER);
 
-        engineCombo.getItems().setAll(AppState.HeatmapModel.values());
-        engineCombo.setConverter(new StringConverter<>() {
-            @Override public String toString(AppState.HeatmapModel m) {
-                if (m == null) return "Legacy";
-                return switch (m) {
-                    case LEGACY   -> "Legacy (Ray-cast)";
-                    case DPM      -> "DPM (지배경로)";
-                    case FDTD_TEZ -> "FDTD (파동 시뮬)";
-                };
-            }
-            @Override public AppState.HeatmapModel fromString(String s) { return null; }
-        });
-        engineCombo.getSelectionModel().select(AppState.HeatmapModel.LEGACY);
-        engineCombo.setMaxWidth(Double.MAX_VALUE);
-        Runnable applyEngineCombo = () -> engineCombo.setStyle(Styles.comboBase());
-        applyEngineCombo.run();
-        Styles.addThemeListener(applyEngineCombo);
-        Styles.installComboPopupStyle(engineCombo);
-        engineCombo.setOnAction(e -> onHeatmapModelChanged.accept(engineCombo.getValue()));
-
-        Label engineLabel = new Label("히트맵 엔진");
-        Runnable applyEngineLabel = () -> engineLabel.setStyle(
-                "-fx-text-fill:" + Styles.textSub() + ";-fx-font-size:11px;");
-        applyEngineLabel.run();
-        Styles.addThemeListener(applyEngineLabel);
-
         rssiCard = Styles.card(
-                "RSSI (Mouse)",
-                new VBox(4, engineLabel, engineCombo),
+                "신호 강도 (마우스 위치)",
                 rssiRows
         );
+
+        // ── 결과 보기 카드 ──────────────────────────────────────────────
+        resultCard = buildResultCard();
         rssiRows.setPadding(new Insets(2, 0, 0, 0));
         updateRssiRows(List.of());
 
@@ -202,50 +195,33 @@ public class LeftPanel {
         styleIntCombo(solverCellCombo);
         styleIntCombo(solverSubStepsCombo);
         styleIntCombo(solverRenderSkipCombo);
-        styleTextCombo(solverBandCombo);
 
         solverOverlayCheck.setSelected(true);
-        Runnable applyOverlayChk = () -> solverOverlayCheck.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
-        applyOverlayChk.run(); Styles.addThemeListener(applyOverlayChk);
-        Runnable applyStateLabel = () -> solverStateLabel.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px; -fx-font-weight: 600;");
-        applyStateLabel.run(); Styles.addThemeListener(applyStateLabel);
-        Runnable applyStatsLabel = () -> solverStatsLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
-        applyStatsLabel.run(); Styles.addThemeListener(applyStatsLabel);
-        Runnable applyDebugLabel = () -> solverDebugLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 10px; -fx-font-family: 'Menlo';");
-        applyDebugLabel.run(); Styles.addThemeListener(applyDebugLabel);
+        Themed.bind(solverOverlayCheck, () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
+        Themed.bind(solverStateLabel,  () -> "-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px; -fx-font-weight: 600;");
+        Themed.bind(solverStatsLabel,  () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
+        Themed.bind(solverDebugLabel,  () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 10px; -fx-font-family: 'Menlo';");
         solverDebugLabel.setWrapText(true);
 
-        solverBandCombo.getItems().setAll("All (2.4/5/6)", "2.4GHz", "5GHz", "6GHz");
-        solverBandCombo.getSelectionModel().selectFirst();
         solverCellCombo.getSelectionModel().select(Integer.valueOf(4));
         solverSubStepsCombo.getSelectionModel().select(Integer.valueOf(2));
         solverRenderSkipCombo.getSelectionModel().select(Integer.valueOf(2));
 
-        solverBandCombo.valueProperty().addListener((o, ov, nv) -> onSolverConfigChanged.run());
         solverOverlayCheck.selectedProperty().addListener((o, ov, nv) -> onSolverOverlayChanged.run());
 
-        // 솔버 카드 정적 레이블들 (테마 리스너 등록)
+        // 솔버 카드 정적 레이블들 (간결한 설명)
         Label[] solverInfoLabels = {
-            new Label("모델: 2D 파동 Solver 오버레이"),
-            new Label("표시: Power (time-avg |u|^2)"),
-            new Label("표시 밴드"),
-            new Label("격자 크기(px): 4 (고정)"),
-            new Label("Sub-steps/frame: 자동"),
-            new Label("Render every N frame: 자동")
+            new Label("전파 흐름 보기 (실시간 파동 시뮬레이션)"),
+            new Label("화면 위에 전파의 강약을 색으로 표시")
         };
         for (Label lbl : solverInfoLabels) {
-            Runnable r = () -> lbl.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
-            r.run(); Styles.addThemeListener(r);
+            Themed.bind(lbl, () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
         }
 
         solverCard = Styles.card(
-                "Solver",
+                "전파 흐름",
                 solverInfoLabels[0],
                 solverInfoLabels[1],
-                new VBox(4, solverInfoLabels[2], solverBandCombo),
-                solverInfoLabels[3],
-                solverInfoLabels[4],
-                solverInfoLabels[5],
                 solverOverlayCheck,
                 solverStateLabel,
                 solverStatsLabel,
@@ -276,11 +252,10 @@ public class LeftPanel {
         Styles.styleAccentButton(applyWallBtn);
         Styles.styleFlatButton(deleteWallBtn);
 
-        Label coordTitle = new Label("좌표(px)");
-        Runnable applyCoordTitle = () -> coordTitle.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
-        applyCoordTitle.run(); Styles.addThemeListener(applyCoordTitle);
-        Runnable applyCoordLabel = () -> apCoordLabel.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
-        applyCoordLabel.run(); Styles.addThemeListener(applyCoordLabel);
+        Label coordTitle = Themed.bind(new Label("좌표(px)"),
+                () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
+        Themed.bind(apCoordLabel,
+                () -> "-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
 
         VBox band24 = createBandEditor("2.4 GHz", enabled24Check, ssid24Field, tx24Spinner, gain24Spinner, ch24Combo, bw24Combo);
         VBox band5 = createBandEditor("5 GHz", enabled5Check, ssid5Field, tx5Spinner, gain5Spinner, ch5Combo, bw5Combo);
@@ -302,13 +277,10 @@ public class LeftPanel {
         HBox.setHgrow(t24, Priority.ALWAYS);
         HBox.setHgrow(t5, Priority.ALWAYS);
         HBox.setHgrow(t6, Priority.ALWAYS);
-        Runnable applyBandSwitcher = () -> bandSwitcher.setStyle(
+        Themed.bind(bandSwitcher, () ->
                 "-fx-background-color: " + Styles.bgTabBar() + ";" +
                 "-fx-background-radius: 10;" +
-                "-fx-padding: 4;"
-        );
-        applyBandSwitcher.run();
-        Styles.addThemeListener(applyBandSwitcher);
+                "-fx-padding: 4;");
 
         applyBandTabStyle(t24, true);
         applyBandTabStyle(t5, false);
@@ -346,11 +318,10 @@ public class LeftPanel {
         Label apNameLbl = new Label("이름");
         Label apHeightLbl = new Label("AP 높이(m)");
         for (Label lbl : new Label[]{presetLbl, apNameLbl, apHeightLbl}) {
-            Runnable r = () -> lbl.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
-            r.run(); Styles.addThemeListener(r);
+            Themed.bind(lbl, () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
         }
-        Runnable applyApEnabledChk = () -> apEnabledCheck.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
-        applyApEnabledChk.run(); Styles.addThemeListener(applyApEnabledChk);
+        Themed.bind(apEnabledCheck,
+                () -> "-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
 
         // 공유기 프리셋 ComboBox
         apPresetCombo.getItems().addAll(ApPreset.values());
@@ -410,15 +381,13 @@ public class LeftPanel {
         Label wall24Lbl   = new Label("2.4GHz 감쇠(dB)");
         Label wall5Lbl    = new Label("5GHz 감쇠(dB)");
         for (Label lbl : new Label[]{wallNameLbl, wallInfoLbl, wallMatLbl, wall24Lbl, wall5Lbl}) {
-            Runnable r = () -> lbl.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
-            r.run(); Styles.addThemeListener(r);
+            Themed.bind(lbl, () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
         }
         Styles.styleTextField(wallNameField);
         wallNameField.setPromptText("예) 외벽, 침실 경계");
 
-        Runnable applyWallInfo = () -> wallInfoLabel.setStyle(
-                "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px; -fx-font-family: monospace;");
-        applyWallInfo.run(); Styles.addThemeListener(applyWallInfo);
+        Themed.bind(wallInfoLabel,
+                () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px; -fx-font-family: monospace;");
         wallInfoLabel.setWrapText(true);
 
         wallDetailsCard = Styles.card(
@@ -492,23 +461,214 @@ public class LeftPanel {
             onSelectWall.accept(nv);
         });
         // glass container: transparent bg, no border (CSS handles it)
-        Runnable applyWallListView = () -> wallListView.setStyle(
+        Themed.bind(wallListView, () ->
                 "-fx-background-color:transparent;" +
                 "-fx-border-color:transparent;");
-        applyWallListView.run();
-        Styles.addThemeListener(applyWallListView);
 
         wallListCard = Styles.card(
-                "Walls",
+                "벽 목록",
                 wallListView
         );
 
-        root.getChildren().addAll(rssiCard, scaleCard, solverCard, apDetailsCard, wallListCard, wallDetailsCard);
+        // ── 벽 그리기 완료 버튼 카드 (WALL 모드에서만 노출) ──────────────
+        Styles.styleAccentButton(wallDoneBtn);
+        wallDoneBtn.setMaxWidth(Double.MAX_VALUE);
+        wallDoneBtn.setOnAction(e -> onWallDone.run());
+        Label wallDoneHint = subLbl("벽을 다 그렸다면 눌러서 와이파이 쓸 공간을 고르고 공유기 위치를 추천받으세요.");
+        wallDoneHint.setWrapText(true);
+        wallDoneCard = Styles.card("다음 단계", wallDoneBtn, wallDoneHint);
+
+        root.getChildren().addAll(resultCard, rssiCard, scaleCard, wallDoneCard, solverCard, apDetailsCard, wallListCard, wallDetailsCard);
         Styles.addThemeListener(() -> updateRssiRows(lastRssiResults));
         setScaleVisible(false);
         setSolverToolActive(false);
         setSelectedAp(null);
         setSelectedWall(null);
+        setCardVisible(resultCard, false);  // 결과 생기기 전까지 숨김
+    }
+
+    /**
+     * 결과 보기 카드 — 일반 사용자도 한눈에 이해할 수 있도록 단순화.
+     *
+     * <p>레이아웃:
+     * <pre>
+     *   ┌ 측정 결과 ────────────────────────────────────┐
+     *   │ 36%                                          │  ← 큰 헤드라인 (양호+ 비율)
+     *   │ 신호가 양호한 공간 비율                        │
+     *   │                                              │
+     *   │ [▓▓▓▓▓▓▓▓▓░░░░░░] 비율 색바 (좌→우 약→강)     │  ← 색만 표시
+     *   │ ● 약함 46%  ● 주의 18%  ● 양호 24%  ● 강함 12%│  ← 범례 (색점+이름+%)
+     *   │                                              │
+     *   │ 신호가 약한 곳이 많습니다. 공유기를 추가하거나   │  ← 코칭 메시지 (wrap)
+     *   │ 옮겨보세요.                                   │
+     *   └──────────────────────────────────────────────┘
+     * </pre>
+     *
+     * <p>색상은 히트맵 컬러맵({@code WifiMath.rssiToColor})과 일관:
+     * <ul>
+     *   <li>약함 → 파랑 (#2D6CF6)</li>
+     *   <li>주의 → 녹색 (#2FD44A)</li>
+     *   <li>양호 → 노랑 (#F6D32D)</li>
+     *   <li>강함 → 주황 (#F0632D)</li>
+     * </ul>
+     */
+    private VBox buildResultCard() {
+        // ── 큰 헤드라인 ─────────────────────────────────────────────
+        Themed.bind(resultHeadlineLabel, () ->
+                "-fx-text-fill:" + Styles.textMain() + ";" +
+                "-fx-font-size:" + Styles.FONT_SIZE_DISPLAY + "px;" +
+                "-fx-font-weight:bold;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";");
+
+        Themed.bind(resultHeadlineSubLabel, () ->
+                "-fx-text-fill:" + Styles.textSub() + ";" +
+                "-fx-font-size:" + Styles.FONT_SIZE_SUB + "px;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";");
+        resultHeadlineSubLabel.setWrapText(true);
+
+        VBox headlineBox = new VBox(2, resultHeadlineLabel, resultHeadlineSubLabel);
+
+        // ── 비율 색바 (좌→우 약→강, 히트맵 색상과 일관) — 색만 표시 ──
+        // 수치/이름은 아래 범례에서 읽히므로, 막대는 비율을 색 면적으로만 전달
+        String[] gradeNames  = {"약함", "주의", "양호", "강함"};
+        String[] gradeColors = Styles.rssiColorsBlueToRed();  // [dead, weak, good, strong]
+
+        // GridPane + ColumnConstraints.percentWidth → 실제 폭과 무관하게 비율 정확
+        resultBarRow.setMaxWidth(Double.MAX_VALUE);
+        for (int i = 0; i < 4; i++) {
+            StackPane cell = new StackPane();
+            cell.setStyle("-fx-background-color:" + gradeColors[i] + ";");
+            cell.setPrefHeight(18);
+            cell.setMinWidth(0);
+            cell.setMaxWidth(Double.MAX_VALUE);
+            ColumnConstraints cc = new ColumnConstraints();
+            cc.setPercentWidth(25);  // setMeasurementResult에서 실제 비율로 갱신
+            resultBarCells[i] = cell;
+            resultBarCols[i]  = cc;
+            resultBarRow.getColumnConstraints().add(cc);
+            resultBarRow.add(cell, i, 0);
+        }
+        // 좌우 끝 둥근 모서리
+        resultBarCells[0].setStyle(resultBarCells[0].getStyle()
+                + "-fx-background-radius: 6 0 0 6;");
+        resultBarCells[3].setStyle(resultBarCells[3].getStyle()
+                + "-fx-background-radius: 0 6 6 0;");
+
+        // ── 색바 아래 범례 (색점 + 이름 + %) ─────────────────────────
+        for (int i = 0; i < 4; i++) {
+            Region dot = new Region();
+            dot.setMinSize(9, 9);
+            dot.setPrefSize(9, 9);
+            dot.setMaxSize(9, 9);
+            dot.setStyle("-fx-background-color:" + gradeColors[i] + ";"
+                    + "-fx-background-radius: 3;");
+            Label txt = new Label(gradeNames[i]);
+            Themed.bind(txt, () ->
+                    "-fx-text-fill:" + Styles.textSub() + ";" +
+                    "-fx-font-size:11px;" +
+                    "-fx-font-family:" + Styles.FONT_STACK + ";");
+            HBox item = new HBox(5, dot, txt);
+            item.setAlignment(Pos.CENTER_LEFT);
+            resultLegendLabels[i] = txt;
+            resultLegendItems[i]  = item;
+            resultLegend.getChildren().add(item);
+        }
+
+        // ── 색바 아래 코칭 메시지 (두 줄까지 wrap) ────────────────────
+        resultCoachLabel.setWrapText(true);
+        Themed.bind(resultCoachLabel, () ->
+                "-fx-text-fill:" + Styles.textMain() + ";" +
+                "-fx-font-size:" + Styles.FONT_SIZE_SUB + "px;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";");
+
+        return Styles.card(
+                "측정 결과",
+                headlineBox,
+                new VBox(6, resultBarRow, resultLegend),
+                resultCoachLabel
+        );
+    }
+
+    private Label subLbl(String t) {
+        return Themed.subLabel(t);
+    }
+
+    /**
+     * 결과 카드에 측정 수치를 표시한다. 히트맵 생성 후 호출.
+     *
+     * @param coveragePercent  신호가 양호한(≥ −65 dBm) 영역 비율 (%)
+     * @param gradeFractions   [약함, 주의, 양호, 강함] 비율 (합=1.0). 좌→우(약→강) 순서.
+     */
+    public void setMeasurementResult(double coveragePercent, double[] gradeFractions) {
+        // 안내 상태에서 숨겼던 요소 복원
+        setNodeShown(resultHeadlineLabel, true);
+        setNodeShown(resultHeadlineSubLabel, true);
+        setNodeShown(resultBarRow, true);
+        setNodeShown(resultLegend, true);
+
+        resultHeadlineLabel.setText(String.format("%.0f%%", coveragePercent));
+        resultHeadlineSubLabel.setText("신호가 양호한 공간 비율");
+
+        // 코칭 메시지 — 비율에 따라 자연어로 (색바 아래에 별도 라인으로 wrap 표시)
+        String coachMsg;
+        if (coveragePercent >= 80) {
+            coachMsg = "신호 분포가 좋습니다. 현재 공유기 배치로 충분합니다.";
+        } else if (coveragePercent >= 50) {
+            coachMsg = "공간의 절반 정도만 신호가 양호합니다. 공유기 위치를 조정해 보세요.";
+        } else {
+            coachMsg = "신호가 약한 곳이 많습니다. 공유기를 추가하거나 다른 위치로 옮겨 보세요.";
+        }
+        resultCoachLabel.setText(coachMsg);
+
+        if (gradeFractions != null && gradeFractions.length >= 4) {
+            String[] names = {"약함", "주의", "양호", "강함"};
+            for (int i = 0; i < 4; i++) {
+                StackPane cell = resultBarCells[i];
+                double frac = Math.max(0.0, gradeFractions[i]);
+                int pct = (int) Math.round(frac * 100.0);
+
+                // 비율이 거의 0이면 색바 셀 + 범례 항목 모두 숨김 (노이즈 제거)
+                boolean shown = frac > 0.005;
+                cell.setVisible(shown);
+                cell.setManaged(shown);
+                resultLegendItems[i].setVisible(shown);
+                resultLegendItems[i].setManaged(shown);
+
+                // 색바 칸 폭 = 비율 (percentWidth는 실제 폭과 무관하게 정확)
+                resultBarCols[i].setPercentWidth(frac * 100.0);
+
+                if (!shown) continue;
+                // 수치는 범례에서만 표시 — 색바는 비율 면적만 전달
+                resultLegendLabels[i].setText(names[i] + " " + pct + "%");
+            }
+        }
+        setCardVisible(resultCard, true);
+    }
+
+    /** 결과 데이터를 지운다. 클리어 또는 환경 변경 시 호출. */
+    public void clearMeasurementResult() {
+        resultHeadlineLabel.setText("—");
+        resultHeadlineSubLabel.setText("");
+        resultCoachLabel.setText("");
+        setCardVisible(resultCard, false);
+    }
+
+    /**
+     * 사용 공간이 지정되지 않았을 때 — 수치/색바 대신 안내 메시지만 표시한다.
+     * 측정 영역 없이 비율을 보여주면 오해를 부르므로 결과는 숨긴다.
+     */
+    public void showMeasurementGuidance(String msg) {
+        setNodeShown(resultHeadlineLabel, false);
+        setNodeShown(resultHeadlineSubLabel, false);
+        setNodeShown(resultBarRow, false);
+        setNodeShown(resultLegend, false);
+        resultCoachLabel.setText(msg);
+        setCardVisible(resultCard, true);
+    }
+
+    private static void setNodeShown(javafx.scene.Node n, boolean shown) {
+        n.setVisible(shown);
+        n.setManaged(shown);
     }
 
     public Parent getRoot() {
@@ -659,6 +819,15 @@ public class LeftPanel {
         applySectionVisibility();
     }
 
+    public void setWallToolActive(boolean active) {
+        this.wallToolActive = active;
+        applySectionVisibility();
+    }
+
+    public void setOnWallDone(Runnable r) {
+        if (r != null) this.onWallDone = r;
+    }
+
     public void setSolverToolActive(boolean active) {
         this.solverToolActive = active;
         applySectionVisibility();
@@ -674,15 +843,6 @@ public class LeftPanel {
 
     public int getSolverRenderSkip() {
         return 2;
-    }
-
-    public Band getSolverDisplayBand() {
-        String v = solverBandCombo.getValue();
-        if (v == null || v.startsWith("All")) return null;
-        if (v.startsWith("2.4")) return Band.GHZ_24;
-        if (v.startsWith("5")) return Band.GHZ_5;
-        if (v.startsWith("6")) return Band.GHZ_6;
-        return null;
     }
 
     public boolean isSolverOverlayEnabled() {
@@ -712,15 +872,6 @@ public class LeftPanel {
         updateRssiRows(rows == null ? List.of() : rows);
     }
 
-    public void setHeatmapModel(AppState.HeatmapModel model) {
-        engineCombo.getSelectionModel().select(
-                model == null ? AppState.HeatmapModel.LEGACY : model);
-    }
-
-    public void setOnHeatmapModelChanged(Consumer<AppState.HeatmapModel> c) {
-        this.onHeatmapModelChanged = (c != null) ? c : m -> {};
-    }
-
     public void setOnApPresetChanged(java.util.function.Consumer<ApPreset> c) {
         this.onApPresetChanged = c;
     }
@@ -738,6 +889,7 @@ public class LeftPanel {
             setCardVisible(solverCard, true);
             setCardVisible(rssiCard, false);
             setCardVisible(scaleCard, false);
+            setCardVisible(wallDoneCard, false);
             setCardVisible(apDetailsCard, false);
             setCardVisible(wallListCard, false);
             setCardVisible(wallDetailsCard, false);
@@ -747,6 +899,7 @@ public class LeftPanel {
         setCardVisible(solverCard, false);
         setCardVisible(rssiCard, true);
         setCardVisible(scaleCard, scaleVisible);
+        setCardVisible(wallDoneCard, wallToolActive);
         setCardVisible(apDetailsCard, currentAp != null);
         setCardVisible(wallListCard, true);
         setCardVisible(wallDetailsCard, currentWall != null);
@@ -765,28 +918,16 @@ public class LeftPanel {
                                   Spinner<Double> gain,
                                   ComboBox<Integer> channel,
                                   ComboBox<Integer> bandwidth) {
-        Label t = new Label(title);
-        Runnable applyT = () -> t.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px; -fx-font-weight: 600;");
-        applyT.run(); Styles.addThemeListener(applyT);
-        Label ssidLabel = new Label("SSID");
-        Runnable applySsidL = () -> ssidLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
-        applySsidL.run(); Styles.addThemeListener(applySsidL);
-        Label txLabel = new Label("Tx(dBm, 고정 17)");
-        Runnable applyTxL = () -> txLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
-        applyTxL.run(); Styles.addThemeListener(applyTxL);
-        Label gainLabel = new Label("Gain(dBi)");
-        Runnable applyGainL = () -> gainLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
-        applyGainL.run(); Styles.addThemeListener(applyGainL);
-        Label chLabel = new Label("Channel");
-        Runnable applyChL = () -> chLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
-        applyChL.run(); Styles.addThemeListener(applyChL);
-        Label bwLabel = new Label("Bandwidth(MHz)");
-        Runnable applyBwL = () -> bwLabel.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
-        applyBwL.run(); Styles.addThemeListener(applyBwL);
+        Label t = Themed.bind(new Label(title),
+                () -> "-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px; -fx-font-weight: 600;");
+        Label ssidLabel = Themed.subLabel("SSID");
+        Label txLabel   = Themed.subLabel("Tx(dBm, 고정 17)");
+        Label gainLabel = Themed.subLabel("Gain(dBi)");
+        Label chLabel   = Themed.subLabel("Channel");
+        Label bwLabel   = Themed.subLabel("Bandwidth(MHz)");
 
         enabled.setSelected(true);
-        Runnable applyEnabled = () -> enabled.setStyle("-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
-        applyEnabled.run(); Styles.addThemeListener(applyEnabled);
+        Themed.bind(enabled, () -> "-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
 
         ssid.setMaxWidth(Double.MAX_VALUE);
         tx.setMaxWidth(Double.MAX_VALUE);

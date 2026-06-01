@@ -38,15 +38,26 @@ public class HeatmapGenerator {
         public final boolean gpuFallback;
         /** DPM 모드에서 생성된 그리드 캐시 (Legacy/FDTD면 null) */
         public final java.util.Map<AP, java.util.Map<Band, DpmPathGrid>> dpmGrids;
+        /** DPM A* 측정값 (Legacy/FDTD면 0). 발표 시연용. */
+        public final long dpmExpandedNodes;
+        public final long dpmPrunedNodes;
+        public final long dpmElapsedMs;
 
         public HeatmapResult(int[] argbPixels, int width, int height, int smoothRadiusPx,
                              boolean usedGpu, boolean gpuFallback) {
-            this(argbPixels, width, height, smoothRadiusPx, usedGpu, gpuFallback, null);
+            this(argbPixels, width, height, smoothRadiusPx, usedGpu, gpuFallback, null, 0, 0, 0);
         }
 
         public HeatmapResult(int[] argbPixels, int width, int height, int smoothRadiusPx,
                              boolean usedGpu, boolean gpuFallback,
                              java.util.Map<AP, java.util.Map<Band, DpmPathGrid>> dpmGrids) {
+            this(argbPixels, width, height, smoothRadiusPx, usedGpu, gpuFallback, dpmGrids, 0, 0, 0);
+        }
+
+        public HeatmapResult(int[] argbPixels, int width, int height, int smoothRadiusPx,
+                             boolean usedGpu, boolean gpuFallback,
+                             java.util.Map<AP, java.util.Map<Band, DpmPathGrid>> dpmGrids,
+                             long dpmExpandedNodes, long dpmPrunedNodes, long dpmElapsedMs) {
             this.argbPixels = argbPixels;
             this.width = width;
             this.height = height;
@@ -54,12 +65,16 @@ public class HeatmapGenerator {
             this.usedGpu = usedGpu;
             this.gpuFallback = gpuFallback;
             this.dpmGrids = dpmGrids;
+            this.dpmExpandedNodes = dpmExpandedNodes;
+            this.dpmPrunedNodes   = dpmPrunedNodes;
+            this.dpmElapsedMs     = dpmElapsedMs;
         }
     }
 
     private final WifiEnvironment env;
     private final AppState.HeatmapSolverMode solverMode;
     private final AppState.HeatmapModel heatmapModel;
+    private final AppState.BandFilter bandFilter;
     private static final GpuHeatmapSolver GPU_SOLVER = loadGpuSolver();
     private boolean usedGpuLastRun = false;
     private boolean gpuFallbackLastRun = false;
@@ -108,14 +123,20 @@ public class HeatmapGenerator {
     }
 
     public HeatmapGenerator(WifiEnvironment env) {
-        this(env, AppState.HeatmapSolverMode.CPU, AppState.HeatmapModel.LEGACY);
+        this(env, AppState.HeatmapSolverMode.CPU, AppState.HeatmapModel.LEGACY, AppState.BandFilter.ALL_MAX);
     }
 
     public HeatmapGenerator(WifiEnvironment env, AppState.HeatmapSolverMode solverMode,
                             AppState.HeatmapModel model) {
+        this(env, solverMode, model, AppState.BandFilter.ALL_MAX);
+    }
+
+    public HeatmapGenerator(WifiEnvironment env, AppState.HeatmapSolverMode solverMode,
+                            AppState.HeatmapModel model, AppState.BandFilter bandFilter) {
         this.env = env;
         this.solverMode = (solverMode == null) ? AppState.HeatmapSolverMode.CPU : solverMode;
         this.heatmapModel = (model == null) ? AppState.HeatmapModel.LEGACY : model;
+        this.bandFilter = (bandFilter == null) ? AppState.BandFilter.ALL_MAX : bandFilter;
     }
 
     public HeatmapResult generate(int width,
@@ -199,21 +220,35 @@ public class HeatmapGenerator {
         }
 
         // ── AP별·밴드별 Dijkstra 사전 계산 (진행률 0→35%) ──────────────
+        //   bandFilter가 단일 밴드면 그 밴드만 계산해서 속도 향상.
         java.util.Map<AP, java.util.Map<Band, DpmPathGrid>> grids = new java.util.IdentityHashMap<>();
         int totalAps = enabled.size();
         int doneAps = 0;
+        long totalExpanded = 0;
+        long totalPruned   = 0;
+        long totalElapsedMs = 0;
         for (AP ap : enabled) {
             java.util.Map<Band, DpmPathGrid> bandGrids = new java.util.EnumMap<>(Band.class);
             for (Band b : Band.values()) {
+                if (!bandFilter.matches(b)) continue;  // 밴드 필터 적용
                 RadioConfig rc = ap.radios.get(b);
                 if (rc == null || !rc.enabled) continue;
                 DpmPathGrid grid = new DpmPathGrid(width, height, scaleMPerPx, walls, b);
                 grid.runDijkstra(ap.x, ap.y, rc.centerFreqGhz());
+                totalExpanded  += grid.getExpandedNodeCount();
+                totalPruned    += grid.getPrunedNodeCount();
+                totalElapsedMs += grid.getElapsedMs();
                 bandGrids.put(b, grid);
             }
             if (!bandGrids.isEmpty()) grids.put(ap, bandGrids);
             doneAps++;
             if (progressCallback != null) progressCallback.accept(0.35 * doneAps / totalAps);
+        }
+        if (totalExpanded > 0) {
+            System.out.printf("[DPM A*] AP=%d  expanded=%d  pruned=%d  ratio=%.1f%%  elapsed=%dms%n",
+                    enabled.size(), totalExpanded, totalPruned,
+                    100.0 * totalPruned / Math.max(1, totalExpanded + totalPruned),
+                    totalElapsedMs);
         }
 
         // ── 픽셀 렌더링 (진행률 35→95%) — int[] 직접 기록 ─────────────
@@ -238,6 +273,7 @@ public class HeatmapGenerator {
                             if (bandGrids == null) continue;
                             double bestRssi = -1e9;
                             for (Band b : Band.values()) {
+                                if (!bandFilter.matches(b)) continue;
                                 RadioConfig rc = ap.radios.get(b);
                                 if (rc == null || !rc.enabled) continue;
                                 DpmPathGrid grid = bandGrids.get(b);
@@ -282,8 +318,16 @@ public class HeatmapGenerator {
 
         if (progressCallback != null) progressCallback.accept(1.0);
 
+        // System.err로도 한 번 더 출력 (gradle daemon이 stdout 잡아먹어도 stderr는 보임)
+        if (totalExpanded > 0) {
+            System.err.printf("[DPM A*] expanded=%,d  pruned=%,d  elapsed=%,d ms%n",
+                    totalExpanded, totalPruned, totalElapsedMs);
+            System.err.flush();
+        }
+
         // blur는 MainController의 setOnSucceeded(FX Thread)에서 처리
-        return new HeatmapResult(argb, width, height, smoothRadiusPx, false, false, grids);
+        return new HeatmapResult(argb, width, height, smoothRadiusPx, false, false, grids,
+                totalExpanded, totalPruned, totalElapsedMs);
     }
 
     private HeatmapResult generateCpu(int width,
@@ -682,6 +726,7 @@ public class HeatmapGenerator {
             double[] losWallLossPerBand = WifiMath.wallLossAlongAllBands(ap.x, ap.y, px, py, walls, allBands);
 
             for (Band b : allBands) {
+                if (!bandFilter.matches(b)) continue;
                 int bandIdx = b.ordinal();
                 RadioConfig rc = ap.radios.get(b);
                 if (rc == null || !rc.enabled) continue;

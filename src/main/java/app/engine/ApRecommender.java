@@ -30,10 +30,16 @@ public class ApRecommender {
             Band fdtdBand,
             boolean[] coverageMask,   // canvasW × canvasH 비트맵 (null=전체)
             int maskW, int maskH,     // mask 해상도
-            int maskCellSize          // 마스크 셀 크기 (px) — floodFill 시 사용한 값
+            int maskCellSize,         // 마스크 셀 크기 (px) — floodFill 시 사용한 값
+            boolean useDpmEvaluation, // 후보 평가 시 DPM 사용 (false=기존 sampleRssiAt)
+            boolean dpmGreedyEnabled, // 가지치기 ON/OFF (메모리 효율 도구)
+            double pruningThresholdDb // selCost 가지치기 임계값 [dB]. 무한대→OFF
     ) {
         public static Params defaults() {
-            return new Params(2, -65.0, 25, 15, true, 6000, Band.GHZ_5, null, 0, 0, 1);
+            return new Params(2, -65.0, 25, 15, true, 6000, Band.GHZ_5, null, 0, 0, 1,
+                    true,   // useDpmEvaluation: 영구 ON (이번 캡스톤 기여)
+                    true,   // dpmGreedyEnabled: 영구 ON (메모리 효율)
+                    150.0); // pruningThresholdDb: 기본 150dB
         }
     }
 
@@ -43,7 +49,12 @@ public class ApRecommender {
             double coveragePercent,
             double fdtdCoveragePercent,
             String summary,
-            FdtdSignalStats fdtdStats   // null if FDTD not used
+            FdtdSignalStats fdtdStats,  // null if FDTD not used
+            // 발표용 측정값 (useDpmEvaluation일 때만 의미 있음, 아니면 0)
+            long dpmTotalExpanded,
+            long dpmTotalPruned,
+            long dpmTotalElapsedMs,
+            int  dpmCandidateCount       // DPM이 호출된 후보 수 (= 후보 풀 × phase 수)
     ) {}
 
     /** FDTD 시뮬레이션에서 측정된 신호 품질 통계 */
@@ -154,8 +165,11 @@ public class ApRecommender {
         List<Point2D> candidates = buildCandidateGrid(canvasW, canvasH,
                 params.gridStepPx, walls, mask, mw, mh, cellSize);
         if (candidates.isEmpty()) {
-            return new Result(List.of(), 0, -1, "유효한 후보 위치가 없습니다.", null);
+            return new Result(List.of(), 0, -1, "유효한 후보 위치가 없습니다.", null, 0, 0, 0, 0);
         }
+
+        // 전체 wall-clock 측정 시작 (실제 체감 시간 — 병렬 처리 이득 포함)
+        long wallStartNanos = System.nanoTime();
 
         List<Point2D> measurePoints = buildMeasureGrid(canvasW, canvasH,
                 params.sampleStepPx, mask, mw, mh, cellSize);
@@ -171,19 +185,54 @@ public class ApRecommender {
         templateAp.heightM = 2.5;
         templateAp.name = "Rec";
 
+        // DPM 누적 측정 카운터 (params.useDpmEvaluation일 때만 누적)
+        java.util.concurrent.atomic.AtomicLong dpmExp = new java.util.concurrent.atomic.AtomicLong(0);
+        java.util.concurrent.atomic.AtomicLong dpmPru = new java.util.concurrent.atomic.AtomicLong(0);
+        java.util.concurrent.atomic.AtomicLong dpmMs  = new java.util.concurrent.atomic.AtomicLong(0);
+        java.util.concurrent.atomic.AtomicInteger dpmCnt = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        final double scaleMPerPx = env.getScaleMPerPx();
+        // 최소 분리 거리: 후보 격자 간격의 4배 (AP들이 너무 붙지 않도록)
+        final double minApSepPx = params.gridStepPx * 4.0;
+
         for (int apIdx = 0; apIdx < params.apCount; apIdx++) {
             int apNum = apIdx + 1;
             statusCallback.accept("AP " + apNum + "/" + params.apCount + " 최적 위치 탐색 중...");
 
+            // ── 이미 배치된 AP 근처 후보 제거 (중복 배치 방지) ──────────────
+            List<Point2D> availableCandidates = candidates;
+            if (!chosen.isEmpty()) {
+                List<Point2D> filtered = new ArrayList<>();
+                for (Point2D c : candidates) {
+                    boolean tooClose = false;
+                    for (Point2D p : chosen) {
+                        if (p.distance(c) < minApSepPx) { tooClose = true; break; }
+                    }
+                    if (!tooClose) filtered.add(c);
+                }
+                if (!filtered.isEmpty()) availableCandidates = filtered;
+            }
+
             WifiEnvironment tempEnv = cloneEnvWithAps(env, chosen, templateAp);
             CandidateScore best = evaluateCandidatesParallel(
-                    tempEnv, candidates, measurePoints, params, coveredSet);
+                    tempEnv, availableCandidates, measurePoints, params, coveredSet,
+                    canvasW, canvasH, walls, dpmExp, dpmPru, dpmMs, dpmCnt);
 
             if (best == null) break;
             chosen.add(new Point2D(best.px, best.py));
 
-            WifiEnvironment withNew = cloneEnvWithAps(env, chosen, templateAp);
-            updateCoveredSet(withNew, measurePoints, params.targetRssiDbm, coveredSet);
+            // ── DPM 기반 커버리지 업데이트 (평가 모델과 일관성 유지) ──────────
+            // Legacy sampleRssiAt 대신 DPM Dijkstra를 사용해 커버된 포인트를 정확히 추적.
+            // 이 일관성이 없으면 coveredSet이 과대 추정되어 2번째 AP가 무의미한 위치에 배치됨.
+            if (params.useDpmEvaluation && Double.isFinite(scaleMPerPx) && scaleMPerPx > 0) {
+                updateCoveredSetDpm(chosen.get(chosen.size() - 1),
+                        canvasW, canvasH, scaleMPerPx, walls,
+                        measurePoints, params, coveredSet,
+                        dpmExp, dpmPru, dpmMs, dpmCnt);
+            } else {
+                WifiEnvironment withNew = cloneEnvWithAps(env, chosen, templateAp);
+                updateCoveredSet(withNew, measurePoints, params.targetRssiDbm, coveredSet);
+            }
         }
 
         double rayCoverage = measurePoints.isEmpty() ? 0
@@ -232,7 +281,31 @@ public class ApRecommender {
         String summary = buildSummary(rayCoverage, fdtdCoverage, finalStats);
         statusCallback.accept("완료! " + summary.split("\n")[0]);
 
-        return new Result(chosen, rayCoverage, fdtdCoverage, summary, finalStats);
+        // wall-clock 시간 (실제 체감, 병렬 이득 포함)
+        long wallMs = (System.nanoTime() - wallStartNanos) / 1_000_000L;
+
+        // 발표용 측정값 — stderr + UI로 무조건 출력 (진단 포함)
+        long ex = dpmExp.get(), pr = dpmPru.get(), ms = dpmMs.get();
+        int  cn = dpmCnt.get();
+        double pruRatio = (ex + pr) > 0 ? 100.0 * pr / (ex + pr) : 0.0;
+        System.err.printf(
+            "[ApRecommender DPM] greedy=%s  threshold=%.1f dB  scale=%.4f m/px  DPM호출=%d%n" +
+            "                    expanded=%,d  pruned=%,d (%.1f%%)%n" +
+            "                    DPM 누적 CPU=%,d ms   전체 wall-clock=%,d ms%n",
+            params.dpmGreedyEnabled, params.pruningThresholdDb,
+            env.getScaleMPerPx(), cn, ex, pr, pruRatio, ms, wallMs);
+        System.err.flush();
+        // 요약 텍스트 끝에 측정값 부착 (다이얼로그에 표시됨)
+        if (params.useDpmEvaluation) {
+            summary = summary + String.format(
+                "%n[DPM A*] greedy=%s  호출=%d  expanded=%,d  pruned=%,d (%.1f%%)%n" +
+                "         DPM 누적=%,dms  전체 wall=%,dms",
+                params.dpmGreedyEnabled ? "ON" : "OFF",
+                cn, ex, pr, pruRatio, ms, wallMs);
+        }
+
+        return new Result(chosen, rayCoverage, fdtdCoverage, summary, finalStats,
+                dpmExp.get(), dpmPru.get(), dpmMs.get(), dpmCnt.get());
     }
 
     // ── 후보 그리드 (마스크 필터) ────────────────────────────────────────────
@@ -283,10 +356,17 @@ public class ApRecommender {
     private static CandidateScore evaluateCandidatesParallel(
             WifiEnvironment baseEnv, List<Point2D> candidates,
             List<Point2D> measurePoints, Params params,
-            Set<Integer> alreadyCovered) {
+            Set<Integer> alreadyCovered,
+            int canvasW, int canvasH, List<Wall> walls,
+            java.util.concurrent.atomic.AtomicLong dpmExp,
+            java.util.concurrent.atomic.AtomicLong dpmPru,
+            java.util.concurrent.atomic.AtomicLong dpmMs,
+            java.util.concurrent.atomic.AtomicInteger dpmCnt) {
 
         ForkJoinPool pool = ForkJoinPool.commonPool();
         List<ForkJoinTask<CandidateScore>> tasks = new ArrayList<>();
+
+        final double scaleMPerPxLocal = baseEnv.getScaleMPerPx();
 
         for (Point2D cand : candidates) {
             tasks.add(pool.submit(() -> {
@@ -298,6 +378,23 @@ public class ApRecommender {
 
                 WifiEnvironment testEnv = cloneEnvForScoring(baseEnv, testAp);
 
+                // DPM 평가: Dijkstra 1회 sweep + 가지치기 (multi-target 최적)
+                // 후보 AP에서 1회 sweep으로 모든 측정점 PL이 bestCost[]에 채워짐
+                DpmPathGrid dpmGrid = null;
+                if (params.useDpmEvaluation && Double.isFinite(scaleMPerPxLocal) && scaleMPerPxLocal > 0) {
+                    dpmGrid = new DpmPathGrid(canvasW, canvasH, scaleMPerPxLocal, walls, Band.GHZ_24);
+                    if (params.dpmGreedyEnabled) {
+                        dpmGrid.setPruningThresholdDb(params.pruningThresholdDb);
+                    } else {
+                        dpmGrid.setGreedyEnabled(false);
+                    }
+                    dpmGrid.runDijkstra(testAp.x, testAp.y, 2.4);
+                    dpmExp.addAndGet(dpmGrid.getExpandedNodeCount());
+                    dpmPru.addAndGet(dpmGrid.getPrunedNodeCount());
+                    dpmMs .addAndGet(dpmGrid.getElapsedMs());
+                    dpmCnt.incrementAndGet();
+                }
+
                 int newCovered = 0;
                 double rssiSum = 0;
                 double minRssi = 0;  // 미커버 포인트 중 최약값
@@ -307,7 +404,15 @@ public class ApRecommender {
                 for (int i = 0; i < measurePoints.size(); i++) {
                     if (alreadyCovered.contains(i)) continue;
                     Point2D mp = measurePoints.get(i);
-                    double rssi = testEnv.sampleRssiAt((int) mp.getX(), (int) mp.getY());
+                    double rssi;
+                    if (dpmGrid != null) {
+                        // DPM 기반 RSSI: 22 dBm EIRP - PL (대표값)
+                        double pl = dpmGrid.getPathLossDb(mp.getX(), mp.getY());
+                        rssi = 22.0 - pl;
+                    } else {
+                        // 기존 sampleRssiAt (LEGACY/FDTD 모드용)
+                        rssi = testEnv.sampleRssiAt((int) mp.getX(), (int) mp.getY());
+                    }
                     rssiSum += rssi;
                     sqSum += rssi * rssi;
                     uncoveredCount++;
@@ -617,6 +722,47 @@ public class ApRecommender {
             Point2D mp = measurePoints.get(i);
             if (env.sampleRssiAt((int) mp.getX(), (int) mp.getY()) >= targetRssi)
                 coveredSet.add(i);
+        }
+    }
+
+    /**
+     * DPM Dijkstra 기반 커버리지 업데이트.
+     *
+     * <p>greedy 평가 루프에서 후보를 DPM으로 채점했으면 커버리지 추적도 DPM으로 해야
+     * 일관성이 유지된다. Legacy {@code sampleRssiAt}을 사용하면 반사·회절 보정으로
+     * RSSI가 과대추정되어 2번째 AP가 의미 없는 위치에 배치된다.</p>
+     *
+     * <p>단일 AP에서 1회 Dijkstra sweep → 모든 측정점의 경로손실을 O(N log N)에 계산.</p>
+     */
+    private static void updateCoveredSetDpm(Point2D apPos,
+                                             int canvasW, int canvasH,
+                                             double scaleMPerPx, List<Wall> walls,
+                                             List<Point2D> measurePoints, Params params,
+                                             Set<Integer> coveredSet,
+                                             java.util.concurrent.atomic.AtomicLong dpmExp,
+                                             java.util.concurrent.atomic.AtomicLong dpmPru,
+                                             java.util.concurrent.atomic.AtomicLong dpmMs,
+                                             java.util.concurrent.atomic.AtomicInteger dpmCnt) {
+        DpmPathGrid grid = new DpmPathGrid(canvasW, canvasH, scaleMPerPx, walls, Band.GHZ_24);
+        if (params.dpmGreedyEnabled) {
+            grid.setPruningThresholdDb(params.pruningThresholdDb);
+        } else {
+            grid.setGreedyEnabled(false);
+        }
+        grid.runDijkstra(apPos.getX(), apPos.getY(), 2.4);
+        dpmExp.addAndGet(grid.getExpandedNodeCount());
+        dpmPru.addAndGet(grid.getPrunedNodeCount());
+        dpmMs .addAndGet(grid.getElapsedMs());
+        dpmCnt.incrementAndGet();
+
+        // EIRP = 22 dBm (txPower 17 + antennaGain 5) — 평가와 동일한 상수
+        final double eirpDbm = 22.0;
+        for (int i = 0; i < measurePoints.size(); i++) {
+            if (coveredSet.contains(i)) continue;
+            Point2D mp = measurePoints.get(i);
+            double pl = grid.getPathLossDb(mp.getX(), mp.getY());
+            double rssi = eirpDbm - pl;
+            if (rssi >= params.targetRssiDbm) coveredSet.add(i);
         }
     }
 

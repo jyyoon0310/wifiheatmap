@@ -43,11 +43,28 @@ public class Styles {
     public static String accent()     { return darkMode ? "#0A84FF" : "#007AFF"; }
 
     // ── Static hex constants ──────────────────────────────────────────────────
-    public static final String RSSI_LOW   = "#2D6CF6";
-    public static final String RSSI_MID1  = "#22C55E";
-    public static final String RSSI_MID2  = "#EAB308";
-    public static final String RSSI_MID3  = "#F97316";
-    public static final String RSSI_HIGH  = "#EF4444";
+    // RSSI 4단계 디스크리트 컬러 (히트맵 colormap과 동일, 좌→우: 약→강)
+    // ResultCard / 색바 / BottomBar 등 RSSI 등급 표시에 공통으로 사용.
+    public static final String RSSI_DEAD_HEX   = "#2D6CF6";  // 파랑 — 사각지대 (-75 미만)
+    public static final String RSSI_WEAK_HEX   = "#2FD44A";  // 초록 — 주의 (-75~-65)
+    public static final String RSSI_GOOD_HEX   = "#F6D32D";  // 노랑 — 양호 (-65~-55)
+    public static final String RSSI_STRONG_HEX = "#F0632D";  // 주황 — 강함 (-55 이상)
+    /** BottomBar 5단계 lerp colormap의 중간 cyan stop. */
+    public static final String RSSI_CYAN_HEX   = "#34D1FF";
+
+    /** 4단계 디스크리트 색상 (좌→우: dead, weak, good, strong) */
+    public static String[] rssiColorsBlueToRed() {
+        return new String[]{ RSSI_DEAD_HEX, RSSI_WEAK_HEX, RSSI_GOOD_HEX, RSSI_STRONG_HEX };
+    }
+
+    /** RSSI 값(dBm) → 4단계 디스크리트 컬러. */
+    public static javafx.scene.paint.Color rssiColorFor(double rssiDbm) {
+        if (!Double.isFinite(rssiDbm)) return javafx.scene.paint.Color.web(RSSI_DEAD_HEX);
+        if (rssiDbm >= -55) return javafx.scene.paint.Color.web(RSSI_STRONG_HEX);
+        if (rssiDbm >= -65) return javafx.scene.paint.Color.web(RSSI_GOOD_HEX);
+        if (rssiDbm >= -75) return javafx.scene.paint.Color.web(RSSI_WEAK_HEX);
+        return javafx.scene.paint.Color.web(RSSI_DEAD_HEX);
+    }
 
     public static final String STATUS_INFO    = "#3B82F6";
     public static final String STATUS_SUCCESS = "#22C55E";
@@ -56,6 +73,20 @@ public class Styles {
     public static final String FONT_STACK =
             "'SF Pro Text','-Apple SD Gothic Neo','Apple SD 산돌고딕 Neo','Noto Sans KR','Malgun Gothic',sans-serif";
     public static final String FONT_MONO  = "'SF Mono','Menlo','Monaco','Consolas',monospace";
+
+    // ── 폰트 사이즈 (px) — 매직 넘버 제거 ───────────────────────────────────
+    /** ResultCard 헤드라인 / 큰 수치 표시 */
+    public static final int FONT_SIZE_DISPLAY = 34;
+    /** 다이얼로그 헤더 ("어떻게 시작할까요?" 등) */
+    public static final int FONT_SIZE_HEADING = 20;
+    /** 카드 타이틀 / OptionCard 제목 */
+    public static final int FONT_SIZE_TITLE   = 14;
+    /** 일반 라벨 */
+    public static final int FONT_SIZE_LABEL   = 12;
+    /** 보조 라벨 / 카드 부제·툴팁 */
+    public static final int FONT_SIZE_SUB     = 11;
+    /** HUD / 디버그 / 작은 캡션 */
+    public static final int FONT_SIZE_TINY    = 10;
 
     // ── Liquid Glass internals ────────────────────────────────────────────────
     private static String glassSpecular() {

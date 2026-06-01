@@ -68,6 +68,8 @@ public class MainController {
 
     private BufferedImage floorplanBI;
     private File currentFloorplanFile;
+    /** 마지막으로 저장/불러온 .wifisettings 파일 — Cmd+S 빠른 저장 시 사용 */
+    private File currentSettingsFile;
     private WritableImage heatmapImage;
     private WritableImage solverOverlayImage;
 
@@ -100,6 +102,8 @@ public class MainController {
     private Task<HeatmapGenerator.HeatmapResult> legacyHeatmapTask;
     private volatile java.util.Map<AP, java.util.Map<Band, DpmPathGrid>> cachedDpmGrids;
     private OnboardingStep onboardingStep = OnboardingStep.NONE;
+    /** AP 추천 시 추천 AP에 적용할 공유기 프리셋 — 마지막 선택을 기억. */
+    private app.model.ApPreset lastRecommendPreset = app.model.ApPreset.CUSTOM;
 
     public MainController(Stage stage) {
         this.stage = stage;
@@ -135,6 +139,35 @@ public class MainController {
 
     public void afterShown() {
         viewportController.centerViewport();
+        maybeShowWelcome();
+    }
+
+    /** 사용자 prefs 노드 — recent file, "다시 보지 않기" 등 저장 */
+    private static final java.util.prefs.Preferences PREFS =
+            java.util.prefs.Preferences.userNodeForPackage(MainController.class);
+    private static final String PREFS_KEY_SKIP_WELCOME = "skipWelcome";
+    private static final String PREFS_KEY_RECENT_FILE  = "recentFile";
+
+    private void maybeShowWelcome() {
+        if (PREFS.getBoolean(PREFS_KEY_SKIP_WELCOME, false)) return;
+
+        String recentPath = PREFS.get(PREFS_KEY_RECENT_FILE, null);
+        File recent = (recentPath == null) ? null : new File(recentPath);
+        if (recent != null && !recent.exists()) recent = null;
+
+        app.dialog.WelcomeDialog.Result r = app.dialog.WelcomeDialog.show(stage, recent);
+        if (r.dontShowAgain) PREFS.putBoolean(PREFS_KEY_SKIP_WELCOME, true);
+
+        switch (r.choice) {
+            case NEW_FLOORPLAN -> openFloorplan();
+            case OPEN_FILE     -> openSettingsSnapshot();
+            case EMPTY_START   -> { /* 빈 화면 그대로 */ }
+        }
+    }
+
+    /** 최근 사용 파일 경로 갱신 — 평면도 로드 / 설정 저장 후 호출. */
+    private void rememberRecentFile(File f) {
+        if (f != null) PREFS.put(PREFS_KEY_RECENT_FILE, f.getAbsolutePath());
     }
 
     private void wireUi() {
@@ -150,6 +183,7 @@ public class MainController {
 
         window.getTopToolbar().setOnClearHeatmap(() -> {
             heatmapImage = null;
+            window.getLeftPanel().clearMeasurementResult();
             render();
         });
 
@@ -164,14 +198,27 @@ public class MainController {
 
         window.getTopToolbar().setOnToolChanged(tool -> activateTool(tool, true));
         window.getTopToolbar().setOnRecommendAp(this::openApRecommender);
+        window.getLeftPanel().setOnWallDone(this::finishWallsAndRecommend);
+        window.getTopToolbar().setOnShowAdvanced(() ->
+                app.dialog.AdvancedSettingsDialog.show(stage, state));
 
-        // 히트맵 엔진 모델 선택 (Toolbar ↔ LeftPanel 동기화)
+        // "🌊 전파 흐름 보기" 토글 — 누르면 SOLVER tool로 전환 + 솔버 시작, 끄면 정지 + VIEW로 복귀
+        window.getTopToolbar().setOnWaveToggle(active -> {
+            if (active) {
+                activateTool(AppState.Tool.SOLVER, true);
+                startSolver();
+            } else {
+                stopSolver();
+                activateTool(AppState.Tool.VIEW, true);
+            }
+        });
+
+        // 히트맵 엔진 모델 선택 — 고급 모드에서만 노출. 일반 모드에선 DPM 고정.
         window.getTopToolbar().setHeatmapModel(state.getHeatmapModel());
         window.getTopToolbar().setHeatmapSolverMode(state.getHeatmapSolverMode());
         window.getTopToolbar().setOnHeatmapModelChanged(mode -> {
             if (mode != null) {
                 state.setHeatmapModel(mode);
-                window.getLeftPanel().setHeatmapModel(mode);
                 heatmapImage = null;
                 scheduleHeatmapRefreshIfVisible();
             }
@@ -183,13 +230,19 @@ public class MainController {
                 scheduleHeatmapRefreshIfVisible();
             }
         });
-        window.getLeftPanel().setHeatmapModel(state.getHeatmapModel());
-        window.getLeftPanel().setOnHeatmapModelChanged(mode -> {
-            if (mode != null) {
-                state.setHeatmapModel(mode);
-                window.getTopToolbar().setHeatmapModel(mode);
+
+        // 고급 모드 ↔ TopToolbar 가시성 양방향 바인딩
+        window.getTopToolbar().bindAdvancedMode(state.advancedModeProperty());
+
+        // 밴드 필터 — TopToolbar의 pill에서만 관리 (LeftPanel 콤보는 제거됨)
+        window.getTopToolbar().setBandFilter(state.getBandFilter());
+        window.getTopToolbar().setOnBandFilterChanged(filter -> {
+            if (filter != null) {
+                state.setBandFilter(filter);
                 heatmapImage = null;
                 scheduleHeatmapRefreshIfVisible();
+                // 솔버가 밴드별 작동한다면 재구성 트리거
+                solverConfigDirty = true;
             }
         });
 
@@ -244,9 +297,9 @@ public class MainController {
                     );
 
                     if (onboardingStep == OnboardingStep.SCALE) {
-                        onboardingStep = OnboardingStep.AP;
-                        showInfo(scaleAppliedMsg + "\n\n다음 단계\nAP배치 툴에서 AP를 1개 찍어보세요.");
-                        activateTool(AppState.Tool.AP, true);
+                        onboardingStep = OnboardingStep.WALL;
+                        showInfo(scaleAppliedMsg + "\n\n다음 단계\n벽그리기 툴에서 집의 벽을 그린 뒤, 왼쪽 '벽 그리기 완료' 버튼을 누르세요.");
+                        activateTool(AppState.Tool.WALL, true);
                         return;
                     }
 
@@ -356,12 +409,18 @@ public class MainController {
             showInfo("스케일을 먼저 설정해주세요.");
             return;
         }
+
+        // 추천 실행 전 — 사용 중인 공유기를 묻는다. 취소하면 추천 진입 안 함.
+        app.model.ApPreset preset = chooseRouterPreset();
+        if (preset == null) return;
+        lastRecommendPreset = preset;
+
         int w = (int) img.getWidth();
         int h = (int) img.getHeight();
         env.setScaleMPerPx(state.getScaleMPerPx());
         env.setPathLossN(state.getPathLossN());
 
-        app.dialog.ApRecommendDialog.show(stage, img, w, h, env, positions -> {
+        app.dialog.ApRecommendDialog.show(stage, img, w, h, env, state, positions -> {
             int idx = env.getAps().size() + 1;
             for (javafx.geometry.Point2D pos : positions) {
                 AP ap = new AP();
@@ -370,11 +429,52 @@ public class MainController {
                 ap.y = pos.getY();
                 ap.heightM = 2.5;
                 ap.enabled = true;
+                preset.applyTo(ap);  // 선택한 공유기 스펙을 추천 AP에 적용
                 env.getAps().add(ap);
             }
-            scheduleHeatmapRefreshIfVisible();
             render();
+            // 적용 직후 곧바로 히트맵 생성 → 추천 결과를 바로 확인할 수 있게 한다.
+            generateHeatmapNow();
         });
+    }
+
+    /**
+     * 사용 중인 공유기(통신사 프리셋)를 묻는다. 선택한 프리셋은 추천 AP의 RadioConfig에 적용된다.
+     * @return 선택한 프리셋, 취소 시 null
+     */
+    private app.model.ApPreset chooseRouterPreset() {
+        java.util.List<app.model.ApPreset> presets = java.util.Arrays.asList(app.model.ApPreset.values());
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        for (app.model.ApPreset p : presets) labels.add(p.label);
+
+        javafx.scene.control.ChoiceDialog<String> dlg =
+                new javafx.scene.control.ChoiceDialog<>(lastRecommendPreset.label, labels);
+        dlg.setTitle("공유기 선택");
+        dlg.setHeaderText("사용 중인 공유기를 선택하세요.\n선택한 공유기의 전파 스펙으로 추천 위치를 계산합니다.");
+        dlg.setContentText("공유기:");
+        if (stage != null) dlg.initOwner(stage);
+        Styles.styleDialog(dlg);
+
+        Optional<String> res = dlg.showAndWait();
+        if (res.isEmpty()) return null;
+        int idx = labels.indexOf(res.get());
+        return idx >= 0 ? presets.get(idx) : app.model.ApPreset.CUSTOM;
+    }
+
+    /**
+     * '벽 그리기 완료' 버튼 핸들러 — 벽이 충분한지 확인 후 AP 추천 흐름으로 진입.
+     */
+    private void finishWallsAndRecommend() {
+        if (!Double.isFinite(env.getScaleMPerPx()) || env.getScaleMPerPx() <= 0) {
+            showInfo("스케일을 먼저 설정해주세요.");
+            return;
+        }
+        if (env.getWalls().isEmpty()) {
+            showInfo("먼저 벽을 1개 이상 그려주세요.");
+            return;
+        }
+        onboardingStep = OnboardingStep.NONE;
+        openApRecommender();
     }
 
     private void zoomAtViewportCenter(double factor) {
@@ -398,6 +498,7 @@ public class MainController {
         window.getLeftPanel().setSelectedWall(selectedWall);
         window.getLeftPanel().setWalls(env.getWalls());
         window.getLeftPanel().setScaleVisible(state.getTool() == AppState.Tool.SCALE);
+        window.getLeftPanel().setWallToolActive(state.getTool() == AppState.Tool.WALL);
         window.getLeftPanel().setSolverToolActive(state.getTool() == AppState.Tool.SOLVER);
         window.getLeftPanel().setRssiResults(currentOrIdleRssiRows());
         long solverStep = (fdtdSolver == null) ? 0L : fdtdSolver.stepCount();
@@ -427,10 +528,32 @@ public class MainController {
                 List.of(),
                 (state.getTool() == AppState.Tool.SOLVER) ? solverDebugText : null
         );
+
+        // 단계별 가이드 오버레이 갱신
+        boolean hasFloorplan = window.getCanvasView().getBaseImageView().getImage() != null;
+        boolean hasAps = !env.getAps().isEmpty();
+        boolean hasHeatmap = (heatmapImage != null) || (visibleSolverOverlay != null);
+        window.getCanvasView().updateGuideOverlay(hasFloorplan, hasAps, hasHeatmap);
     }
 
     private void installSceneShortcuts(Scene scene) {
         scene.setOnKeyPressed(e -> {
+            // ── 파일 단축키 (Cmd+O / Cmd+S / Cmd+Shift+S) ─────────────
+            // macOS는 META, 그 외는 CTRL — Shortcut 키 처리
+            if (e.isShortcutDown()) {
+                if (e.getCode() == KeyCode.O) {
+                    openSettingsSnapshot();
+                    e.consume();
+                    return;
+                }
+                if (e.getCode() == KeyCode.S) {
+                    if (e.isShiftDown()) saveSettingsSnapshotAs();
+                    else                 saveSettingsSnapshot();
+                    e.consume();
+                    return;
+                }
+            }
+
             if (e.getCode() == KeyCode.SPACE) {
                 spaceDown = true;
                 updateCursorByMode();
@@ -481,6 +604,7 @@ public class MainController {
             floorplanBI = ImageIO.read(f);
             if (floorplanBI == null) throw new IOException("이미지 로드 실패");
             currentFloorplanFile = f;
+            rememberRecentFile(f);
 
             Image fx = SwingFXUtils.toFXImage(floorplanBI, null);
             window.getCanvasView().getBaseImageView().setImage(fx);
@@ -490,6 +614,7 @@ public class MainController {
 
             heatmapImage = null;
             cachedDpmGrids = null;
+            state.clearCoverageMask();  // 새 도면 → 좌표계 달라지므로 사용 공간 마스크 무효화
             solverOverlayImage = null;
             invalidateSolverAll();
             if (legacyHeatmapTask != null) {
@@ -592,21 +717,12 @@ public class MainController {
             return;
         }
 
-        if (env.getAps().isEmpty()) {
-            onboardingStep = OnboardingStep.AP;
-            showInfo("""
-                    시작 가이드
-                    AP배치 툴에서 AP를 1개 배치해보세요.
-                    """);
-            activateTool(AppState.Tool.AP, true);
-            return;
-        }
-
         if (env.getWalls().isEmpty()) {
             onboardingStep = OnboardingStep.WALL;
             showInfo("""
                     시작 가이드
-                    벽그리기 툴에서 벽을 1개 그려보세요.
+                    벽그리기 툴에서 집의 벽을 그린 뒤,
+                    왼쪽 '벽 그리기 완료' 버튼을 누르면 공유기 위치를 추천해 드립니다.
                     """);
             activateTool(AppState.Tool.WALL, true);
             return;
@@ -660,22 +776,55 @@ public class MainController {
         }
     }
 
+    /**
+     * 저장 — currentSettingsFile이 있으면 같은 위치에 덮어쓰기, 없으면 Save As 다이얼로그.
+     * 단축키: Cmd+S
+     */
     private void saveSettingsSnapshot() {
+        if (window.getCanvasView().getBaseImageView().getImage() == null) {
+            showInfo("먼저 평면도를 열어주세요.");
+            return;
+        }
+        if (currentSettingsFile != null && currentSettingsFile.getParentFile() != null
+                && currentSettingsFile.getParentFile().exists()) {
+            // 빠른 덮어쓰기 — 다이얼로그 없이
+            writeSettingsTo(currentSettingsFile, /*verbose*/ false);
+        } else {
+            saveSettingsSnapshotAs();
+        }
+    }
+
+    /**
+     * 다른 이름으로 저장 — 항상 파일 선택 다이얼로그를 띄움.
+     * 단축키: Cmd+Shift+S
+     */
+    private void saveSettingsSnapshotAs() {
         if (window.getCanvasView().getBaseImageView().getImage() == null) {
             showInfo("먼저 평면도를 열어주세요.");
             return;
         }
 
         FileChooser fc = new FileChooser();
-        fc.setTitle("설정값 저장");
+        fc.setTitle("다른 이름으로 저장");
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Wi-Fi Settings", "*.wifisettings"));
-        fc.setInitialFileName("wifi-settings.wifisettings");
+        fc.setInitialFileName(currentSettingsFile != null
+                ? currentSettingsFile.getName()
+                : "wifi-settings.wifisettings");
+        if (currentSettingsFile != null && currentSettingsFile.getParentFile() != null
+                && currentSettingsFile.getParentFile().isDirectory()) {
+            fc.setInitialDirectory(currentSettingsFile.getParentFile());
+        }
         File out = fc.showSaveDialog(stage);
         if (out == null) return;
 
         if (!out.getName().toLowerCase().endsWith(".wifisettings")) {
             out = new File(out.getParentFile(), out.getName() + ".wifisettings");
         }
+        writeSettingsTo(out, /*verbose*/ true);
+    }
+
+    /** 실제 ZIP 쓰기 로직 — 두 저장 경로(빠른/다른이름)의 공통 본체. */
+    private void writeSettingsTo(File out, boolean verbose) {
 
         Properties p = new Properties();
         p.setProperty("version", "1");
@@ -728,18 +877,53 @@ public class MainController {
             p.setProperty(key + "att_5_db", Double.toString(w.attenuationDb5));
         }
 
-        try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(out), StandardCharsets.UTF_8)) {
-            p.store(writer, "Wi-Fi Heatmap settings snapshot");
-            showInfo("설정값 저장 완료:\n" + out.getAbsolutePath());
+        // ── ZIP 컨테이너로 저장 (settings.properties + floorplan.png) ──
+        try (java.util.zip.ZipOutputStream zos =
+                     new java.util.zip.ZipOutputStream(new FileOutputStream(out))) {
+
+            // 1) settings.properties — UTF-8 텍스트
+            zos.putNextEntry(new java.util.zip.ZipEntry("settings.properties"));
+            java.io.ByteArrayOutputStream propsBuf = new java.io.ByteArrayOutputStream();
+            try (OutputStreamWriter writer = new OutputStreamWriter(propsBuf, StandardCharsets.UTF_8)) {
+                p.store(writer, "Wi-Fi Heatmap settings snapshot");
+            }
+            zos.write(propsBuf.toByteArray());
+            zos.closeEntry();
+
+            // 2) floorplan.png — 평면도 이미지를 묶음 (있을 때만)
+            if (floorplanBI != null) {
+                zos.putNextEntry(new java.util.zip.ZipEntry("floorplan.png"));
+                javax.imageio.ImageIO.write(floorplanBI, "png", zos);
+                zos.closeEntry();
+            }
+
+            currentSettingsFile = out;
+            rememberRecentFile(out);
+            // 빠른 저장(Cmd+S)에선 BottomBar 토스트, 다른 이름으로는 다이얼로그
+            if (verbose) {
+                showInfo("저장 완료:\n" + out.getAbsolutePath()
+                        + (floorplanBI != null ? "\n(평면도 이미지 포함)" : ""));
+            } else {
+                window.getBottomBar().showToast("저장됨 · " + out.getName());
+            }
         } catch (Exception ex) {
-            showError("설정값 저장 실패: " + ex.getMessage());
+            showError("저장 실패: " + ex.getMessage());
         }
     }
 
     private void openSettingsSnapshot() {
         FileChooser fc = new FileChooser();
-        fc.setTitle("설정값 열기");
+        fc.setTitle("저장된 작업 불러오기");
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Wi-Fi Settings", "*.wifisettings"));
+
+        // 최근 파일이 있으면 그 폴더를 초기 디렉터리로 — 사용자 편의
+        String recentPath = PREFS.get(PREFS_KEY_RECENT_FILE, null);
+        if (recentPath != null) {
+            File recent = new File(recentPath);
+            File dir = recent.getParentFile();
+            if (dir != null && dir.isDirectory()) fc.setInitialDirectory(dir);
+        }
+
         File file = fc.showOpenDialog(stage);
         if (file == null) return;
         loadSettingsSnapshotFromFile(file, true);
@@ -749,14 +933,76 @@ public class MainController {
         if (file == null) return false;
 
         Properties p = new Properties();
-        try (InputStreamReader reader = new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8)) {
-            p.load(reader);
+        java.awt.image.BufferedImage embeddedFloorplan = null;
+
+        // ZIP인지 plain properties인지 자동 감지 — 첫 4바이트가 PK 시그니처면 ZIP
+        boolean isZip = isZipFile(file);
+
+        try {
+            if (isZip) {
+                // ZIP 컨테이너 — settings.properties + (있으면) floorplan.png 추출
+                try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(file)) {
+                    java.util.zip.ZipEntry propsEntry = zf.getEntry("settings.properties");
+                    if (propsEntry == null) {
+                        showError("설정값 파일 형식이 올바르지 않습니다 (settings.properties 누락).");
+                        return false;
+                    }
+                    try (InputStreamReader r = new InputStreamReader(
+                            zf.getInputStream(propsEntry), StandardCharsets.UTF_8)) {
+                        p.load(r);
+                    }
+                    java.util.zip.ZipEntry imgEntry = zf.getEntry("floorplan.png");
+                    if (imgEntry != null) {
+                        try (java.io.InputStream in = zf.getInputStream(imgEntry)) {
+                            embeddedFloorplan = javax.imageio.ImageIO.read(in);
+                        }
+                    }
+                }
+            } else {
+                // 구버전 — plain properties
+                try (InputStreamReader reader = new InputStreamReader(
+                        new FileInputStream(file), StandardCharsets.UTF_8)) {
+                    p.load(reader);
+                }
+            }
         } catch (Exception ex) {
             showError("설정값 열기 실패: " + ex.getMessage());
             return false;
         }
 
-        return applySettingsSnapshot(p, showSuccessInfo);
+        // ZIP에 평면도가 포함돼 있으면 외부 경로보다 그것을 우선 사용
+        if (embeddedFloorplan != null) {
+            floorplanBI = embeddedFloorplan;
+            currentFloorplanFile = file;  // 설정파일 자체를 출처로 표시
+            javafx.scene.image.Image fx = javafx.embed.swing.SwingFXUtils.toFXImage(embeddedFloorplan, null);
+            window.getCanvasView().getBaseImageView().setImage(fx);
+            window.getCanvasView().getDrawCanvas().setWidth(fx.getWidth());
+            window.getCanvasView().getDrawCanvas().setHeight(fx.getHeight());
+            viewportController.setBaseContentSize(fx.getWidth(), fx.getHeight());
+            viewportController.setZoom(1.0);
+            viewportController.updateViewportSize();
+            viewportController.centerViewport();
+            // applySettingsSnapshot 안의 floorplan.path 로드는 건너뛰도록 플래그
+            p.remove("floorplan.path");
+        }
+
+        boolean ok = applySettingsSnapshot(p, showSuccessInfo);
+        if (ok) {
+            rememberRecentFile(file);
+            currentSettingsFile = file;  // 이후 Cmd+S 빠른 저장에 사용
+        }
+        return ok;
+    }
+
+    /** 파일 시그니처로 ZIP 여부 판별 (PK\003\004) */
+    private static boolean isZipFile(File f) {
+        try (java.io.InputStream in = new FileInputStream(f)) {
+            byte[] sig = new byte[4];
+            int n = in.read(sig);
+            return n == 4 && sig[0] == 'P' && sig[1] == 'K' && sig[2] == 0x03 && sig[3] == 0x04;
+        } catch (Exception ex) {
+            return false;
+        }
     }
 
     private boolean applySettingsSnapshot(Properties p, boolean showSuccessInfo) {
@@ -845,6 +1091,15 @@ public class MainController {
         stopSolver();
         activateTool(AppState.Tool.VIEW, true);
 
+        // 일반 사용자 모드면 히트맵 엔진을 항상 DPM으로 복원 (구버전 파일 호환).
+        // 고급 모드에서는 사용자가 명시적으로 LEGACY/FDTD_TEZ로 바꾼 상태를 존중.
+        if (!state.isAdvancedMode()
+                && state.getHeatmapModel() != AppState.HeatmapModel.DPM) {
+            state.setHeatmapModel(AppState.HeatmapModel.DPM);
+        }
+        state.clearCoverageMask();  // 다른 환경 로드 → 사용 공간 마스크 무효화
+        window.getLeftPanel().clearMeasurementResult();
+
         if (showSuccessInfo) {
             showInfo(String.format("설정값 불러오기 완료\nAP %d개, Wall %d개", loadedAps.size(), loadedWalls.size()));
         }
@@ -918,7 +1173,7 @@ public class MainController {
         int h = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getHeight()));
 
         HeatmapGenerator generator = new HeatmapGenerator(env,
-                state.getHeatmapSolverMode(), state.getHeatmapModel());
+                state.getHeatmapSolverMode(), state.getHeatmapModel(), state.getBandFilter());
         int gridStep = computeAdaptiveGridStep(env);
         int smoothRadius = computeAdaptiveSmoothRadius(gridStep);
         double legendMin = state.legendMinProperty().get();
@@ -955,13 +1210,22 @@ public class MainController {
             heatmapImage = img;
 
             double elapsedSec = (System.currentTimeMillis() - startMs) / 1000.0;
-            window.getBottomBar().setHeatmapComplete(elapsedSec);
+            // DPM 모드면 측정값을 BottomBar에 표시 (발표 시연용), 아니면 일반 완료 메시지
+            if (result.dpmExpandedNodes > 0) {
+                window.getBottomBar().setDpmStats(
+                        result.dpmExpandedNodes, result.dpmPrunedNodes, result.dpmElapsedMs);
+            } else {
+                window.getBottomBar().setHeatmapComplete(elapsedSec);
+            }
 
             if (result.gpuFallback && !gpuFallbackWarned) {
                 gpuFallbackWarned = true;
                 showInfo("GPU 솔버를 찾지 못해 CPU로 계산했습니다.\n" +
                         "GPU 백엔드를 ServiceLoader로 추가하면 자동으로 사용됩니다.");
             }
+
+            // 결과 카드 갱신 — 도면 전역 통계
+            updateResultCardFromCurrentHeatmap(result.width, result.height);
             render();
         });
         legacyHeatmapTask.setOnFailed(e -> {
@@ -977,6 +1241,70 @@ public class MainController {
         Thread worker = new Thread(legacyHeatmapTask, "legacy-heatmap-worker");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * 히트맵 생성 직후 격자 샘플링으로 측정 통계를 계산해 ResultCard에 표시.
+     *
+     * <p><b>측정 영역 정의</b>: 사용자가 AP 추천 단계에서 flood fill로 지정한
+     * "사용 공간 마스크"({@link AppState#coverageContains}) 안의 점만 집계한다.
+     * 여러 방을 클릭해 합산한 마스크이므로 와이파이를 실제로 쓰는 공간 전체를 덮는다.</p>
+     *
+     * <p><b>영역 미지정 시</b>: 어디서 와이파이가 필요한지 모르는 상태에서 비율을
+     * 보여주면 오해를 부르므로, 결과 카드를 숨기고 영역 지정 안내만 표시한다.</p>
+     */
+    private void updateResultCardFromCurrentHeatmap(int width, int height) {
+        if (env == null || env.getAps().isEmpty()) {
+            window.getLeftPanel().clearMeasurementResult();
+            return;
+        }
+        if (!state.hasCoverageArea()) {
+            window.getLeftPanel().showMeasurementGuidance(
+                    "측정할 공간이 지정되지 않았습니다. AP 추천에서 와이파이를 쓸 방을 선택하면 그 영역 기준으로 결과가 표시됩니다.");
+            return;
+        }
+
+        // ── 측정 영역 = 사용 공간 마스크 안의 격자점만 ──
+        final int step = 40;
+        final double SIGNAL_VALID_THRESHOLD_DBM = -85.0;  // 외부·매우 약한 신호 제외
+
+        int total = 0;
+        int strong = 0, good = 0, weak = 0, dead = 0;
+        for (int y = step / 2; y < height; y += step) {
+            for (int x = step / 2; x < width; x += step) {
+                if (!state.coverageContains(x, y)) continue;  // 사용 공간 밖 제외
+                // DPM 모드: 실제 히트맵 생성에 사용된 DPM 그리드로 RSSI 계산 (일관성)
+                // Legacy 모드 fallback: env.sampleRssiAt (반사·회절 포함)
+                double rssi;
+                if (state.getHeatmapModel() == AppState.HeatmapModel.DPM && cachedDpmGrids != null) {
+                    List<RssiResult> dpmRows = sampleRssiFromDpmGrids(x, y);
+                    rssi = dpmRows.isEmpty() ? Double.NaN : dpmRows.get(0).rssiDbm;
+                } else {
+                    rssi = env.sampleRssiAt(x, y);
+                }
+                if (!Double.isFinite(rssi)) continue;
+                if (rssi < SIGNAL_VALID_THRESHOLD_DBM) continue;  // 매우 약한 신호 제외
+
+                total++;
+                if      (rssi >= -55) strong++;
+                else if (rssi >= -65) good++;
+                else if (rssi >= -75) weak++;
+                else                  dead++;
+            }
+        }
+        if (total == 0) {
+            window.getLeftPanel().clearMeasurementResult();
+            return;
+        }
+        double cover = 100.0 * (strong + good) / total;
+        // LeftPanel.setMeasurementResult 인자: 좌→우 [약함, 주의, 양호, 강함] 순서
+        double[] grade = {
+                dead   / (double) total,
+                weak   / (double) total,
+                good   / (double) total,
+                strong / (double) total
+        };
+        window.getLeftPanel().setMeasurementResult(cover, grade);
     }
 
     /**
@@ -1108,7 +1436,7 @@ public class MainController {
         int w = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getWidth()));
         int h = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getHeight()));
         int cellPx = Math.max(2, window.getLeftPanel().getSolverCellPx());
-        Band solverBand = window.getLeftPanel().getSolverDisplayBand();
+        Band solverBand = state.getBandFilter() == null ? null : state.getBandFilter().band;
         solverRenderFrameMod = Math.max(1, window.getLeftPanel().getSolverRenderSkip());
         long materialSig = computeMaterialSignature();
         long sourceSig = computeSourceSignature();
@@ -1368,10 +1696,6 @@ public class MainController {
                 return;
             }
 
-            AppState.Tool toolBeforeClick = state.getTool();
-            int apCountBefore = env.getAps().size();
-            int wallCountBefore = env.getWalls().size();
-
             toolsController.onMouseClicked(
                     e.getX(), e.getY(),
                     e.getButton(),
@@ -1389,26 +1713,8 @@ public class MainController {
                 scheduleHeatmapRefreshIfVisible();
             }
 
-            boolean apCreated = (toolBeforeClick == AppState.Tool.AP) && (env.getAps().size() > apCountBefore);
-            if (apCreated && onboardingStep == OnboardingStep.AP) {
-                onboardingStep = OnboardingStep.WALL;
-                showInfo("AP 배치 완료\n\n다음 단계\n벽그리기 툴에서 벽을 1개 그려보세요.");
-                activateTool(AppState.Tool.WALL, true);
-                return;
-            }
-
-            boolean wallCreated = (toolBeforeClick == AppState.Tool.WALL) && (env.getWalls().size() > wallCountBefore);
-            if (wallCreated && onboardingStep == OnboardingStep.WALL) {
-                onboardingStep = OnboardingStep.NONE;
-                showInfo("""
-                        벽 그리기 완료
-
-                        기본 설정이 끝났습니다.
-                        이제 Solver 툴로 이동해 'Solver 시작'을 눌러
-                        전파 오버레이를 바로 확인해보세요.
-                        """);
-                activateTool(AppState.Tool.SOLVER, true);
-            }
+            // 온보딩 WALL 단계: 벽은 사용자가 원하는 만큼 그리고, 완료는 '벽 그리기 완료'
+            // 버튼으로 명시적으로 알린다(→ finishWallsAndRecommend). 자동 전환하지 않는다.
         });
 
         canvas.setOnMouseMoved(e -> {
@@ -1454,21 +1760,11 @@ public class MainController {
     }
 
     private void showError(String msg) {
-        var alert = new javafx.scene.control.Alert(
-                javafx.scene.control.Alert.AlertType.ERROR, msg,
-                javafx.scene.control.ButtonType.OK);
-        alert.initOwner(stage);
-        Styles.styleAlert(alert);
-        alert.showAndWait();
+        app.ui.Notify.error(stage, msg);
     }
 
     private void showInfo(String msg) {
-        var alert = new javafx.scene.control.Alert(
-                javafx.scene.control.Alert.AlertType.INFORMATION, msg,
-                javafx.scene.control.ButtonType.OK);
-        alert.initOwner(stage);
-        Styles.styleAlert(alert);
-        alert.showAndWait();
+        app.ui.Notify.info(stage, msg);
     }
 
     private List<RssiResult> currentMouseRssiRows() {

@@ -8,6 +8,27 @@ public class AppState {
     public enum HeatmapSolverMode { CPU, GPU }
     public enum HeatmapModel { LEGACY, DPM, FDTD_TEZ }
 
+    /**
+     * 히트맵에 표시할 밴드 선택.
+     * ALL_MAX : 모든 활성 밴드의 RSSI 중 최댓값 (기존 동작)
+     * GHZ_24/5/6 : 해당 밴드 라디오만 사용해서 RSSI 계산 → 밴드별 시각 비교용
+     */
+    public enum BandFilter {
+        ALL_MAX("전체 MAX", null),
+        GHZ_24 ("2.4 GHz",  Band.GHZ_24),
+        GHZ_5  ("5 GHz",    Band.GHZ_5),
+        GHZ_6  ("6 GHz",    Band.GHZ_6);
+
+        public final String label;
+        public final Band band;  // null = ALL_MAX
+
+        BandFilter(String label, Band band) { this.label = label; this.band = band; }
+
+        public boolean matches(Band b) { return band == null || band == b; }
+
+        @Override public String toString() { return label; }
+    }
+
     // 현재 도구 모드
     private final ObjectProperty<Tool> tool = new SimpleObjectProperty<>(Tool.VIEW);
 
@@ -31,7 +52,24 @@ public class AppState {
     private final ObjectProperty<HeatmapSolverMode> heatmapSolverMode =
             new SimpleObjectProperty<>(HeatmapSolverMode.CPU);
     private final ObjectProperty<HeatmapModel> heatmapModel =
-            new SimpleObjectProperty<>(HeatmapModel.LEGACY);
+            new SimpleObjectProperty<>(HeatmapModel.DPM);
+    /** 히트맵에 표시할 밴드 필터 (기본: 전체 MAX) */
+    private final ObjectProperty<BandFilter> bandFilter =
+            new SimpleObjectProperty<>(BandFilter.ALL_MAX);
+
+    /**
+     * 고급(연구) 모드 — 활성화 시 Legacy/FDTD_TEZ 히트맵 콤보, CPU/GPU 솔버 모드 콤보,
+     * solver start/stop/reset 버튼 등 전문가용 컨트롤이 다시 노출된다. 기본 OFF.
+     */
+    private final BooleanProperty advancedMode = new SimpleBooleanProperty(false);
+
+    /**
+     * 사용자가 지정한 "와이파이 사용 공간" 마스크 (AP 추천의 flood fill 결과).
+     * AP 추천과 측정 결과가 공유하는 단일 소스. null = 미선택(영역 지정 안 됨).
+     * 좌표계: 캔버스 px → 셀 인덱스 = px / cellSize.
+     */
+    private boolean[] coverageMask;
+    private int coverageMaskW, coverageMaskH, coverageCellSize;
 
     // ===== getters / properties =====
     public ObjectProperty<Tool> toolProperty() { return tool; }
@@ -75,6 +113,41 @@ public class AppState {
     public ObjectProperty<HeatmapModel> heatmapModelProperty() { return heatmapModel; }
     public HeatmapModel getHeatmapModel() { return heatmapModel.get(); }
     public void setHeatmapModel(HeatmapModel model) {
-        heatmapModel.set(model == null ? HeatmapModel.LEGACY : model);
+        heatmapModel.set(model == null ? HeatmapModel.DPM : model);
+    }
+
+    public BooleanProperty advancedModeProperty() { return advancedMode; }
+    public boolean isAdvancedMode() { return advancedMode.get(); }
+    public void setAdvancedMode(boolean v) { advancedMode.set(v); }
+
+    public ObjectProperty<BandFilter> bandFilterProperty() { return bandFilter; }
+    public BandFilter getBandFilter() { return bandFilter.get(); }
+    public void setBandFilter(BandFilter f) {
+        bandFilter.set(f == null ? BandFilter.ALL_MAX : f);
+    }
+
+    // ===== 사용 공간 마스크 =====
+    public void setCoverageMask(boolean[] mask, int maskW, int maskH, int cellSize) {
+        this.coverageMask = mask;
+        this.coverageMaskW = maskW;
+        this.coverageMaskH = maskH;
+        this.coverageCellSize = Math.max(1, cellSize);
+    }
+
+    public void clearCoverageMask() {
+        this.coverageMask = null;
+        this.coverageMaskW = this.coverageMaskH = this.coverageCellSize = 0;
+    }
+
+    /** 사용 공간이 지정되어 있는가. false면 측정 결과를 숨기고 안내해야 한다. */
+    public boolean hasCoverageArea() { return coverageMask != null; }
+
+    /** 캔버스 px 좌표가 사용 공간 안인지. 마스크 미설정이면 true(제한 없음). */
+    public boolean coverageContains(double px, double py) {
+        if (coverageMask == null) return true;
+        int mx = (int) (px / coverageCellSize);
+        int my = (int) (py / coverageCellSize);
+        if (mx < 0 || my < 0 || mx >= coverageMaskW || my >= coverageMaskH) return false;
+        return coverageMask[my * coverageMaskW + mx];
     }
 }

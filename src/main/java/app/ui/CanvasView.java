@@ -1,15 +1,18 @@
 package app.ui;
 
 import app.model.*;
+import javafx.geometry.Insets;
 import javafx.geometry.Point2D;
 import javafx.geometry.Pos;
 import javafx.scene.Group;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.image.ImageView;
 import javafx.scene.image.WritableImage;
 import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 
@@ -28,6 +31,13 @@ public class CanvasView {
     private final StackPane viewportPane;
     private final ScrollPane canvasSP;
     private final StackPane root;
+
+    /** 빈 캔버스 안내 오버레이 */
+    private final VBox emptyGuide = new VBox(10);
+    private final Label emptyEmoji = new Label("📂");
+    private final Label emptyTitle = new Label("평면도를 불러와 시작하세요");
+    private final Label emptyDesc  = new Label(
+            "상단 도구모음의 [열기] 버튼을 눌러 도면 이미지(PNG, JPG)를 선택하세요.");
 
     public CanvasView() {
         baseImageView = new ImageView();
@@ -51,7 +61,42 @@ public class CanvasView {
         canvasSP.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         canvasSP.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 
-        root = new StackPane(canvasSP);
+        // ── 빈 캔버스 가이드 오버레이 (평면도 없을 때만 표시) ────────────
+        emptyEmoji.setStyle("-fx-font-size:56px;");
+        emptyTitle.setWrapText(true);
+        emptyDesc.setWrapText(true);
+        emptyGuide.setAlignment(Pos.CENTER);
+        emptyGuide.setMaxWidth(440);
+        emptyGuide.setPadding(new Insets(28, 32, 28, 32));
+        emptyGuide.setMouseTransparent(true);
+        emptyGuide.getChildren().addAll(emptyEmoji, emptyTitle, emptyDesc);
+
+        Runnable applyGuideTheme = () -> {
+            // 카드 박스 — 배경 + 둥근 모서리 + 약한 그림자
+            emptyGuide.setStyle(
+                    "-fx-background-color:" + Styles.bgPanel() + ";" +
+                    "-fx-background-radius:14;" +
+                    "-fx-border-color:" + Styles.borderSoft() + ";" +
+                    "-fx-border-radius:14;" +
+                    "-fx-border-width:1;" +
+                    "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.18), 24, 0.12, 0, 6);");
+            emptyTitle.setStyle(
+                    "-fx-text-fill:" + Styles.textMain() + ";" +
+                    "-fx-font-size:18px;" +
+                    "-fx-font-weight:bold;" +
+                    "-fx-font-family:" + Styles.FONT_STACK + ";");
+            emptyDesc.setStyle(
+                    "-fx-text-fill:" + Styles.textSub() + ";" +
+                    "-fx-font-size:12px;" +
+                    "-fx-font-family:" + Styles.FONT_STACK + ";");
+            emptyDesc.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+            emptyTitle.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+        };
+        applyGuideTheme.run();
+        Styles.addThemeListener(applyGuideTheme);
+
+        root = new StackPane(canvasSP, emptyGuide);
+        StackPane.setAlignment(emptyGuide, Pos.CENTER);
 
         Runnable applyCanvasTheme = () -> {
             viewportPane.setStyle("-fx-background-color: " + Styles.bgApp() + ";");
@@ -60,6 +105,27 @@ public class CanvasView {
         };
         applyCanvasTheme.run();
         Styles.addThemeListener(applyCanvasTheme);
+    }
+
+    /**
+     * 빈 캔버스 가이드 — 평면도가 없을 때만 표시. 평면도가 로드되면 도면이
+     * 작업 자체가 되므로 가이드 텍스트로 도면을 가리지 않는다.
+     *
+     * <p>이후의 단계별 안내(공유기 배치 / 히트맵 생성)는 도구 버튼의 툴팁과
+     * LeftPanel의 카드 상태로 처리한다.</p>
+     */
+    public void updateGuideOverlay(boolean hasFloorplan, boolean hasAps, boolean hasHeatmap) {
+        if (!hasFloorplan) {
+            emptyEmoji.setText("📂");
+            emptyTitle.setText("평면도를 불러와 시작하세요");
+            emptyDesc.setText("상단의 [열기] 버튼을 눌러 도면 이미지(PNG, JPG)를 선택하거나,\n"
+                    + "[불러오기]로 저장된 작업을 이어할 수 있습니다.");
+            emptyGuide.setVisible(true);
+            emptyGuide.setManaged(true);
+        } else {
+            emptyGuide.setVisible(false);
+            emptyGuide.setManaged(false);
+        }
     }
 
     // ===== getters =====

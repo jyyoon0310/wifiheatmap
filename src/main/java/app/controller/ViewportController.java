@@ -43,6 +43,15 @@ public class ViewportController {
             updateViewportSize();
             clampPanToBounds();
         });
+
+        // ✅ 윈도우 리사이즈·전체화면 토글 등 viewport 크기 변경 시 자동 재중앙정렬
+        canvasSP.viewportBoundsProperty().addListener((obs, oldVp, newVp) -> {
+            if (newVp == null) return;
+            updateViewportSize();
+            // 콘텐츠가 viewport보다 작은 축은 자동으로 중앙(여백 분배)이 되도록 pan 초기화
+            // 사용자가 스크롤한 위치를 망치지 않도록 콘텐츠가 viewport보다 큰 축은 그대로 둠
+            clampPanToBounds();
+        });
     }
 
     public DoubleProperty zoomScaleProperty() { return zoomScale; }

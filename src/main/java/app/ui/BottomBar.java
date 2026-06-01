@@ -28,7 +28,7 @@ public class BottomBar {
     private final Spinner<Double> clientHeightSpinner = new Spinner<>(0.1, 5.0, 1.0, 0.1);
     private final Button applyBtn = new Button("적용");
     private final Label heatmapStatusLabel = new Label();
-    private final Label currentRssiLabel = new Label("- dBm");
+    private final Label currentRssiLabel = new Label("신호 측정 없음");
     private final Label legendMinLabel = new Label("-96 dBm");
     private final Label legendMaxLabel = new Label("-10 dBm");
     private final StackPane legendPane = new StackPane();
@@ -44,7 +44,7 @@ public class BottomBar {
     private DoubleConsumer onApplyClientHeight;
 
     public BottomBar() {
-        Label label = new Label("Client Height (m)");
+        Label label = new Label("수신 단말 높이 (m)");
         Runnable applyLabel = () -> label.setStyle(
                 "-fx-text-fill: " + Styles.textSub() + ";" +
                 "-fx-font-size: 12px;" +
@@ -56,11 +56,11 @@ public class BottomBar {
         clientHeightSpinner.setEditable(true);
         Styles.styleSpinner(clientHeightSpinner);
         Styles.styleAccentButton(applyBtn);
-        currentRssiLabel.setStyle("-fx-text-fill: #2FD44A;" + RSSI_LABEL_BASE_STYLE);
+        currentRssiLabel.setStyle("-fx-text-fill: " + Styles.RSSI_WEAK_HEX + ";" + RSSI_LABEL_BASE_STYLE);
 
         // 히트맵 생성 진행률 라벨
         heatmapStatusLabel.setStyle(
-                "-fx-text-fill:#34D1FF;" +
+                "-fx-text-fill:" + Styles.RSSI_CYAN_HEX + ";" +
                 "-fx-font-size:13px;" +
                 "-fx-font-weight:600;" +
                 "-fx-font-family:" + Styles.FONT_STACK + ";"
@@ -87,7 +87,12 @@ public class BottomBar {
 
         legendBg.setStyle(
                 "-fx-background-radius: 6;" +
-                        "-fx-background-color: linear-gradient(to right, #2D6CF6, #34D1FF, #2FD44A, #F6D32D, #F0632D);" +
+                        "-fx-background-color: linear-gradient(to right, "
+                            + Styles.RSSI_DEAD_HEX + ", "
+                            + Styles.RSSI_CYAN_HEX + ", "
+                            + Styles.RSSI_WEAK_HEX + ", "
+                            + Styles.RSSI_GOOD_HEX + ", "
+                            + Styles.RSSI_STRONG_HEX + ");" +
                         "-fx-border-color: rgba(0,0,0,0.14);" +
                         "-fx-border-radius: 6;"
         );
@@ -153,29 +158,40 @@ public class BottomBar {
         updateLegendMarker();
     }
 
+    /** RSSI 값에 따른 등급 라벨 ("강함"/"양호"/"주의"/"불량"/"없음") */
+    private static String rssiGradeLabel(double rssiDbm) {
+        if (!Double.isFinite(rssiDbm)) return "없음";
+        if (rssiDbm >= -55) return "강함";
+        if (rssiDbm >= -65) return "양호";
+        if (rssiDbm >= -75) return "주의";
+        return "불량";
+    }
+
     private void refreshCurrentRssiLabel() {
         if (Double.isFinite(currentRssiDbm)) {
-            currentRssiLabel.setText(String.format("%.0f dBm", currentRssiDbm));
+            currentRssiLabel.setText(String.format("%s · %.0f dBm",
+                    rssiGradeLabel(currentRssiDbm), currentRssiDbm));
             String colorHex = toHex(rssiColor(currentRssiDbm));
             currentRssiLabel.setStyle("-fx-text-fill: " + colorHex + ";" + RSSI_LABEL_BASE_STYLE);
         } else {
-            currentRssiLabel.setText("- dBm");
+            currentRssiLabel.setText("신호 측정 없음");
             currentRssiLabel.setStyle("-fx-text-fill: " + Styles.textSub() + ";" + RSSI_LABEL_BASE_STYLE);
         }
     }
 
     private Color rssiColor(double rssiDbm) {
         if (legendMaxDbm <= legendMinDbm) {
-            return Color.web("#2D6CF6");
+            return Color.web(Styles.RSSI_DEAD_HEX);
         }
         double t = (rssiDbm - legendMinDbm) / (legendMaxDbm - legendMinDbm);
         t = Math.max(0.0, Math.min(1.0, t));
 
-        Color c0 = Color.web("#2D6CF6");
-        Color c1 = Color.web("#34D1FF");
-        Color c2 = Color.web("#2FD44A");
-        Color c3 = Color.web("#F6D32D");
-        Color c4 = Color.web("#F0632D");
+        // 5단계 lerp colormap — Styles 상수 사용 (4단계 디스크리트 + cyan 중간 stop)
+        Color c0 = Color.web(Styles.RSSI_DEAD_HEX);
+        Color c1 = Color.web(Styles.RSSI_CYAN_HEX);
+        Color c2 = Color.web(Styles.RSSI_WEAK_HEX);
+        Color c3 = Color.web(Styles.RSSI_GOOD_HEX);
+        Color c4 = Color.web(Styles.RSSI_STRONG_HEX);
 
         if (t < 0.25) return lerp(c0, c1, t / 0.25);
         if (t < 0.50) return lerp(c1, c2, (t - 0.25) / 0.25);
@@ -223,7 +239,7 @@ public class BottomBar {
         statusClearTimer.stop();
         heatmapStatusLabel.setText(String.format("히트맵 생성중... %.0f%%", Math.min(100.0, percent)));
         heatmapStatusLabel.setStyle(
-                "-fx-text-fill:#34D1FF;" +
+                "-fx-text-fill:" + Styles.RSSI_CYAN_HEX + ";" +
                 "-fx-font-size:13px;" +
                 "-fx-font-weight:600;" +
                 "-fx-font-family:" + Styles.FONT_STACK + ";"
@@ -232,11 +248,11 @@ public class BottomBar {
         heatmapStatusLabel.setManaged(true);
     }
 
-    /** 히트맵 생성 완료 메시지 표시 → 3초 뒤 자동 숨김 */
-    public void setHeatmapComplete(double elapsedSec) {
-        heatmapStatusLabel.setText(String.format("히트맵 생성 완료 (%.1f초)", elapsedSec));
+    /** 일반 토스트 — 임의의 짧은 메시지를 BottomBar에 잠시 표시 (3초 뒤 자동 숨김). */
+    public void showToast(String message) {
+        heatmapStatusLabel.setText(message);
         heatmapStatusLabel.setStyle(
-                "-fx-text-fill:#2FD44A;" +
+                "-fx-text-fill:" + Styles.RSSI_WEAK_HEX + ";" +
                 "-fx-font-size:13px;" +
                 "-fx-font-weight:600;" +
                 "-fx-font-family:" + Styles.FONT_STACK + ";"
@@ -244,6 +260,41 @@ public class BottomBar {
         heatmapStatusLabel.setVisible(true);
         heatmapStatusLabel.setManaged(true);
         statusClearTimer.playFromStart();
+    }
+
+    /** 히트맵 생성 완료 메시지 표시 → 3초 뒤 자동 숨김 */
+    public void setHeatmapComplete(double elapsedSec) {
+        heatmapStatusLabel.setText(String.format("히트맵 생성 완료 (%.1f초)", elapsedSec));
+        heatmapStatusLabel.setStyle(
+                "-fx-text-fill:" + Styles.RSSI_WEAK_HEX + ";" +
+                "-fx-font-size:13px;" +
+                "-fx-font-weight:600;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";"
+        );
+        heatmapStatusLabel.setVisible(true);
+        heatmapStatusLabel.setManaged(true);
+        statusClearTimer.playFromStart();
+    }
+
+    /**
+     * DPM A* 측정값을 BottomBar에 표시 (자동 숨김 없음, 다음 갱신까지 유지).
+     * 발표 시연용 — 가지치기 효과를 시각적으로 확인할 수 있도록.
+     */
+    public void setDpmStats(long expanded, long pruned, long elapsedMs) {
+        long total = expanded + pruned;
+        double pruneRatio = total > 0 ? 100.0 * pruned / total : 0.0;
+        heatmapStatusLabel.setText(String.format(
+                "[DPM A*]  expanded=%,d   pruned=%,d (%.1f%%)   elapsed=%,d ms",
+                expanded, pruned, pruneRatio, elapsedMs));
+        heatmapStatusLabel.setStyle(
+                "-fx-text-fill:" + Styles.RSSI_CYAN_HEX + ";" +
+                "-fx-font-size:12px;" +
+                "-fx-font-weight:600;" +
+                "-fx-font-family:'JetBrains Mono','Consolas','Monaco',monospace;"
+        );
+        heatmapStatusLabel.setVisible(true);
+        heatmapStatusLabel.setManaged(true);
+        // statusClearTimer는 건드리지 않음 → 다음 히트맵 생성 전까지 유지
     }
 
     /** 히트맵 상태 라벨 숨김 */

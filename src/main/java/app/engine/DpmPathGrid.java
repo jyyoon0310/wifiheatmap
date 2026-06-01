@@ -27,9 +27,13 @@ import java.util.PriorityQueue;
  *     f : 반송 주파수 [Hz]
  *     c : 광속 299 792 458 m/s
  *   tⱼ : j번째 벽 통과 손실 [dB]  (재질·밴드별, WallMaterial 정의값 사용)
- *   f(φᵢ) = INTERACTION_A × φᵢ [°]: i번째 방향 전환 손실 (Plets 2012 선형 모델)
- *     φᵢ : 전환 각도 [°],  A = 0.0556 dB/° (드라이월 지배 건물 보정값)
- *     ≈ 5 dB / 90°
+ *   f(φᵢ) = A(material) × φᵢ [°]: i번째 방향 전환 손실 (Plets 2012 선형 모델)
+ *     φᵢ : 전환 각도 [°]
+ *     A = WallMaterial.cornerLossDb90() / 90.0  [dB/°]
+ *       — 경로 엣지를 교차하는 벽 중 가장 단단한 재질의 값을 사용
+ *       — 벽 없음: DEFAULT_INTERACTION_DB90 / 90.0 = 2.0/90 ≈ 0.022 dB/°
+ *       — 드라이월(Plets 2012 기준): 5.0/90 ≈ 0.056 dB/°
+ *       — 콘크리트(Plets 2012 Fig.6, 한국 RC 실측 보정): 17.5/90 ≈ 0.194 dB/°
  *   Ω : 도파로 이득 [dB] — 복도·통로에서 신호 집중 이득
  *     Ω = corridorScore × 10 × DELTA_N × log₁₀(l / l_prev)
  *     corridorScore ∈ [0,1]: 복도 폭 기반 점수 (1 = 완벽한 복도)
@@ -72,10 +76,31 @@ public final class DpmPathGrid {
     private static final int    DIR_SOURCE    = 16;
     /** 상태 방향 수 (0-15: 16방향, 16: 소스) */
     private static final int    N_DIRS        = 17;
-    /** 방향 전환 손실 계수 [dB/°] — 드라이월 지배 건물 보정값 (Plets 2012) */
-    private static final double INTERACTION_A = 0.0556;
+    /**
+     * 열린 공간(벽 없음)에서의 방향전환 손실 [dB/90°].
+     * 벽이 없는 자유 공간에서 경로가 꺾일 때의 최소 손실.
+     * 재질이 있는 벽 옆에서 꺾이면 WallMaterial.cornerLossDb90() 값을 사용.
+     */
+    private static final double DEFAULT_INTERACTION_DB90 = 2.0;
     /** 손실을 적용할 최소 전환 각도 [°] — 격자 노이즈 제거 */
     private static final double MIN_BEND_DEG  = 10.0;
+
+    // ── 실내 산란 보정 ──────────────────────────────────────────────────────
+    /**
+     * Plets 2012 Eq.1 권장값: n = 2 (자유공간 지수 고정).
+     *
+     * "A first limitation we impose ourselves is the use of the free-space loss model
+     *  for the distance loss (n=2, PL₀=40 dB, d₀=1m), because we aim to use a general
+     *  model, avoiding fitting and tuning." — Plets et al., EURASIP JWCN 2012:123
+     *
+     * 본 시뮬레이터는 특정 환경 교정 없이 다양한 평면도에 범용 적용하는 것이 목적이므로
+     * 단일 측정점 역산값 대신 논문 표준값(n=2, INDOOR_N_EXTRA=0)을 사용한다.
+     * 절대 오차(±10 dBm)보다 AP 위치별 상대 비교의 정확도가 우선.
+     *
+     * 물리 PL에만 적용; 경로 선택(selCost)에는 미반영 (Dijkstra 단조성 유지).
+     */
+    private static final double INDOOR_N_EXTRA_24  = 0.0;  // n_eff = 2.0 (Plets 2012)
+    private static final double INDOOR_N_EXTRA_5   = 0.0;  // n_eff = 2.0 (Plets 2012)
 
     // ── 도파로 효과 (WinProp ProMan DPM 근사) ───────────────────────────────
     /** 복도 판정 최대 폭 [m] — 양쪽 벽까지 거리 합 기준 */
@@ -88,6 +113,11 @@ public final class DpmPathGrid {
     private static final double DELTA_N_CORRIDOR   = 0.6;
     /** 수직 방향 탐색 최대 스텝 수 (CORRIDOR_MAX_W_M / GRID_CELL_M ≈ 14) */
     private static final int    MAX_CORRIDOR_STEPS = 14;
+    /**
+     * 누적 도파로 이득 최대값 [dB] (Fix 2).
+     * Molisch(2011) 실측 3~7 dB 기반 — 누적 이득이 이 값을 초과하지 못하도록 클리핑.
+     */
+    private static final double MAX_WAVEGUIDE_GAIN_DB = 6.0;
 
     // ── WinProp 경로 선택 가중치 (Altair "Determination of Dominant Paths") ─
     /** 인터랙션 손실 가중치 (경로 선택 시 구부러짐 회피 강화) */
@@ -112,6 +142,28 @@ public final class DpmPathGrid {
      * 콘크리트 2개(28 dB)와 비교 시 외부 경로가 항상 더 비싸도록 보장.
      */
     private static final double DETOUR_PENALTY_DB    = 20.0;
+    /**
+     * 물리 PL 우회 패널티 시작 우회율 (Fix 3).
+     * detourRatio > PHYS_DETOUR_THRESHOLD 부터 물리 PL에도 패널티 추가.
+     * 건물 외부를 경유하는 경로는 실제로 추가 감쇠가 존재함.
+     */
+    private static final double PHYS_DETOUR_THRESHOLD = 1.3;
+    /** 물리 PL 우회 패널티 [dB / (우회율 초과분)]. 우회율 1.5이면 (1.5-1.3)×5 = 1 dB. */
+    private static final double PHYS_DETOUR_DB_PER    = 5.0;
+
+    // ── A* 그리디 가지치기 (Greedy DPM) ───────────────────────────────────
+    /**
+     * 선택 비용 selCost 임계값 [dB]. 누적 selCost가 이 값을 초과하는 노드는
+     * 큐에 넣지 않고 가지치기. Wölfle et al. 2005의 "지배적 경로(에너지 95%)
+     * 만 고려" 컨셉과 부합.
+     *
+     * EIRP ≈ 22 dBm, 의미 있는 RSSI 하한 ≈ -110 dBm
+     * → 의미 있는 PL ≤ 132 dB
+     * → selCost는 LI·interaction, -LW·waveguide 가중 포함이므로 약간 여유 두고 150 dB로 설정.
+     *
+     * Double.MAX_VALUE / 4로 두면 사실상 가지치기 비활성화 (회귀 테스트용).
+     */
+    private static final double MAX_USABLE_SELCOST_DB = 150.0;
 
     // 16-방향: 직선 4 + 대각선 4 + 나이트 무브 8 (22.5° 간격)
     private static final double S2 = Math.sqrt(2.0);
@@ -156,6 +208,31 @@ public final class DpmPathGrid {
     private double[] bestInteractDb; // 누적 방향 전환 손실 [dB]
     private double[] bestWaveDb;     // 누적 도파로 이득 [dB]
 
+    // ── A* / Greedy 카운터 (발표용 비교 데이터) ───────────────────────────
+    private long expandedNodeCount = 0;  // 큐에서 꺼내 실제 확장한 노드 수
+    private long prunedNodeCount   = 0;  // 임계값으로 가지치기된 노드 수
+    private long elapsedMs         = 0;  // 탐색 소요 시간 [ms]
+
+    /**
+     * 인스턴스별 가지치기 임계값 (dB). 기본은 클래스 상수 {@link #MAX_USABLE_SELCOST_DB}.
+     * AP 추천 등에서 가지치기 OFF로 비교 측정하려면 {@link #setGreedyEnabled(boolean)} false 호출.
+     */
+    private double maxUsableSelCost = MAX_USABLE_SELCOST_DB;
+
+    /** 가지치기 ON/OFF. false면 사실상 vanilla Dijkstra (회귀 테스트·벤치마크용). */
+    public void setGreedyEnabled(boolean enabled) {
+        this.maxUsableSelCost = enabled ? MAX_USABLE_SELCOST_DB : Double.MAX_VALUE / 4;
+    }
+
+    /**
+     * 가지치기 임계값 직접 지정 [dB selCost 단위].
+     * 호출처별 차등 적용용 (히트맵: 관대, AP 추천: 공격적).
+     * Double.POSITIVE_INFINITY 또는 매우 큰 값 → 사실상 OFF.
+     */
+    public void setPruningThresholdDb(double thresholdDb) {
+        this.maxUsableSelCost = Double.isFinite(thresholdDb) ? thresholdDb : Double.MAX_VALUE / 4;
+    }
+
     // ── 생성자 ────────────────────────────────────────────────────────────
 
     /**
@@ -190,13 +267,24 @@ public final class DpmPathGrid {
     // ── 공개 API ──────────────────────────────────────────────────────────
 
     /**
-     * Dijkstra 실행: AP 위치에서 모든 격자 셀까지의 최소 경로 손실 계산.
+     * Dijkstra 탐색: AP 위치에서 모든 격자 셀까지의 최소 경로 손실 계산.
+     *
+     * 1-source N-target 문제 (히트맵·AP 추천 후보 평가)에 최적. A* 휴리스틱은
+     * 정밀 측정 결과 multi-target 시나리오에서 효과가 없어 제거됨.
+     *
+     * 가지치기: selCost > maxUsableSelCost 인 노드를 큐에 enqueue하지 않음.
+     * wall-clock 효과는 미미하지만 메모리 효율(큐 객체 할당 감소) +
+     * coverage 정확도 보존 측면에서 유지.
      *
      * @param sourceXPx AP 위치 X [픽셀]
      * @param sourceYPx AP 위치 Y [픽셀]
      * @param freqGhz   반송 주파수 [GHz]
      */
     public void runDijkstra(double sourceXPx, double sourceYPx, double freqGhz) {
+        long startNanos = System.nanoTime();
+        expandedNodeCount = 0;
+        prunedNodeCount   = 0;
+
         int n = N_DIRS * gw * gh;
         Arrays.fill(bestSelCost,    UNREACHABLE);
         Arrays.fill(bestCost,       UNREACHABLE);
@@ -216,18 +304,20 @@ public final class DpmPathGrid {
         bestCost[srcState]    = srcPl;
         bestLenM[srcState]    = MIN_SRC_DIST_M;
 
-        // PriorityQueue: [selectionCost, stateId]
+        // PriorityQueue: [selCost, stateId] — 표준 Dijkstra
         PriorityQueue<double[]> pq = new PriorityQueue<>(
                 Comparator.comparingDouble(e -> e[0]));
         pq.offer(new double[]{srcPl, srcState});
 
         while (!pq.isEmpty()) {
             double[] top     = pq.poll();
-            double   selCost = top[0];
+            double   fValue  = top[0];
             int      state   = (int) top[1];
+            double   selCost = bestSelCost[state];
 
-            // stale entry 제거
-            if (selCost > bestSelCost[state] + 1e-9) continue;
+            // stale entry 제거: 이미 더 나은 selCost가 기록된 노드
+            if (fValue > selCost + 1e-9) continue;
+            expandedNodeCount++;
 
             int    dirIn   = state / (gw * gh);
             int    cellIdx = state % (gw * gh);
@@ -252,9 +342,13 @@ public final class DpmPathGrid {
                 double edgeLenM = EDGE_LEN[dirOut] * cellPx * scaleMPerPx;
                 double newLenM  = bestLenM[state] + edgeLenM;
 
-                // ③ 방향 전환 손실 (Plets 2012): L_B = A × φ [°]
+                // ③ 방향 전환 손실 (Plets 2012): L_B = A(material) × φ [°]
+                //    A = 경로 엣지를 교차하는 가장 단단한 벽 재질의 cornerLossDb90 / 90.0
+                //    벽 없으면 DEFAULT_INTERACTION_DB90 / 90.0 사용
                 double bend         = bendDeg(dirIn, dirOut);
-                double edgeIntDb    = (bend >= MIN_BEND_DEG) ? (INTERACTION_A * bend) : 0.0;
+                double interDb90    = dominantInteractionDb90AlongEdge(cx, cy, ncx, ncy);
+                double interA       = interDb90 / 90.0;
+                double edgeIntDb    = (bend >= MIN_BEND_DEG) ? (interA * bend) : 0.0;
                 double newInteractDb = bestInteractDb[state] + edgeIntDb;
 
                 // ④ 도파로 이득: log-scale로 누적 (Dijkstra 단조성 보장)
@@ -263,7 +357,8 @@ public final class DpmPathGrid {
                 double cScore     = omegaPrecomp[dirOut * gw * gh + ny * gw + nx];
                 double edgeWaveDb = cScore * 10.0 * DELTA_N_CORRIDOR
                         * Math.log10(newLenM / prevLen);
-                double newWaveDb  = bestWaveDb[state] + edgeWaveDb;
+                double newWaveDb  = Math.min(MAX_WAVEGUIDE_GAIN_DB,
+                        bestWaveDb[state] + edgeWaveDb);
 
                 // ⑤ 우회율 패널티 — 건물 외부 우회 경로 억제 (선택 비용에만 적용)
                 //    직선 거리 대비 경로 길이가 MAX_DETOUR_RATIO 초과 시 패널티 추가.
@@ -275,11 +370,25 @@ public final class DpmPathGrid {
                         (detourRatio - MAX_DETOUR_RATIO) * DETOUR_PENALTY_DB);
 
                 // ⑥ 물리 경로 손실 (출력) & 선택 비용 (LI·LW 가중, 경로 탐색용)
+                // 밴드별 실내 산란 보정: 2.4GHz n_eff=3.0, 5GHz/6GHz n_eff=2.0
+                double nExtra = (freqGhz < 3.5) ? INDOOR_N_EXTRA_24 : INDOOR_N_EXTRA_5;
+                double indoorScatter = 10.0 * nExtra
+                        * Math.log10(Math.max(1.0, newLenM));
+                // Fix 3: 물리 PL 우회 패널티 (detourRatio > 1.3 부터 선형 증가)
+                double physDetour = Math.max(0.0,
+                        (detourRatio - PHYS_DETOUR_THRESHOLD) * PHYS_DETOUR_DB_PER);
                 double newPhysPl  = fspl(newLenM, freqGhz)
-                        + newWallDb + newInteractDb - newWaveDb;
+                        + indoorScatter + newWallDb + newInteractDb
+                        - newWaveDb + physDetour;
                 double newSelCost = fspl(newLenM, freqGhz)
                         + newWallDb + LI * newInteractDb - LW * newWaveDb
                         + detourPenalty;
+
+                // ★ 그리디 가지치기: 사용 불가 수준의 신호 영역은 큐에 안 넣음
+                if (newSelCost > maxUsableSelCost) {
+                    prunedNodeCount++;
+                    continue;
+                }
 
                 int nextState = si(nx, ny, dirOut);
                 if (newSelCost < bestSelCost[nextState]) {
@@ -293,7 +402,15 @@ public final class DpmPathGrid {
                 }
             }
         }
+
+        elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
     }
+
+    // ── 카운터 getter (가지치기 효과 측정용) ──────────────────────────────
+    public long getExpandedNodeCount() { return expandedNodeCount; }
+    public long getPrunedNodeCount()   { return prunedNodeCount;   }
+    public long getElapsedMs()         { return elapsedMs;         }
+
 
     /**
      * 픽셀 (px, py) 에서의 총 경로 손실 [dB].
@@ -358,6 +475,13 @@ public final class DpmPathGrid {
      */
     private void precomputeWaveguiding() {
         // 기존 8방향 (d=0..7): 수직 레이로 복도 점수 직접 계산
+        // Khrouf 2008 (MIOP 1997 인용) Eq.3 근사:
+        //   ωᵢ(ζ) ≈ distScore × exp(-(1 - oᵢ/1.35) × LR/2)
+        // 복도 벽은 경로 방향과 수직 → αᵢ=90° → oᵢ=1.0
+        //   → reflFactor = exp(-0.259 × avgLR/2) = exp(-0.1296 × avgLR)
+        // LR = 양쪽 벽의 반사 손실 [dB] (낮을수록 더 강한 반사 → 도파로 이득 큼)
+        final double OI_PERP = 1.0;       // oᵢ for perpendicular corridor walls
+        final double ALPHA_MAX = 1.35;    // Khrouf 2008 Eq.5 상수
         for (int d = 0; d < 8; d++) {
             int perpL = (d + 2) % 8; // 90° 왼쪽 수직
             int perpR = (d + 6) % 8; // 90° 오른쪽 수직
@@ -366,9 +490,17 @@ public final class DpmPathGrid {
                     double dL = rayDistToWallM(gx, gy, perpL);
                     double dR = rayDistToWallM(gx, gy, perpR);
                     double W  = dL + dR;
-                    double score = (dL > 0.01 && dR > 0.01 && W < CORRIDOR_MAX_W_M)
-                            ? Math.max(0.0, 1.0 - W / CORRIDOR_MAX_W_M)
-                            : 0.0;
+                    double score;
+                    if (dL > 0.01 && dR > 0.01 && W < CORRIDOR_MAX_W_M) {
+                        double distScore = Math.max(0.0, 1.0 - W / CORRIDOR_MAX_W_M);
+                        double lrL = rayWallReflLoss(gx, gy, perpL);
+                        double lrR = rayWallReflLoss(gx, gy, perpR);
+                        double avgLR = (lrL + lrR) / 2.0;
+                        double reflFactor = Math.exp(-(1.0 - OI_PERP / ALPHA_MAX) * avgLR / 2.0);
+                        score = distScore * reflFactor;
+                    } else {
+                        score = 0.0;
+                    }
                     omegaPrecomp[d * gw * gh + gy * gw + gx] = score;
                 }
             }
@@ -452,6 +584,67 @@ public final class DpmPathGrid {
             }
         }
         return loss;
+    }
+
+    /**
+     * 격자 엣지 (ax,ay)→(bx,by) 를 교차하는 벽 중 방향전환 손실이 가장 큰 재질의
+     * cornerLossDb90 [dB/90°] 반환.
+     * 교차하는 벽이 없으면 DEFAULT_INTERACTION_DB90 반환.
+     *
+     * 콘크리트·금속처럼 단단한 재질 옆에서 꺾이면 손실이 크고,
+     * 유리·목재·열린 공간에서 꺾이면 손실이 작다.
+     */
+    private double dominantInteractionDb90AlongEdge(
+            double ax, double ay, double bx, double by) {
+        double maxDb90 = DEFAULT_INTERACTION_DB90;
+        for (Wall w : walls) {
+            if (w == null) continue;
+            if (segmentsIntersectStrict(ax, ay, bx, by, w.x1, w.y1, w.x2, w.y2)) {
+                double db90 = w.getMaterial().cornerLossDb90();
+                if (db90 > maxDb90) maxDb90 = db90;
+            }
+        }
+        return maxDb90;
+    }
+
+    /**
+     * 격자 엣지를 교차하는 벽 중 반사 손실이 가장 낮은(반사가 가장 강한) 재질의
+     * reflectionLossDb() [dB] 반환. 교차 벽 없으면 -1 반환.
+     */
+    private double dominantReflLossAlongEdge(
+            double ax, double ay, double bx, double by) {
+        double minLr = -1.0;
+        for (Wall w : walls) {
+            if (w == null) continue;
+            if (segmentsIntersectStrict(ax, ay, bx, by, w.x1, w.y1, w.x2, w.y2)) {
+                double lr = w.getMaterial().reflectionLossDb();
+                if (minLr < 0 || lr < minLr) minLr = lr;
+            }
+        }
+        return minLr;
+    }
+
+    /**
+     * 격자 셀 (gx, gy)에서 dir 방향으로 쏜 레이가 처음 만나는 벽의 반사 손실 [dB].
+     * 벽 없이 경계에 도달하면 BOUNDARY_REFL_LOSS_DB 반환.
+     */
+    private static final double BOUNDARY_REFL_LOSS_DB = 15.0;
+
+    private double rayWallReflLoss(int gx, int gy, int dir) {
+        double cx = (gx + 0.5) * cellPx;
+        double cy = (gy + 0.5) * cellPx;
+        for (int s = 1; s <= MAX_CORRIDOR_STEPS; s++) {
+            int nx = gx + DDX[dir] * s;
+            int ny = gy + DDY[dir] * s;
+            if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) return BOUNDARY_REFL_LOSS_DB;
+            double ncx = (nx + 0.5) * cellPx;
+            double ncy = (ny + 0.5) * cellPx;
+            double lr = dominantReflLossAlongEdge(cx, cy, ncx, ncy);
+            if (lr >= 0) return lr;
+            cx = ncx;
+            cy = ncy;
+        }
+        return BOUNDARY_REFL_LOSS_DB;
     }
 
     /**

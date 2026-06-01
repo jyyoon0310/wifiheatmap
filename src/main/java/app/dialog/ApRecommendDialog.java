@@ -41,6 +41,7 @@ public class ApRecommendDialog {
     public static void show(Window owner, Image floorplanImage,
                             int canvasW, int canvasH,
                             app.model.WifiEnvironment env,
+                            app.model.AppState state,
                             Consumer<List<Point2D>> onApply) {
         if (floorplanImage == null) return;
 
@@ -251,7 +252,10 @@ public class ApRecommendDialog {
                     apCount, -65.0,
                     precise ? 20 : 30, precise ? 12 : 20,
                     precise, 6000, Band.GHZ_5,
-                    maskCopy, maskW, maskH, FLOOD_CELL_SIZE
+                    maskCopy, maskW, maskH, FLOOD_CELL_SIZE,
+                    true,    // useDpmEvaluation — 후보 평가 시 DPM 사용 (격자 기반 DPM)
+                    true,    // dpmGreedyEnabled — 가지치기 ON (메모리 효율)
+                    150.0    // pruningThresholdDb — 표준 임계값
             );
 
             runBtn.setText("중지");
@@ -310,8 +314,16 @@ public class ApRecommendDialog {
         Styles.styleDialogPane(dlg.getDialogPane());
 
         dlg.setResultConverter(bt -> {
-            if (bt == applyBtn && resultRef[0] != null && onApply != null)
-                onApply.accept(resultRef[0].positions());
+            if (bt == applyBtn) {
+                // 선택한 사용 공간 마스크를 공용 상태에 저장 → 측정 결과가 이 영역으로 스코프됨
+                if (state != null && totalFilledCells[0] > 0) {
+                    state.setCoverageMask(
+                            java.util.Arrays.copyOf(combinedMask, combinedMask.length),
+                            maskW, maskH, FLOOD_CELL_SIZE);
+                }
+                if (resultRef[0] != null && onApply != null)
+                    onApply.accept(resultRef[0].positions());
+            }
             return null;
         });
         dlg.showAndWait();

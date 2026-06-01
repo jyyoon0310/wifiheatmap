@@ -14,19 +14,21 @@ public enum WallMaterial {
 
     // ===== 재질 프리셋 (ITU-R P.2040 + NIST IR 6055 + COST 231 실측 기반) =====
     // 반사 손실: Fresnel 계수 기반 (낮을수록 반사 강함)
-    BOOKSHELF("책장", "bookshelf", 2, 3, "#8D6E63", 4, 1.99, 0.0, 0.0047, 1.0718), // Wood — 5GHz: 2→3 (문헌 3-4)
-    CUBICLE("칸막이", "cubicle", 2, 3, "#607D8B", 4, 1.48, 0.0, 0.0011, 1.0750), // Ceiling board — 5GHz: 2→3
-    DRY_WALL("석고보드", "drywall", 3, 5, "#B0BEC5", 6, 2.73, 0.0, 0.0085, 0.9395), // Plasterboard — 5GHz: 3→5 (문헌 4-6)
-    BRICK_WALL("벽돌벽", "brick", 6, 13, "#C62828", 10, 3.91, 0.0, 0.0238, 0.16), // 2.4: 5→6, 5GHz: 15→13 (NIST 6-12 / 12-18 중앙)
-    WINDOW("창문", "glass", 2, 4, "#26C6DA", 6, 6.31, 0.0, 0.0036, 1.3394), // OK (문헌 1-3 / 3-5)
-    DOOR("문", "door", 3, 5, "#FB8C00", 6, 1.99, 0.0, 0.0047, 1.0718), // OK (문헌 3-6 / 4-8)
-    ELEVATOR_SHAFT("엘리베이터 샤프트", "elevator", 13, 15, "#6A1B9A", 1, 1.0, 0.0, 1.0e7, 0.0), // 반사 12→1 (금속 거의 완전 반사), 감쇠 10→13/15
+    // interactionDb90: DPM 방향전환 손실 [dB/90°] — 재질이 단단할수록 회절 손실 큼
+    //   Plets(2012) drywall 기준 5.0 dB/90°; 콘크리트·금속은 상향, 유리·목재는 하향
+    BOOKSHELF("책장", "bookshelf", 2, 3, "#8D6E63", 4, 3.0, 1.99, 0.0, 0.0047, 1.0718), // Wood — interactionDb90=3.0
+    CUBICLE("칸막이", "cubicle", 2, 3, "#607D8B", 4, 3.0, 1.48, 0.0, 0.0011, 1.0750), // Ceiling board — interactionDb90=3.0
+    DRY_WALL("석고보드", "drywall", 3, 5, "#B0BEC5", 6, 5.0, 2.73, 0.0, 0.0085, 0.9395), // Plasterboard — Plets(2012) 기준값
+    BRICK_WALL("벽돌벽", "brick", 6, 13, "#C62828", 10, 8.0, 3.91, 0.0, 0.0238, 0.16), // 단단, 강한 회절
+    WINDOW("창문", "glass", 2, 4, "#26C6DA", 6, 3.0, 6.31, 0.0, 0.0036, 1.3394), // 투명, 낮은 회절
+    DOOR("문", "door", 3, 5, "#FB8C00", 6, 4.0, 1.99, 0.0, 0.0047, 1.0718), // 석고보드 유사
+    ELEVATOR_SHAFT("엘리베이터 샤프트", "elevator", 13, 15, "#6A1B9A", 1, 12.0, 1.0, 0.0, 1.0e7, 0.0), // 금속, 최대 회절
 
     // ===== Backward compatibility / optional presets =====
-    CONCRETE_WALL("콘크리트벽", "wall", 14, 18, "#424242", 8, 5.24, 0.0, 0.0462, 0.7822), // 5GHz: 18 (NIST 102mm=22, 아파트 내벽 120-150mm 기준 보정)
+    CONCRETE_WALL("콘크리트벽", "wall", 22, 26, "#424242", 8, 17.5, 5.24, 0.0, 0.0462, 0.7822), // 한국 아파트 외벽(20~25cm 철근 콘크리트) 실측 기준: 2.4GHz 22dB, 5GHz 26dB. cornerLossDb90=17.5 per Plets 2012
 
     // 사용자 지정(스피너로 직접 입력하는 경우)
-    CUSTOM("사용자지정", "wall", 0, 0, "#212121", 8, Double.NaN, 0.0, 0.0, 0.0);
+    CUSTOM("사용자지정", "wall", 0, 0, "#212121", 8, 5.0, Double.NaN, 0.0, 0.0, 0.0);
 
     private final String label;
     private final String kind;
@@ -34,6 +36,8 @@ public enum WallMaterial {
     private final double attn5Db;
     private final String colorHex;
     private final double reflLossDb;
+    /** DPM 방향전환 손실 [dB/90°]. 재질이 단단할수록 크다 (열린공간 기본값=2.0). */
+    private final double interactionDb90;
     private final double epsA;
     private final double epsB;
     private final double sigC;
@@ -42,6 +46,7 @@ public enum WallMaterial {
     WallMaterial(String label, String kind,
                  double attn24Db, double attn5Db,
                  String colorHex, double reflLossDb,
+                 double interactionDb90,
                  double epsA, double epsB,
                  double sigC, double sigD) {
         this.label = label;
@@ -50,6 +55,7 @@ public enum WallMaterial {
         this.attn5Db = attn5Db;
         this.colorHex = colorHex;
         this.reflLossDb = reflLossDb;
+        this.interactionDb90 = interactionDb90;
         this.epsA = epsA;
         this.epsB = epsB;
         this.sigC = sigC;
@@ -90,6 +96,15 @@ public enum WallMaterial {
     /** 1차 반사 시 재질별 추가 손실(dB) */
     public double reflectionLossDb() {
         return reflLossDb;
+    }
+
+    /**
+     * DPM 경로가 이 재질 옆에서 90° 꺾일 때의 방향전환 손실 [dB/90°].
+     * Plets(2012) 드라이월 기준 5.0 dB/90°를 기준으로 재질별 조정.
+     * 열린 공간(벽 없음)의 기본값은 DpmPathGrid.DEFAULT_INTERACTION_DB90 = 2.0 dB/90°.
+     */
+    public double cornerLossDb90() {
+        return interactionDb90;
     }
 
     public boolean hasPermittivityModel() {

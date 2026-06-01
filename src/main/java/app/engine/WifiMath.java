@@ -814,13 +814,14 @@ public final class WifiMath {
         double t = (rssi - vmin) / (vmax - vmin);
         t = Math.max(0.0, Math.min(1.0, t));
 
-        // [t, R, G, B] — 5단계 색상 정지점 (NetSpot 스타일 세밀한 그라디언트)
+        // [t, R, G, B] — 5단계 색상 정지점 (BottomBar 범례와 동기화)
+        // 파랑(#2D6CF6) → 시안(#34D1FF) → 녹색(#2FD44A) → 노랑(#F6D32D) → 주황(#F0632D)
         double[][] stops = {
-                {0.00,   0, 100,   0},   // Dark Green (매우 약한 신호)
-                {0.25,   0, 200,   0},   // Green
-                {0.50, 255, 235,   0},   // Yellow
-                {0.75, 255, 140,   0},   // Orange
-                {1.00, 230,  40,  20}    // Red (매우 강한 신호)
+                {0.00,  45, 108, 246},   // #2D6CF6 Blue   — 매우 약한 신호
+                {0.25,  52, 209, 255},   // #34D1FF Cyan
+                {0.50,  47, 212,  74},   // #2FD44A Green
+                {0.75, 246, 211,  45},   // #F6D32D Yellow
+                {1.00, 240,  99,  45}    // #F0632D Orange — 매우 강한 신호
         };
 
         int i = 0;
