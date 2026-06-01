@@ -157,12 +157,12 @@ function numTitle(slide, x, y, n, title, color, w) {
 
   const cols = [
     { bar: C.teal, t: "톱니바퀴처럼 엇갈린 배치", term: "Yee 격자",
-      body: "전기장과 자기장을 같은 칸이 아니라 반 칸씩 어긋나게 둡니다. 톱니바퀴가 맞물리듯, 계산이 안정적이고 정확해집니다." },
+      body: "전기장과 자기장을 반 칸씩 어긋난 위치에 배치. 톱니바퀴가 맞물리듯 두 장이 교차하며 갱신되어, 계산이 안정적이고 정확함." },
     { bar: C.orange, t: "안전한 시간 간격", term: "CFL 조건",
-      body: "한 스텝의 시간이 너무 길면 물결이 칸을 건너뛰어 계산이 폭주(발산)합니다. 그래서 한계의 0.90배로만 전진합니다.",
+      body: "시간 간격이 너무 크면 물결이 칸을 건너뛰어 계산이 발산. 안정 한계의 0.90배로 제한해 폭주를 방지.",
       code: "Δt = 0.90 · Δx / (c·√2)" },
     { bar: C.green, t: "경계의 메아리 차단", term: "PML 흡수층",
-      body: "방 끝에서 물결이 튕겨 되돌아오면 가짜 간섭이 생깁니다. 가장자리에 ‘흡수 스펀지’ 층을 둬 끝없는 공간처럼 만듭니다." },
+      body: "경계에서 반사된 물결은 가짜 간섭의 원인. 가장자리에 ‘흡수 스펀지’ 층을 둬 무한히 열린 공간처럼 처리." },
   ];
   const cw = 3.93, cg = 0.17, y0 = 1.8, ch = 3.35;
   cols.forEach((col, i) => {
@@ -185,9 +185,9 @@ function numTitle(slide, x, y, n, title, color, w) {
   card(s, 0.6, 5.4, 12.13, 1.2, C.amber);
   s.addText("+  벽을 숫자로 새긴다", { x: 0.9, y: 5.58, w: 2.9, h: 0.4, fontFace: FONT, fontSize: 14, bold: true, color: C.ink, valign: "middle", margin: 0 });
   s.addText([
-    { text: "각 칸에 재질의 전기적 성질(유전율 εr, 전도율 σ)을 기록하면, ", options: { color: C.body } },
-    { text: "콘크리트·유리·석고보드가 전파를 서로 다르게 막고 통과시키는 현상", options: { bold: true, color: C.ink } },
-    { text: "이 저절로 재현됩니다.", options: { color: C.body } },
+    { text: "각 칸에 재질의 전기적 성질(유전율 εr, 전도율 σ)을 기록 → ", options: { color: C.body } },
+    { text: "콘크리트·유리·석고보드의 서로 다른 차폐·투과 특성", options: { bold: true, color: C.ink } },
+    { text: "이 별도 보정 없이 자연히 반영.", options: { color: C.body } },
   ], { x: 3.55, y: 5.58, w: 8.9, h: 0.85, fontFace: FONT, fontSize: 12.5, valign: "middle", margin: 0, lineSpacingMultiple: 1.06 });
   footer(s, 4);
 })();
