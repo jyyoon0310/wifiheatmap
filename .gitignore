@@ -47,3 +47,12 @@ bin/
 ### Misc ###
 *.pptx
 *.ppt
+
+### Android SDK 로컬 설정 (머신 종속, 커밋 금지) ###
+local.properties
+
+### 헤드리스 하니스 빌드 산출물 ###
+presentation/mh_build/
+
+### IDE 캐시 ###
+.idea/caches/
