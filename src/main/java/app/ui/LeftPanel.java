@@ -56,6 +56,7 @@ public class LeftPanel {
     private final Label resultHeadlineLabel = new Label("—");       // 큰 %
     private final Label resultHeadlineSubLabel = new Label("");      // "신호 양호 공간 비율"
     private final Label resultCoachLabel = new Label("");            // 색바 아래 코칭 메시지
+    private VBox resultHeadlineBox, resultBarBox;                     // 안내 모드에서 통째로 숨김
     private final GridPane resultBarRow = new GridPane();            // 4단계 비율 색바 (색만)
     private final StackPane[] resultBarCells = new StackPane[4];     // 약함/주의/양호/강함
     private final ColumnConstraints[] resultBarCols = new ColumnConstraints[4]; // 칸별 비율(%)
@@ -113,6 +114,12 @@ public class LeftPanel {
     private final Button deleteWallBtn = new Button("삭제");
     private final VBox wallListCard;
     private final ListView<Wall> wallListView = new ListView<>();
+    /** 벽 요약 ("콘크리트벽 40 · 문 5 …") + 목록 펼치기 토글 */
+    private final Label wallSummaryLabel = new Label("");
+    private final javafx.scene.control.Button wallListToggle = new javafx.scene.control.Button("목록 보기");
+    private Label wallListTitle;
+    /** 작업 진행 단계 (패널 맨 위) */
+    private final StepIndicator steps = new StepIndicator();
 
     // 벽 그리기 완료 → AP 추천 진입 (WALL 모드에서만 노출)
     private VBox wallDoneCard;
@@ -466,10 +473,22 @@ public class LeftPanel {
                 "-fx-background-color:transparent;" +
                 "-fx-border-color:transparent;");
 
+        // 벽 49개를 "벽 1 – 콘크리트벽 …" 으로 나열하면 의미 없는 줄만 길어진다 →
+        // 재질별 요약을 보여 주고, 목록은 필요할 때 펼친다 (벽 선택은 캔버스 클릭으로도 된다).
+        wallSummaryLabel.setWrapText(true);
+        wallSummaryLabel.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        Themed.bind(wallSummaryLabel, () -> "-fx-text-fill:" + Styles.textSub() + ";"
+                + "-fx-font-size:12px;-fx-font-family:" + Styles.FONT_STACK + ";");
+        Styles.styleFlatButton(wallListToggle);
+        wallListToggle.setOnAction(e -> setWallListExpanded(!wallListView.isVisible()));
         wallListCard = Styles.card(
-                "벽 목록",
+                "벽",
+                wallSummaryLabel,
+                wallListToggle,
                 wallListView
         );
+        wallListTitle = (Label) wallListCard.getChildren().get(0);
+        setWallListExpanded(false);
 
         // ── 벽 그리기 완료 버튼 카드 (WALL 모드에서만 노출) ──────────────
         Styles.styleAccentButton(wallDoneBtn);
@@ -479,7 +498,7 @@ public class LeftPanel {
         wallDoneHint.setWrapText(true);
         wallDoneCard = Styles.card("다음 단계", wallDoneBtn, wallDoneHint);
 
-        root.getChildren().addAll(resultCard, rssiCard, scaleCard, wallDoneCard, solverCard, apDetailsCard, wallListCard, wallDetailsCard);
+        root.getChildren().addAll(steps.getNode(), resultCard, rssiCard, scaleCard, wallDoneCard, solverCard, apDetailsCard, wallListCard, wallDetailsCard);
         Styles.addThemeListener(() -> updateRssiRows(lastRssiResults));
         setScaleVisible(false);
         setSolverToolActive(false);
@@ -583,10 +602,12 @@ public class LeftPanel {
                 "-fx-font-size:" + Styles.FONT_SIZE_SUB + "px;" +
                 "-fx-font-family:" + Styles.FONT_STACK + ";");
 
+        resultHeadlineBox = headlineBox;
+        resultBarBox = new VBox(6, resultBarRow, resultLegend);
         return Styles.card(
                 "측정 결과",
-                headlineBox,
-                new VBox(6, resultBarRow, resultLegend),
+                resultHeadlineBox,
+                resultBarBox,
                 resultCoachLabel
         );
     }
@@ -603,6 +624,8 @@ public class LeftPanel {
      */
     public void setMeasurementResult(double coveragePercent, double[] gradeFractions) {
         // 안내 상태에서 숨겼던 요소 복원
+        setNodeShown(resultHeadlineBox, true);
+        setNodeShown(resultBarBox, true);
         setNodeShown(resultHeadlineLabel, true);
         setNodeShown(resultHeadlineSubLabel, true);
         setNodeShown(resultBarRow, true);
@@ -664,6 +687,9 @@ public class LeftPanel {
         setNodeShown(resultHeadlineSubLabel, false);
         setNodeShown(resultBarRow, false);
         setNodeShown(resultLegend, false);
+        // 감싼 상자까지 숨겨야 빈 상자가 카드 간격을 차지하지 않는다 (제목과 안내문 사이 빈 공간)
+        setNodeShown(resultHeadlineBox, false);
+        setNodeShown(resultBarBox, false);
         resultCoachLabel.setText(msg);
         setCardVisible(resultCard, true);
     }
@@ -798,6 +824,8 @@ public class LeftPanel {
         syncingWallSelection = true;
         wallListView.getItems().setAll(walls == null ? List.of() : walls);
         syncingWallSelection = false;
+        updateWallSummary();
+        applySectionVisibility();
 
         if (currentWall != null && !wallListView.getItems().contains(currentWall)) {
             currentWall = null;
@@ -872,6 +900,32 @@ public class LeftPanel {
 
     public void setRssiResults(List<RssiResult> rows) {
         updateRssiRows(rows == null ? List.of() : rows);
+        applySectionVisibility();  // 공유기를 놓거나 지우면 신호 카드 표시가 바뀐다
+    }
+
+    /** 패널 맨 위 진행 단계 표시 (MainController 가 상태를 갱신·클릭을 연결한다). */
+    public StepIndicator getStepIndicator() { return steps; }
+
+    private void setWallListExpanded(boolean expanded) {
+        wallListView.setVisible(expanded);
+        wallListView.setManaged(expanded);
+        wallListToggle.setText(expanded ? "목록 접기" : "목록 보기");
+    }
+
+    /** "벽 49개" 제목 + "콘크리트벽 40 · 문 5 · 창문 3" 요약 (많은 재질 순). */
+    private void updateWallSummary() {
+        List<Wall> ws = wallListView.getItems();
+        if (wallListTitle != null) wallListTitle.setText("벽 " + ws.size() + "개");
+        java.util.Map<String, Integer> byMat = new java.util.LinkedHashMap<>();
+        for (Wall w : ws) {
+            String k = (w == null || w.getMaterial() == null) ? "기타" : w.getMaterial().labelKo();
+            byMat.merge(k, 1, Integer::sum);
+        }
+        StringBuilder sb = new StringBuilder();
+        byMat.entrySet().stream()
+                .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+                .forEach(e -> sb.append(sb.length() == 0 ? "" : " · ").append(e.getKey()).append(' ').append(e.getValue()));
+        wallSummaryLabel.setText(sb.toString());
     }
 
     public void setOnApPresetChanged(java.util.function.Consumer<ApPreset> c) {
@@ -899,11 +953,12 @@ public class LeftPanel {
         }
 
         setCardVisible(solverCard, false);
-        setCardVisible(rssiCard, true);
+        // 내용이 없는 카드는 숨긴다 (첫 화면의 "벽이 없습니다" 빈 카드 등)
+        setCardVisible(rssiCard, envRef != null && !envRef.getAps().isEmpty());
         setCardVisible(scaleCard, scaleVisible);
         setCardVisible(wallDoneCard, wallToolActive);
         setCardVisible(apDetailsCard, currentAp != null);
-        setCardVisible(wallListCard, true);
+        setCardVisible(wallListCard, !wallListView.getItems().isEmpty());
         setCardVisible(wallDetailsCard, currentWall != null);
     }
 

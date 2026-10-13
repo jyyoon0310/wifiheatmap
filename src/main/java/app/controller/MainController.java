@@ -225,6 +225,17 @@ public class MainController {
         // 고급 모드 ↔ TopToolbar 가시성 양방향 바인딩
         window.getTopToolbar().bindAdvancedMode(state.advancedModeProperty());
         window.getLeftPanel().setOnNotify(this::showToast);
+        // 진행 단계를 누르면 그 단계의 도구로
+        window.getLeftPanel().getStepIndicator().setOnStepClicked(step -> {
+            switch (step) {
+                case 0 -> openFloorplan();
+                case 1 -> activateTool(AppState.Tool.SCALE, true);
+                case 2 -> activateTool(AppState.Tool.WALL, true);
+                case 3 -> activateTool(AppState.Tool.AP, true);
+                case 4 -> generateHeatmapNow();
+                default -> { }
+            }
+        });
         // 솔버 카드의 스텝·fps·디버그 수치도 고급 모드에서만
         window.getLeftPanel().setAdvancedDetailsVisible(state.isAdvancedMode());
         state.advancedModeProperty().addListener((obs, oldV, newV) -> {
@@ -553,6 +564,13 @@ public class MainController {
 
         // 단계별 가이드 오버레이 갱신
         boolean hasFloorplan = window.getCanvasView().getBaseImageView().getImage() != null;
+        // 진행 단계: ① 도면 ② 축척 ③ 벽 ④ 공유기 ⑤ 신호 지도
+        window.getLeftPanel().getStepIndicator().setDone(
+                hasFloorplan,
+                Double.isFinite(env.getScaleMPerPx()) && env.getScaleMPerPx() > 0,
+                !env.getWalls().isEmpty(),
+                !env.getAps().isEmpty(),
+                heatmapImage != null);
         // 도면이 없으면 확대할 대상이 없으므로 줌 컨트롤도 숨긴다
         javafx.scene.Node zoom = window.getTopToolbar().getZoomControls();
         if (zoom != null) zoom.setVisible(hasFloorplan);
