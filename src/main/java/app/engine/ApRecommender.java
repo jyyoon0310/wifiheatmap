@@ -674,7 +674,7 @@ public class ApRecommender {
     }
 
     // ── 벽 래스터화 (Bresenham + 두께) ──────────────────────────────────────
-    private static void rasterWall(boolean[] grid, int mw, int mh,
+    static void rasterWall(boolean[] grid, int mw, int mh,
                                    int x0, int y0, int x1, int y1, int thick) {
         int dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
         int dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;

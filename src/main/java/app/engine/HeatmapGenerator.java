@@ -38,6 +38,8 @@ public class HeatmapGenerator {
         public final boolean gpuFallback;
         /** DPM 모드에서 생성된 그리드 캐시 (Legacy/FDTD면 null) */
         public final java.util.Map<AP, java.util.Map<Band, DpmPathGrid>> dpmGrids;
+        /** 건물 안쪽 마스크 (없으면 null) — 흐림 처리 뒤 경계를 벽선에 맞춰 다시 자르는 데 쓴다. */
+        public BuildingMask buildingMask;
         /** DPM A* 측정값 (Legacy/FDTD면 0). 발표 시연용. */
         public final long dpmExpandedNodes;
         public final long dpmPrunedNodes;
@@ -325,9 +327,17 @@ public class HeatmapGenerator {
             System.err.flush();
         }
 
+        // 건물 안쪽만 칠한다 — 바깥 여백까지 칠하면 지도가 난잡해 보이고 "어디까지가 집인지"가
+        // 흐려진다. 외벽이 닫혀 있지 않아 안쪽을 판정할 수 없으면 그대로 전체를 표시한다.
+        // (경계는 뒤이은 boxBlur 가 알파까지 번지게 해 부드럽게 처리된다.)
+        BuildingMask building = BuildingMask.compute(walls, width, height);
+        if (building != null) building.clip(argb, width, height);
+
         // blur는 MainController의 setOnSucceeded(FX Thread)에서 처리
-        return new HeatmapResult(argb, width, height, smoothRadiusPx, false, false, grids,
+        HeatmapResult result = new HeatmapResult(argb, width, height, smoothRadiusPx, false, false, grids,
                 totalExpanded, totalPruned, totalElapsedMs);
+        result.buildingMask = building;
+        return result;
     }
 
     private HeatmapResult generateCpu(int width,

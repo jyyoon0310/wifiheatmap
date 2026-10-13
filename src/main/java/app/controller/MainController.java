@@ -1174,6 +1174,14 @@ public class MainController {
             if (result.smoothRadiusPx > 0) {
                 img = app.engine.WifiMath.boxBlur(img, result.smoothRadiusPx);
             }
+            // 흐림이 외벽 바깥으로 ~15px 번지므로, 경계를 벽선에 맞춰 다시 자른다
+            if (result.buildingMask != null) {
+                int iw = (int) img.getWidth(), ih = (int) img.getHeight();
+                int[] px = new int[iw * ih];
+                img.getPixelReader().getPixels(0, 0, iw, ih, PixelFormat.getIntArgbInstance(), px, 0, iw);
+                result.buildingMask.clip(px, iw, ih);
+                img.getPixelWriter().setPixels(0, 0, iw, ih, PixelFormat.getIntArgbInstance(), px, 0, iw);
+            }
 
             heatmapImage = img;
 
