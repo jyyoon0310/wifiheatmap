@@ -21,7 +21,9 @@ public class ApController {
     private double dragOffsetY = 0.0;
 
     // hit-test 반경(px)
-    public static final double HIT_R = 10.0;
+    // 마커(반지름 11 + 흰 테두리 2px)보다 조금 넓게 — 가장자리를 눌러도 선택되도록.
+    // (작으면 마커 가장자리 클릭이 빈 곳 클릭으로 처리돼 새 공유기가 생긴다)
+    public static final double HIT_R = 15.0;
 
     public ApController(WifiEnvironment env) {
         this.env = env;

@@ -263,29 +263,11 @@ public class CanvasView {
             }
         }
 
-        // AP
+        // AP — 공유기 마커(흰 테두리 원 + Wi-Fi 기호) + 아래 이름표.
+        // (예전: 6px 파란 점 + 배경 없는 글씨 → 히트맵 위에서 잘 안 보이고 문 호와 겹쳤다)
         for (AP ap : env.getAps()) {
             if (ap == null || !ap.enabled) continue;
-
-            double r = 6;
-            boolean isSelected = (ap == selectedAp);
-            Color dotColor = isSelected ? Color.ORANGE : Color.DODGERBLUE;
-
-            // ✅ 기본은 "파란 점"만 (테두리/링 없음)
-            g.setFill(dotColor);
-            g.fillOval(ap.x - r, ap.y - r, 2 * r, 2 * r);
-
-            // ✅ hover 링만 표시 (VIEW 포함)
-            if (ap == hoverAp) {
-                g.setStroke(dotColor);
-                g.setLineWidth(2.0);
-                double rr = r + 7;
-                g.strokeOval(ap.x - rr, ap.y - rr, 2 * rr, 2 * rr);
-            }
-
-            // 이름
-            g.setFill(isSelected ? Color.ORANGE : (Styles.isDark() ? Color.web("#E8E8ED") : Color.BLACK));
-            g.fillText(ap.name, ap.x + r + 4, ap.y - r - 2);
+            drawApMarker(ap, ap == selectedAp, ap == hoverAp);
         }
 
         // SCALE 확정선 (두 점 확정되면 실선)
@@ -350,5 +332,69 @@ public class CanvasView {
             ty += lineH;
         }
         g.restore();
+    }
+
+    // ── 공유기 마커 ──────────────────────────────────────────────────────────
+    private static final double AP_R = 11;          // 마커 반지름 [px, 도면 좌표]
+    private static final Font AP_LABEL_FONT = Font.font("System", javafx.scene.text.FontWeight.SEMI_BOLD, 12);
+
+    private void drawApMarker(AP ap, boolean selected, boolean hovered) {
+        double x = ap.x, y = ap.y;
+        Color fill = selected ? Color.web("#FF9500") : Color.web(Styles.accent());
+
+        // 마우스를 올리면 바깥 고리
+        if (hovered || selected) {
+            g.setFill(fill.deriveColor(0, 1, 1, 0.22));
+            double hr = AP_R + 7;
+            g.fillOval(x - hr, y - hr, hr * 2, hr * 2);
+        }
+
+        // 원 + 흰 테두리 + 그림자
+        javafx.scene.effect.DropShadow shadow = new javafx.scene.effect.DropShadow(6, 0, 1.5, Color.rgb(0, 0, 0, 0.35));
+        g.setEffect(shadow);
+        g.setFill(Color.WHITE);
+        g.fillOval(x - AP_R - 2, y - AP_R - 2, (AP_R + 2) * 2, (AP_R + 2) * 2);
+        g.setEffect(null);
+        g.setFill(fill);
+        g.fillOval(x - AP_R, y - AP_R, AP_R * 2, AP_R * 2);
+
+        // Wi-Fi 기호 — 아래 점 + 동심 호 2개 (흰색)
+        g.setStroke(Color.WHITE);
+        g.setLineWidth(1.8);
+        g.setLineCap(javafx.scene.shape.StrokeLineCap.ROUND);
+        double cy = y + 4.0;
+        for (double rr : new double[]{4.2, 7.6}) {
+            g.strokeArc(x - rr, cy - rr, rr * 2, rr * 2, 45, 90, javafx.scene.shape.ArcType.OPEN);
+        }
+        g.setFill(Color.WHITE);
+        g.fillOval(x - 1.6, cy - 1.6, 3.2, 3.2);
+
+        // 이름표 — 마커 아래 알약 배경 (히트맵 색 위에서도 읽히도록)
+        String name = (ap.name == null || ap.name.isBlank()) ? "공유기" : ap.name;
+        javafx.scene.text.Text measure = new javafx.scene.text.Text(name);
+        measure.setFont(AP_LABEL_FONT);
+        double tw = measure.getLayoutBounds().getWidth();
+        double th = measure.getLayoutBounds().getHeight();
+        double padX = 7, padY = 3;
+        double bw = tw + padX * 2, bh = th + padY * 2;
+        double bx = x - bw / 2, by = y + AP_R + 6;
+        boolean dark = Styles.isDark();
+        g.setEffect(new javafx.scene.effect.DropShadow(4, 0, 1, Color.rgb(0, 0, 0, 0.25)));
+        g.setFill(dark ? Color.rgb(28, 28, 30, 0.92) : Color.rgb(255, 255, 255, 0.94));
+        g.fillRoundRect(bx, by, bw, bh, bh, bh);
+        g.setEffect(null);
+        if (selected) {
+            g.setStroke(fill);
+            g.setLineWidth(1.5);
+            g.strokeRoundRect(bx, by, bw, bh, bh, bh);
+        }
+        g.setFont(AP_LABEL_FONT);
+        g.setTextAlign(javafx.scene.text.TextAlignment.CENTER);
+        g.setTextBaseline(javafx.geometry.VPos.TOP);
+        g.setFill(dark ? Color.web("#F2F2F5") : Color.web("#1C1C1E"));
+        g.fillText(name, x, by + padY);
+        // 다른 그리기 코드가 기본 정렬을 가정하므로 되돌린다
+        g.setTextAlign(javafx.scene.text.TextAlignment.LEFT);
+        g.setTextBaseline(javafx.geometry.VPos.BASELINE);
     }
 }
