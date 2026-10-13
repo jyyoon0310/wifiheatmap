@@ -49,7 +49,7 @@ public class ApRecommendDialog {
         Dialog<Void> dlg = new Dialog<>();
         dlg.setTitle("공유기 자리 추천");
         if (owner != null) dlg.initOwner(owner);
-        dlg.getDialogPane().setPrefSize(880, 580);
+        dlg.getDialogPane().setPrefSize(880, 640);
 
         // ── 캔버스 ───────────────────────────────────────────────────────
         double scaleX = Math.min(1.0, PREVIEW_MAX_W / canvasW);
@@ -130,6 +130,9 @@ public class ApRecommendDialog {
 
         ProgressBar progress = new ProgressBar(0);
         progress.setMaxWidth(Double.MAX_VALUE); progress.setPrefHeight(5);
+        // 실행 중에만 보인다 — 실행 전부터 빈 막대가 "추천 실행" 아래 두 줄짜리 선처럼 보였다
+        progress.visibleProperty().bind(progress.progressProperty().lessThan(0));
+        progress.managedProperty().bind(progress.visibleProperty());
         Runnable styleProg = () -> progress.setStyle("-fx-accent:" + Styles.accent() + ";");
         styleProg.run(); Styles.addThemeListener(styleProg);
 
@@ -312,7 +315,16 @@ public class ApRecommendDialog {
         VBox leftBox = new VBox(8, previewPane);
         leftBox.setAlignment(Pos.TOP_CENTER);
         VBox.setVgrow(previewPane, Priority.ALWAYS);
-        HBox content = new HBox(14, leftBox, paramPanel);
+        // 오른쪽 설정 패널은 스크롤 영역으로 — 안내문이 제 높이를 다 차지하고, 추천 후 결과 요약이
+        // 여러 줄 붙으면 고정 크기 창에서 패널이 아래 [닫기/적용] 버튼을 덮었다.
+        ScrollPane paramScroll = new ScrollPane(paramPanel);
+        paramScroll.setFitToWidth(true);
+        paramScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        paramScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        paramScroll.setMinWidth(252);
+        paramScroll.setPrefWidth(252);
+        paramScroll.setStyle("-fx-background:transparent;-fx-background-color:transparent;");
+        HBox content = new HBox(14, leftBox, paramScroll);
         HBox.setHgrow(leftBox, Priority.ALWAYS);
         content.setPadding(new Insets(14));
         content.setStyle("-fx-background-color:transparent;");

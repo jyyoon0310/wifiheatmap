@@ -476,7 +476,15 @@ public class Styles {
             });
         };
         dp.sceneProperty().addListener((obs, oldScene, newScene) -> {
-            if (newScene != null) Platform.runLater(apply);
+            if (newScene != null) {
+                // 대화상자는 별도 창(Scene)이라 메인 창의 glass.css 가 적용되지 않는다 —
+                // 스크롤바·목록 셀이 기본 회색 화살표형으로 나오던 것을 맞춘다.
+                java.net.URL css = Styles.class.getResource("/glass.css");
+                if (css != null && !newScene.getStylesheets().contains(css.toExternalForm())) {
+                    newScene.getStylesheets().add(css.toExternalForm());
+                }
+                Platform.runLater(apply);
+            }
         });
         apply.run();
         if (registerOnce(dp)) addThemeListener(apply);
