@@ -53,7 +53,7 @@ public class TopToolbar {
     private Runnable onZoomOut;
 
     private final ToggleGroup toolGroup = new ToggleGroup();
-    private final ToggleButton tScale  = new ToggleButton("📐 스케일");
+    private final ToggleButton tScale  = new ToggleButton("📐 축척");
     private final ToggleButton tAP    = new ToggleButton("🛜 공유기 배치");
     private final ToggleButton tWall  = new ToggleButton("🧱 벽 그리기");
 
@@ -138,7 +138,7 @@ public class TopToolbar {
         Styles.styleToggle(band5Btn);
         Styles.styleToggle(band6Btn);
 
-        bandAllBtn.setTooltip(new Tooltip("모든 활성 밴드의 RSSI 중 최댓값 (기존 동작)"));
+        bandAllBtn.setTooltip(new Tooltip("켜져 있는 모든 밴드 중 가장 강한 신호로 표시"));
         band24Btn .setTooltip(new Tooltip("2.4 GHz 밴드만 사용해 히트맵 계산"));
         band5Btn  .setTooltip(new Tooltip("5 GHz 밴드만 사용해 히트맵 계산"));
         band6Btn  .setTooltip(new Tooltip("6 GHz 밴드만 사용해 히트맵 계산"));
@@ -175,9 +175,9 @@ public class TopToolbar {
         Styles.styleAccentButton(gen);
         gen.setOnAction(e -> { if (onGenerateHeatmap != null) onGenerateHeatmap.run(); });
 
-        Button clear = new Button("클리어");
+        Button clear = new Button("지우기");
         Styles.styleFlatButton(clear);
-        clear.setTooltip(new Tooltip("히트맵 클리어"));
+        clear.setTooltip(new Tooltip("신호 지도 지우기"));
         clear.setOnAction(e -> { if (onClearHeatmap != null) onClearHeatmap.run(); });
 
         // ── 솔버 컨트롤 (고급 + Solver tool 활성 시에만 노출) ──────────────
@@ -195,7 +195,7 @@ public class TopToolbar {
         heatmapActionBtn.setOnAction(e -> { if (onGenerateHeatmap != null) onGenerateHeatmap.run(); });
 
         Styles.styleToggle(waveToggleBtn);
-        waveToggleBtn.setTooltip(new Tooltip("AP에서 퍼지는 전파의 움직임을 실시간으로 보여줍니다"));
+        waveToggleBtn.setTooltip(new Tooltip("공유기에서 퍼지는 전파의 움직임을 실시간으로 보여줍니다"));
         waveToggleBtn.setOnAction(e -> {
             if (onWaveToggle != null) onWaveToggle.accept(waveToggleBtn.isSelected());
         });

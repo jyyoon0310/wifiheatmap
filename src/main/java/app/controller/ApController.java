@@ -156,9 +156,9 @@ public class ApController {
         }
 
         int idx = 1;
-        while (used.contains("AP-" + idx)) {
+        while (used.contains("공유기 " + idx)) {
             idx++;
         }
-        return "AP-" + idx;
+        return "공유기 " + idx;
     }
 }

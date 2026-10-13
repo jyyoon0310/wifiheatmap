@@ -67,14 +67,14 @@ public class LeftPanel {
     private final VBox scaleCard;
     private final TextField realMetersField = new TextField("5");
     private final Button applyScaleBtn = new Button("적용");
-    private final Button resetScaleBtn = new Button("보정 점 초기화");
+    private final Button resetScaleBtn = new Button("다시 찍기");
 
     // AP 상세 편집
     private final VBox apDetailsCard;
     private final ComboBox<ApPreset> apPresetCombo = new ComboBox<>();
     private java.util.function.Consumer<ApPreset> onApPresetChanged;
     private final TextField apNameField = new TextField();
-    private final CheckBox apEnabledCheck = new CheckBox("AP 활성화");
+    private final CheckBox apEnabledCheck = new CheckBox("공유기 켜기");
     private final TextField apHeightField = new TextField("1.0");
     private final Label apCoordLabel = new Label("-");
 
@@ -116,7 +116,7 @@ public class LeftPanel {
 
     // 벽 그리기 완료 → AP 추천 진입 (WALL 모드에서만 노출)
     private VBox wallDoneCard;
-    private final Button wallDoneBtn = new Button("벽 그리기 완료 → AP 추천");
+    private final Button wallDoneBtn = new Button("벽 그리기 완료 → 공유기 자리 추천");
     private Runnable onWallDone = () -> {};
 
     // Solver 패널
@@ -156,10 +156,12 @@ public class LeftPanel {
         Themed.bind(root, () -> "-fx-background-color: " + Styles.bgPanel() + ";");
 
         // --- Scale card ---
-        Label hint = Themed.bind(new Label("두 점 클릭 후 실제거리 입력"),
+        Label hint = Themed.bind(new Label("도면에서 길이를 아는 두 점을 찍고 실제 길이를 입력하세요"),
                 () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
+        hint.setWrapText(true);
+        hint.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
 
-        Label distLbl = Themed.bind(new Label("두 점 실제거리(m)"),
+        Label distLbl = Themed.bind(new Label("실제 길이 (m)"),
                 () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
 
         Styles.styleTextField(realMetersField);
@@ -176,7 +178,7 @@ public class LeftPanel {
         HBox.setHgrow(realMetersField, Priority.NEVER);
 
         rssiCard = Styles.card(
-                "신호 강도 (마우스 위치)",
+                "신호 세기 (마우스 위치)",
                 rssiRows
         );
 
@@ -186,7 +188,7 @@ public class LeftPanel {
         updateRssiRows(List.of());
 
         scaleCard = Styles.card(
-                "스케일 보정",
+                "축척 맞추기",
                 hint,
                 new VBox(6, distLbl, row),
                 resetScaleBtn
@@ -259,9 +261,9 @@ public class LeftPanel {
         VBox band5 = createBandEditor("5 GHz", enabled5Check, ssid5Field, tx5Spinner, gain5Spinner, ch5Combo, bw5Combo);
         VBox band6 = createBandEditor("6 GHz", enabled6Check, ssid6Field, tx6Spinner, gain6Spinner, ch6Combo, bw6Combo);
 
-        ToggleButton t24 = new ToggleButton("2.4GHz");
-        ToggleButton t5 = new ToggleButton("5GHz");
-        ToggleButton t6 = new ToggleButton("6GHz");
+        ToggleButton t24 = new ToggleButton("2.4 GHz");
+        ToggleButton t5 = new ToggleButton("5 GHz");
+        ToggleButton t6 = new ToggleButton("6 GHz");
         t24.setMaxWidth(Double.MAX_VALUE);
         t5.setMaxWidth(Double.MAX_VALUE);
         t6.setMaxWidth(Double.MAX_VALUE);
@@ -314,7 +316,7 @@ public class LeftPanel {
         // AP 카드 레이블 + CheckBox 테마 리스너
         Label presetLbl = new Label("공유기 프리셋");
         Label apNameLbl = new Label("이름");
-        Label apHeightLbl = new Label("AP 높이(m)");
+        Label apHeightLbl = new Label("공유기 높이(m)");
         for (Label lbl : new Label[]{presetLbl, apNameLbl, apHeightLbl}) {
             Themed.bind(lbl, () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
         }
@@ -336,7 +338,7 @@ public class LeftPanel {
         });
 
         apDetailsCard = Styles.card(
-                "AP Details",
+                "공유기 설정",
                 new VBox(6, presetLbl, apPresetCombo),
                 new VBox(6, apNameLbl, apNameField),
                 apEnabledCheck,
@@ -377,8 +379,8 @@ public class LeftPanel {
         Label wallNameLbl = new Label("이름 (선택)");
         Label wallInfoLbl = new Label("위치/길이");
         Label wallMatLbl  = new Label("재질");
-        Label wall24Lbl   = new Label("2.4GHz 감쇠(dB)");
-        Label wall5Lbl    = new Label("5GHz 감쇠(dB)");
+        Label wall24Lbl   = new Label("2.4 GHz 감쇠 (dB)");
+        Label wall5Lbl    = new Label("5 GHz 감쇠 (dB)");
         for (Label lbl : new Label[]{wallNameLbl, wallInfoLbl, wallMatLbl, wall24Lbl, wall5Lbl}) {
             Themed.bind(lbl, () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
         }
@@ -390,7 +392,7 @@ public class LeftPanel {
         wallInfoLabel.setWrapText(true);
 
         wallDetailsCard = Styles.card(
-                "Wall Details",
+                "벽 설정",
                 new VBox(4, wallNameLbl, wallNameField),
                 new VBox(4, wallInfoLbl, wallInfoLabel),
                 new Separator(),
@@ -922,9 +924,9 @@ public class LeftPanel {
                 () -> "-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px; -fx-font-weight: 600;");
         Label ssidLabel = Themed.subLabel("SSID");
         Label txLabel   = Themed.subLabel("송신 출력 (dBm, 프리셋 기준)");
-        Label gainLabel = Themed.subLabel("Gain(dBi)");
-        Label chLabel   = Themed.subLabel("Channel");
-        Label bwLabel   = Themed.subLabel("Bandwidth(MHz)");
+        Label gainLabel = Themed.subLabel("안테나 이득 (dBi)");
+        Label chLabel   = Themed.subLabel("채널");
+        Label bwLabel   = Themed.subLabel("대역폭 (MHz)");
 
         enabled.setSelected(true);
         Themed.bind(enabled, () -> "-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
@@ -1326,7 +1328,7 @@ public class LeftPanel {
         rssiRows.getChildren().clear();
 
         if (lastRssiResults.isEmpty()) {
-            Label empty = new Label("마우스를 캔버스 위로 올리면 SSID, 주파수, RSSI가 표시됩니다.");
+            Label empty = new Label("도면 위에 마우스를 올리면 그 자리의 신호 세기가 표시됩니다.");
             empty.setWrapText(true);
             empty.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
             rssiRows.getChildren().add(empty);

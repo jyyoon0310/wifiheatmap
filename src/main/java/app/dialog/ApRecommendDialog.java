@@ -47,7 +47,7 @@ public class ApRecommendDialog {
         if (floorplanImage == null) return;
 
         Dialog<Void> dlg = new Dialog<>();
-        dlg.setTitle("AP 위치 추천");
+        dlg.setTitle("공유기 자리 추천");
         if (owner != null) dlg.initOwner(owner);
         dlg.getDialogPane().setPrefSize(880, 580);
 
@@ -90,7 +90,7 @@ public class ApRecommendDialog {
         Styles.styleFlatButton(resetAreaBtn);
 
         // AP 개수
-        Label countTitle = sectionLabel("② AP 개수");
+        Label countTitle = sectionLabel("② 공유기 대수");
         HBox countRow = new HBox(6);
         countRow.setAlignment(Pos.CENTER_LEFT);
         ToggleGroup countGroup = new ToggleGroup();
@@ -408,7 +408,7 @@ public class ApRecommendDialog {
             g.setFill(Color.rgb(52, 120, 246));
             g.setFont(javafx.scene.text.Font.font("SF Pro Text",
                     javafx.scene.text.FontWeight.BOLD, 11));
-            g.fillText("AP " + (i + 1), cx + 16, cy + 4);
+            g.fillText("공유기 " + (i + 1), cx + 16, cy + 4);
         }
     }
 

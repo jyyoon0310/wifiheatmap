@@ -277,7 +277,7 @@ public class MainController {
                     env.setScaleMPerPx(mPerPx);
                     solverConfigDirty = true;
                     // (예전엔 "1px = 0.023729 m (0.934205 inch)" 를 모달로 띄웠다 — 사용자에겐 의미 없는 수치)
-                    String scaleAppliedMsg = String.format("도면 크기를 맞췄습니다 (기준 길이 %.1f m).",
+                    String scaleAppliedMsg = String.format("도면 축척을 맞췄습니다 (기준 길이 %.1f m).",
                             state.getCalibRealMeters());
 
                     if (onboardingStep == OnboardingStep.SCALE) {
@@ -390,7 +390,7 @@ public class MainController {
             return;
         }
         if (!Double.isFinite(env.getScaleMPerPx()) || env.getScaleMPerPx() <= 0) {
-            showToast("먼저 도면 크기(스케일)를 맞춰 주세요.");
+            showToast("먼저 도면 축척을 맞춰 주세요.");
             return;
         }
 
@@ -489,7 +489,7 @@ public class MainController {
      */
     private void finishWallsAndRecommend() {
         if (!Double.isFinite(env.getScaleMPerPx()) || env.getScaleMPerPx() <= 0) {
-            showToast("먼저 도면 크기(스케일)를 맞춰 주세요.");
+            showToast("먼저 도면 축척을 맞춰 주세요.");
             return;
         }
         if (env.getWalls().isEmpty()) {
@@ -907,7 +907,7 @@ public class MainController {
                 try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(file)) {
                     java.util.zip.ZipEntry propsEntry = zf.getEntry("settings.properties");
                     if (propsEntry == null) {
-                        showError("설정값 파일 형식이 올바르지 않습니다 (settings.properties 누락).");
+                        showError("작업 파일을 열 수 없습니다. 이 앱에서 저장한 .wifisettings 파일인지 확인해 주세요.");
                         return false;
                     }
                     try (InputStreamReader r = new InputStreamReader(
@@ -929,7 +929,7 @@ public class MainController {
                 }
             }
         } catch (Exception ex) {
-            showError("설정값 열기 실패: " + ex.getMessage());
+            showError("작업 파일을 열지 못했습니다.\n" + ex.getMessage());
             return false;
         }
 
@@ -1116,7 +1116,7 @@ public class MainController {
         syncModelParamsFromState();
 
         if (!Double.isFinite(env.getScaleMPerPx()) || env.getScaleMPerPx() <= 0.0) {
-            showToast("먼저 도면 크기(스케일)를 맞춰 주세요.");
+            showToast("먼저 도면 축척을 맞춰 주세요.");
             return;
         }
 
@@ -1233,7 +1233,7 @@ public class MainController {
         }
         if (!state.hasCoverageArea()) {
             window.getLeftPanel().showMeasurementGuidance(
-                    "측정할 공간이 지정되지 않았습니다. AP 추천에서 와이파이를 쓸 방을 선택하면 그 영역 기준으로 결과가 표시됩니다.");
+                    "측정할 공간이 지정되지 않았습니다. 공유기 자리 추천에서 와이파이를 쓸 방을 선택하면 그 영역 기준으로 결과가 표시됩니다.");
             return;
         }
 
