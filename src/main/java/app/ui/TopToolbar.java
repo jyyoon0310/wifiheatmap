@@ -53,19 +53,19 @@ public class TopToolbar {
     private Runnable onZoomOut;
 
     private final ToggleGroup toolGroup = new ToggleGroup();
-    private final ToggleButton tScale  = new ToggleButton("📐 축척");
-    private final ToggleButton tAP    = new ToggleButton("🛜 공유기 배치");
-    private final ToggleButton tWall  = new ToggleButton("🧱 벽 그리기");
+    private final ToggleButton tScale  = new ToggleButton("축척");
+    private final ToggleButton tAP    = new ToggleButton("공유기 배치");
+    private final ToggleButton tWall  = new ToggleButton("벽 그리기");
 
     private final Button solverStartBtn = new Button("▶ 시작");
     private final Button solverStopBtn  = new Button("■ 정지");
     private final Button solverResetBtn = new Button("↺ 리셋");
 
     /** 일반 사용자용 3-액션 버튼 */
-    private final Button heatmapActionBtn  = new Button("📡  신호 세기 보기");
-    private final ToggleButton waveToggleBtn = new ToggleButton("🌊  전파 흐름 보기");
-    private final Button recommendActionBtn  = new Button("📍  공유기 자리 추천");
-    private final Button advancedBtn         = new Button("⚙");
+    private final Button heatmapActionBtn  = new Button("신호 세기 보기");
+    private final ToggleButton waveToggleBtn = new ToggleButton("전파 흐름 보기");
+    private final Button recommendActionBtn  = new Button("공유기 자리 추천");
+    private final Button advancedBtn         = new Button();
 
     /** 고급(연구) 모드 — true일 때만 Legacy/CPU·GPU 콤보, solver 컨트롤, 클리어 버튼 노출 */
     private boolean advancedMode = false;
@@ -77,6 +77,15 @@ public class TopToolbar {
     private HBox toolPill;
 
     public TopToolbar() {
+        // 단색 벡터 아이콘 — 버튼 글자색을 따라가 선택·다크 모드에 맞춰진다 (예전: 컬러 이모지)
+        Icons.attach(tScale, Icons.RULER, 14);
+        Icons.attach(tAP, Icons.ROUTER, 14);
+        Icons.attach(tWall, Icons.WALL, 13);
+        Icons.attach(heatmapActionBtn, Icons.WIFI, 14);
+        Icons.attach(waveToggleBtn, Icons.WAVES, 14);
+        Icons.attach(recommendActionBtn, Icons.PLACE, 14);
+        Icons.attach(advancedBtn, Icons.TUNE, 14);
+
         // ── 파일 버튼 그룹 ──────────────────────────────────────────────────
         Button open = new Button("열기");
         Styles.styleFlatButton(open);
@@ -217,7 +226,8 @@ public class TopToolbar {
         HBox zoomBox = buildZoomBox();
 
         // ── 다크 모드 토글 ─────────────────────────────────────────────────
-        ToggleButton darkBtn = new ToggleButton("◑");
+        ToggleButton darkBtn = new ToggleButton();
+        Icons.attach(darkBtn, Icons.CONTRAST, 14);
         darkBtn.setTooltip(new Tooltip("다크 / 라이트 모드"));
         darkBtn.setSelected(Styles.isDark());
         darkBtn.setOnAction(e -> Styles.setDark(darkBtn.isSelected()));

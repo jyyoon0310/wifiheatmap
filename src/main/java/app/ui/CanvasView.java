@@ -34,7 +34,7 @@ public class CanvasView {
 
     /** 빈 캔버스 안내 오버레이 */
     private final VBox emptyGuide = new VBox(10);
-    private final Label emptyEmoji = new Label("📂");
+    private final Label emptyEmoji = new Label();
     private final Label emptyTitle = new Label("평면도를 불러와 시작하세요");
     private final Label toast = new Label();
     private javafx.animation.Animation toastAnim;
@@ -64,7 +64,8 @@ public class CanvasView {
         canvasSP.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 
         // ── 빈 캔버스 가이드 오버레이 (평면도 없을 때만 표시) ────────────
-        emptyEmoji.setStyle("-fx-font-size:56px;");
+        // 단색 폴더 아이콘 (예전: 📂 이모지)
+        emptyEmoji.setGraphic(Icons.of(Icons.FOLDER_OPEN, 52, javafx.scene.paint.Color.web("#8E8E93")));
         emptyTitle.setWrapText(true);
         emptyDesc.setWrapText(true);
         emptyGuide.setAlignment(Pos.CENTER);
@@ -142,7 +143,6 @@ public class CanvasView {
      */
     public void updateGuideOverlay(boolean hasFloorplan, boolean hasAps, boolean hasHeatmap) {
         if (!hasFloorplan) {
-            emptyEmoji.setText("📂");
             emptyTitle.setText("평면도를 불러와 시작하세요");
             emptyDesc.setText("상단의 [열기] 버튼을 눌러 도면 이미지(PNG, JPG)를 선택하거나,\n"
                     + "[불러오기]로 저장된 작업을 이어할 수 있습니다.");

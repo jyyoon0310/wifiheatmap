@@ -109,10 +109,12 @@ public class ApRecommendDialog {
         // 정밀도
         Label modeTitle = sectionLabel("③ 추천 방식");
         ToggleGroup modeGroup = new ToggleGroup();
-        ToggleButton fastBtn = new ToggleButton("⚡ 빠르게");
+        ToggleButton fastBtn = new ToggleButton("빠르게");
+        app.ui.Icons.attach(fastBtn, app.ui.Icons.BOLT, 13);
         fastBtn.setToggleGroup(modeGroup); fastBtn.setUserData("fast");
         Styles.styleToggle(fastBtn);
-        ToggleButton preciseBtn = new ToggleButton("🔬 정밀");
+        ToggleButton preciseBtn = new ToggleButton("정밀");
+        app.ui.Icons.attach(preciseBtn, app.ui.Icons.SEARCH, 13);
         preciseBtn.setToggleGroup(modeGroup); preciseBtn.setUserData("precise");
         Styles.styleToggle(preciseBtn);
         fastBtn.setSelected(true);

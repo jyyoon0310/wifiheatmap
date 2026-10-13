@@ -71,7 +71,7 @@ public final class WelcomeDialog {
 
         // ── 3개 선택지 카드 ─────────────────────────────────────────────
         OptionCard newCard = new OptionCard(
-                "📂", "새 평면도 불러오기",
+                app.ui.Icons.IMAGE, "새 평면도 불러오기",
                 "PNG, JPG 형식의 도면 이미지를 선택해 새로 시작합니다.",
                 Choice.NEW_FLOORPLAN, true);
 
@@ -81,12 +81,12 @@ public final class WelcomeDialog {
                         + recentFile.getName() + ")"
                 : "저장된 .wifisettings 파일을 선택해 작업을 이어합니다.";
         OptionCard openCard = new OptionCard(
-                "📁", "저장된 작업 불러오기",
+                app.ui.Icons.FOLDER_OPEN, "저장된 작업 불러오기",
                 openSub,
                 Choice.OPEN_FILE, true);
 
         OptionCard emptyCard = new OptionCard(
-                "✨", "빈 화면에서 시작",
+                app.ui.Icons.CROP_FREE, "빈 화면에서 시작",
                 "이 창을 닫고 메뉴에서 직접 평면도를 선택합니다.",
                 Choice.EMPTY_START, true);
 
@@ -126,9 +126,10 @@ public final class WelcomeDialog {
         private final RadioButton radio = new RadioButton();
         private final HBox box;
 
-        OptionCard(String emoji, String title, String desc, Choice choice, boolean enabled) {
-            Label emo = new Label(emoji);
-            emo.setStyle("-fx-font-size:24px; -fx-padding:0 8 0 0;");  // 이모지는 테마와 무관
+        OptionCard(String iconPath, String title, String desc, Choice choice, boolean enabled) {
+            // 단색 아이콘 (예전: 📂📁✨ 이모지) — 강조색, 테마 변경에 맞춰 다시 칠한다
+            javafx.scene.Node emo = app.ui.Icons.of(iconPath, 24, javafx.scene.paint.Color.web(Styles.accent()));
+            HBox.setMargin(emo, new Insets(0, 6, 0, 0));
 
             Label titleLbl = Themed.titleLabel(title);
             Label descLbl  = Themed.subLabel(desc);
