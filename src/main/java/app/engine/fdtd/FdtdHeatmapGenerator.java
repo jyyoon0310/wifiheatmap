@@ -188,7 +188,7 @@ public final class FdtdHeatmapGenerator {
                 int gx = mx + grid.pmlCells;
 
                 double db = strongestDb[mx][my];
-                Color base = WifiMath.rssiToColor(db, legendMinDbm, legendMaxDbm);
+                Color base = WifiMath.rssiToColor(db);
 
                 if (cfg.showMaterialGrid) {
                     int code = grid.materialCode[gx][gy];

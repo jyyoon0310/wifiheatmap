@@ -296,7 +296,7 @@ public class HeatmapGenerator {
                 if (samples > 0) {
                     double avgDbm = 10.0 * Math.log10(mwSum / samples);
                     // Color → int ARGB (백그라운드 스레드 안전: Color 객체만 사용)
-                    Color c = WifiMath.rssiToColor(avgDbm, legendMinDbm, legendMaxDbm);
+                    Color c = WifiMath.rssiToColor(avgDbm);
                     int pixel = colorToArgb(c);
 
                     // gridStepPx × gridStepPx 블록 채우기 (int[] 직접 기록)
@@ -588,7 +588,7 @@ public class HeatmapGenerator {
         IntStream.range(0, height).parallel().forEach(py -> {
             for (int px = 0; px < width; px++) {
                 double dbm = smoothedDbm[py * width + px];
-                Color c = WifiMath.rssiToColor(dbm, legendMinDbm, legendMaxDbm);
+                Color c = WifiMath.rssiToColor(dbm);
                 argbPixels[py * width + px] = colorToArgb(c);
             }
         });

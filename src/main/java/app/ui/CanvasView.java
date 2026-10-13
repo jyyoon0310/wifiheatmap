@@ -36,6 +36,8 @@ public class CanvasView {
     private final VBox emptyGuide = new VBox(10);
     private final Label emptyEmoji = new Label("📂");
     private final Label emptyTitle = new Label("평면도를 불러와 시작하세요");
+    private final Label toast = new Label();
+    private javafx.animation.Animation toastAnim;
     private final Label emptyDesc  = new Label(
             "상단 도구모음의 [열기] 버튼을 눌러 도면 이미지(PNG, JPG)를 선택하세요.");
 
@@ -67,6 +69,9 @@ public class CanvasView {
         emptyDesc.setWrapText(true);
         emptyGuide.setAlignment(Pos.CENTER);
         emptyGuide.setMaxWidth(440);
+        // 최대 높이를 내용에 묶지 않으면 StackPane 이 카드를 캔버스 높이 전체로 늘려
+        // 첫 화면 가운데에 커다란 흰 기둥이 생겼다.
+        emptyGuide.setMaxHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
         emptyGuide.setPadding(new Insets(28, 32, 28, 32));
         emptyGuide.setMouseTransparent(true);
         emptyGuide.getChildren().addAll(emptyEmoji, emptyTitle, emptyDesc);
@@ -97,6 +102,27 @@ public class CanvasView {
 
         root = new StackPane(canvasSP, emptyGuide);
         StackPane.setAlignment(emptyGuide, Pos.CENTER);
+
+        // ── 토스트 (흐름을 막지 않는 짧은 알림) ─────────────────────────────
+        // 히트맵 색 위에서도 읽히도록 테마와 무관하게 어두운 반투명 알약 (macOS HUD 계열)
+        toast.setWrapText(true);
+        toast.setMaxWidth(520);
+        toast.setMouseTransparent(true);
+        toast.setVisible(false);
+        toast.setStyle(
+                "-fx-background-color: rgba(28,28,30,0.88);" +
+                "-fx-background-radius: 14;" +
+                "-fx-padding: 10 18;" +
+                "-fx-text-fill: white;" +
+                "-fx-font-size: 13px;" +
+                "-fx-font-family:" + Styles.FONT_STACK + ";" +
+                "-fx-border-color: rgba(255,255,255,0.14);" +   // 다크 모드 배경 위에서도 윤곽이 보이도록
+                "-fx-border-radius: 14;" +
+                "-fx-border-width: 0.5;" +
+                "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.30), 18, 0.15, 0, 4);");
+        root.getChildren().add(toast);
+        StackPane.setAlignment(toast, Pos.BOTTOM_CENTER);
+        StackPane.setMargin(toast, new Insets(0, 0, 28, 0));
 
         Runnable applyCanvasTheme = () -> {
             viewportPane.setStyle("-fx-background-color: " + Styles.bgApp() + ";");
@@ -130,6 +156,34 @@ public class CanvasView {
 
     // ===== getters =====
     public StackPane getRoot() { return root; }
+
+    /**
+     * 흐름을 막지 않는 짧은 알림을 캔버스 아래쪽 가운데에 띄웠다가 사라지게 한다.
+     * 성공·안내 메시지용 — 확인이 필요한 경고·오류는 모달({@link Notify})로.
+     * 표시 시간은 글 길이에 비례 (2.5초 + 글자당 50ms, 최대 7초).
+     */
+    public void showToast(String message) {
+        if (message == null || message.isBlank()) return;
+        if (toastAnim != null) toastAnim.stop();
+        toast.setText(message);
+        // 짧은 글은 글 폭만큼, 긴 글은 520px 에서 줄바꿈 (StackPane 이 최대 폭까지 늘리지 않도록)
+        toast.setMaxWidth(520);
+        toast.applyCss();
+        double textW = toast.prefWidth(-1);
+        toast.setMaxWidth(Math.min(520, textW));
+        toast.setOpacity(0);
+        toast.setVisible(true);
+        toast.toFront();
+        double holdMs = Math.min(7000, 2500 + 50.0 * message.length());
+        javafx.animation.FadeTransition in = new javafx.animation.FadeTransition(javafx.util.Duration.millis(160), toast);
+        in.setToValue(1);
+        javafx.animation.PauseTransition stay = new javafx.animation.PauseTransition(javafx.util.Duration.millis(holdMs));
+        javafx.animation.FadeTransition out = new javafx.animation.FadeTransition(javafx.util.Duration.millis(260), toast);
+        out.setToValue(0);
+        toastAnim = new javafx.animation.SequentialTransition(in, stay, out);
+        toastAnim.setOnFinished(e -> toast.setVisible(false));
+        toastAnim.play();
+    }
     public ImageView getBaseImageView() { return baseImageView; }
     public Canvas getDrawCanvas() { return drawCanvas; }
     public ScrollPane getCanvasSP() { return canvasSP; }

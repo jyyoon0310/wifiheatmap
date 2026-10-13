@@ -252,8 +252,6 @@ public class LeftPanel {
         Styles.styleAccentButton(applyWallBtn);
         Styles.styleFlatButton(deleteWallBtn);
 
-        Label coordTitle = Themed.bind(new Label("좌표(px)"),
-                () -> "-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 12px;");
         Themed.bind(apCoordLabel,
                 () -> "-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px;");
 
@@ -342,8 +340,9 @@ public class LeftPanel {
                 new VBox(6, presetLbl, apPresetCombo),
                 new VBox(6, apNameLbl, apNameField),
                 apEnabledCheck,
-                new VBox(4, apHeightLbl, apHeightField),
-                new VBox(4, coordTitle, apCoordLabel),
+                // (AP 높이·픽셀 좌표는 표시하지 않는다 — DPM 은 2차원이라 높이가 결과에 반영되지
+                //  않아 바꿔도 아무 변화가 없었고, 좌표(px)는 사용자에게 의미가 없다.
+                //  apHeightField 는 숨긴 채로 값만 유지해 적용 시 기존 높이를 그대로 저장한다.)
                 bandSwitcher,
                 bandContent,
                 apButtons
@@ -530,7 +529,8 @@ public class LeftPanel {
 
         // ── 비율 색바 (좌→우 약→강, 히트맵 색상과 일관) — 색만 표시 ──
         // 수치/이름은 아래 범례에서 읽히므로, 막대는 비율을 색 면적으로만 전달
-        String[] gradeNames  = {"약함", "주의", "양호", "강함"};
+        // 이름·색은 RssiLevel 한 곳 — 히트맵 색·하단 범례와 같은 의미 (좌→우: 사각지대→강함)
+        String[] gradeNames  = gradeNamesWeakToStrong();
         String[] gradeColors = Styles.rssiColorsBlueToRed();  // [dead, weak, good, strong]
 
         // GridPane + ColumnConstraints.percentWidth → 실제 폭과 무관하게 비율 정확
@@ -621,7 +621,7 @@ public class LeftPanel {
         resultCoachLabel.setText(coachMsg);
 
         if (gradeFractions != null && gradeFractions.length >= 4) {
-            String[] names = {"약함", "주의", "양호", "강함"};
+            String[] names = gradeNamesWeakToStrong();
             for (int i = 0; i < 4; i++) {
                 StackPane cell = resultBarCells[i];
                 double frac = Math.max(0.0, gradeFractions[i]);
@@ -921,7 +921,7 @@ public class LeftPanel {
         Label t = Themed.bind(new Label(title),
                 () -> "-fx-text-fill: " + Styles.textMain() + "; -fx-font-size: 12px; -fx-font-weight: 600;");
         Label ssidLabel = Themed.subLabel("SSID");
-        Label txLabel   = Themed.subLabel("Tx(dBm, 고정 17)");
+        Label txLabel   = Themed.subLabel("송신 출력 (dBm, 프리셋 기준)");
         Label gainLabel = Themed.subLabel("Gain(dBi)");
         Label chLabel   = Themed.subLabel("Channel");
         Label bwLabel   = Themed.subLabel("Bandwidth(MHz)");
@@ -1080,13 +1080,19 @@ public class LeftPanel {
         writeBand(Band.GHZ_5, ssid5Field, tx5Spinner, gain5Spinner);
         writeBand(Band.GHZ_6, ssid6Field, tx6Spinner, gain6Spinner);
 
+        String appliedName = currentAp.name;
         currentAp = null;
         setSelectedAp(null);
         onClearApSelection.run();
         onApChanged.run();
-        Alert alert = new Alert(Alert.AlertType.INFORMATION, "적용되었습니다!", ButtonType.OK);
-        Styles.styleAlert(alert);
-        alert.showAndWait();
+        // 예전엔 "적용되었습니다!" 모달 — 흐름을 막지 않는 알림으로
+        onNotify.accept("공유기 설정을 적용했습니다 · " + appliedName);
+    }
+
+    /** 흐름을 막지 않는 짧은 알림을 띄울 콜백 (MainController 가 캔버스 토스트로 연결). */
+    private java.util.function.Consumer<String> onNotify = msg -> {};
+    public void setOnNotify(java.util.function.Consumer<String> c) {
+        this.onNotify = (c == null) ? msg -> {} : c;
     }
 
     private void deleteCurrentAp() {
@@ -1421,5 +1427,20 @@ public class LeftPanel {
         Label label = new Label(text);
         label.setStyle("-fx-text-fill: " + Styles.textSub() + "; -fx-font-size: 11px;");
         return label;
+    }
+
+    /** 고급(연구) 모드 전용 수치 — 솔버 카드의 스텝·시간·fps, 디버그 줄. 일반 모드에선 숨긴다. */
+    public void setAdvancedDetailsVisible(boolean visible) {
+        for (Label l : new Label[]{solverStatsLabel, solverDebugLabel}) {
+            l.setVisible(visible);
+            l.setManaged(visible);
+        }
+    }
+
+    /** 결과 카드 등급 이름 (좌→우: 사각지대, 약함, 양호, 강함) — {@link app.model.RssiLevel} 기준. */
+    private static String[] gradeNamesWeakToStrong() {
+        return new String[]{
+                app.model.RssiLevel.DEAD.label, app.model.RssiLevel.WEAK.label,
+                app.model.RssiLevel.GOOD.label, app.model.RssiLevel.STRONG.label };
     }
 }

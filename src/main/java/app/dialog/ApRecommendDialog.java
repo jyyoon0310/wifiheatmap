@@ -250,7 +250,7 @@ public class ApRecommendDialog {
             boolean[] maskCopy = java.util.Arrays.copyOf(combinedMask, combinedMask.length);
 
             ApRecommender.Params params = new ApRecommender.Params(
-                    apCount, -65.0,
+                    apCount, app.model.RssiLevel.GOOD.minDbm,  // 목표: 전 구역 "양호" 이상
                     precise ? 20 : 30, precise ? 12 : 20,
                     precise, 6000, Band.GHZ_5,
                     maskCopy, maskW, maskH, FLOOD_CELL_SIZE,
@@ -277,11 +277,17 @@ public class ApRecommendDialog {
                 progress.setProgress(1.0);
                 ApRecommender.Result r = resultRef[0];
                 resultTitle.setText("추천 결과");
+                statusLbl.setText("");  // "완료! 커버율 …" 이 아래 요약과 중복되므로 비운다
                 StringBuilder sb = new StringBuilder();
-                sb.append(r.summary()).append("\n");
-                for (int i = 0; i < r.positions().size(); i++) {
-                    Point2D p = r.positions().get(i);
-                    sb.append(String.format("AP %d: (%.0f, %.0f)\n", i + 1, p.getX(), p.getY()));
+                sb.append(r.summary()).append("\n\n");
+                // 위치는 픽셀 좌표 대신 도면 미리보기의 번호 표시로 보여 준다
+                sb.append(String.format("도면에 표시된 공유기 %d대 위치를 확인하고 [적용]을 누르세요.",
+                        r.positions().size()));
+                if (state.isAdvancedMode()) {
+                    long ex = r.dpmTotalExpanded(), pr = r.dpmTotalPruned();
+                    sb.append(String.format("%n%n[DPM A*] 호출 %d · expanded %,d · pruned %,d (%.1f%%) · %,d ms",
+                            r.dpmCandidateCount(), ex, pr,
+                            (ex + pr) > 0 ? 100.0 * pr / (ex + pr) : 0.0, r.dpmTotalElapsedMs()));
                 }
                 resultDetail.setText(sb.toString().trim());
                 redraw.run();

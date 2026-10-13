@@ -331,13 +331,8 @@ public class ApRecommender {
             env.getScaleMPerPx(), cn, ex, pr, pruRatio, ms, wallMs);
         System.err.flush();
         // 요약 텍스트 끝에 측정값 부착 (다이얼로그에 표시됨)
-        if (params.useDpmEvaluation) {
-            summary = summary + String.format(
-                "%n[DPM A*] greedy=%s  호출=%d  expanded=%,d  pruned=%,d (%.1f%%)%n" +
-                "         DPM 누적=%,dms  전체 wall=%,dms",
-                params.dpmGreedyEnabled ? "ON" : "OFF",
-                cn, ex, pr, pruRatio, ms, wallMs);
-        }
+        // DPM 탐색 측정값은 콘솔(위 printf)과 Result 필드로만 낸다 — 사용자용 요약문에 섞지 않는다.
+        // (고급 모드에서는 추천 창이 Result 필드를 읽어 따로 표시한다.)
 
         return new Result(chosen, rayCoverage, fdtdCoverage, summary, finalStats,
                 dpmExp.get(), dpmPru.get(), dpmMs.get(), dpmCnt.get());
@@ -895,13 +890,13 @@ public class ApRecommender {
     private static String buildSummary(double rayCoverage, double fdtdCoverage,
                                        FdtdSignalStats stats) {
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("커버율: %.0f%%", rayCoverage));
-        if (fdtdCoverage >= 0) sb.append(String.format(" (FDTD: %.0f%%)", fdtdCoverage));
+        sb.append(String.format("커버율 %.0f%%", rayCoverage));
+        if (fdtdCoverage >= 0) sb.append(String.format(" (정밀 검증 %.0f%%)", fdtdCoverage));
 
         if (stats != null) {
             sb.append(String.format("\n평균 %.0f dBm / 최약 %.0f dBm / 균일도 %.0f%%",
                     stats.avgRssi, stats.minRssi, stats.uniformityPercent()));
-            sb.append(String.format("\n강함(%d) 양호(%d) 약함(%d) 사각(%d)",
+            sb.append(String.format("\n강함 %d · 양호 %d · 약함 %d · 사각지대 %d 지점",
                     stats.strongCount, stats.goodCount, stats.weakCount, stats.deadCount));
         }
         return sb.toString();

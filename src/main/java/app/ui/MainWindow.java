@@ -46,6 +46,14 @@ public class MainWindow {
         BorderPane.setMargin(canvasView.getRoot(), new Insets(0));
         root.setCenter(canvasView.getRoot());
 
+        // 줌 컨트롤 — 툴바 대신 캔버스 오른쪽 아래에 띄운다 (지도·디자인 도구와 같은 위치)
+        javafx.scene.Node zoom = topToolbar.getZoomControls();
+        if (zoom != null) {
+            canvasView.getRoot().getChildren().add(zoom);
+            javafx.scene.layout.StackPane.setAlignment(zoom, javafx.geometry.Pos.BOTTOM_RIGHT);
+            javafx.scene.layout.StackPane.setMargin(zoom, new Insets(0, 18, 18, 0));
+        }
+
         // Bottom
         root.setBottom(bottomBar.getNode());
     }

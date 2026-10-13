@@ -45,10 +45,11 @@ public class Styles {
     // ── Static hex constants ──────────────────────────────────────────────────
     // RSSI 4단계 디스크리트 컬러 (히트맵 colormap과 동일, 좌→우: 약→강)
     // ResultCard / 색바 / BottomBar 등 RSSI 등급 표시에 공통으로 사용.
-    public static final String RSSI_DEAD_HEX   = "#2D6CF6";  // 파랑 — 사각지대 (-75 미만)
-    public static final String RSSI_WEAK_HEX   = "#2FD44A";  // 초록 — 주의 (-75~-65)
-    public static final String RSSI_GOOD_HEX   = "#F6D32D";  // 노랑 — 양호 (-65~-55)
-    public static final String RSSI_STRONG_HEX = "#F0632D";  // 주황 — 강함 (-55 이상)
+    // 색 정의는 app.model.RssiLevel 한 곳 — 여기는 UI 코드 편의를 위한 별칭.
+    public static final String RSSI_DEAD_HEX   = app.model.RssiLevel.DEAD.hex;    // 파랑 — 사각지대 (-75 미만)
+    public static final String RSSI_WEAK_HEX   = app.model.RssiLevel.WEAK.hex;    // 초록 — 약함 (-75~-65)
+    public static final String RSSI_GOOD_HEX   = app.model.RssiLevel.GOOD.hex;    // 노랑 — 양호 (-65~-55)
+    public static final String RSSI_STRONG_HEX = app.model.RssiLevel.STRONG.hex;  // 주황 — 강함 (-55 이상)
     /** BottomBar 5단계 lerp colormap의 중간 cyan stop. */
     public static final String RSSI_CYAN_HEX   = "#34D1FF";
 
@@ -59,11 +60,7 @@ public class Styles {
 
     /** RSSI 값(dBm) → 4단계 디스크리트 컬러. */
     public static javafx.scene.paint.Color rssiColorFor(double rssiDbm) {
-        if (!Double.isFinite(rssiDbm)) return javafx.scene.paint.Color.web(RSSI_DEAD_HEX);
-        if (rssiDbm >= -55) return javafx.scene.paint.Color.web(RSSI_STRONG_HEX);
-        if (rssiDbm >= -65) return javafx.scene.paint.Color.web(RSSI_GOOD_HEX);
-        if (rssiDbm >= -75) return javafx.scene.paint.Color.web(RSSI_WEAK_HEX);
-        return javafx.scene.paint.Color.web(RSSI_DEAD_HEX);
+        return app.model.RssiLevel.of(rssiDbm).color();
     }
 
     public static final String STATUS_INFO    = "#3B82F6";
@@ -409,6 +406,10 @@ public class Styles {
      * Called by styleAlert() and styleDialog() — do not call directly unless needed.
      */
     public static void styleDialogPane(DialogPane dp) {
+        // 창 크기는 표시 직전에 정해지는데, 아래 글래스 스타일(테두리·여백)은 그 뒤에
+        // runLater 로 입혀진다. 그 차이(실측 3px)만큼 본문 마지막 줄이 "…"로 잘렸다.
+        // 최소 높이를 선호 높이로 묶어 두면 스타일이 바뀌어도 창이 본문을 다 담는다.
+        dp.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
         Runnable apply = () -> {
             // Glass background
             dp.setStyle(
@@ -440,8 +441,13 @@ public class Styles {
                     if (btn instanceof Button b) styleFlatButton(b);
                 });
                 dp.lookupAll(".label").forEach(lbl -> {
-                    if (lbl instanceof Label l)
+                    if (lbl instanceof Label l) {
                         l.setStyle("-fx-text-fill:" + textMain() + ";-fx-font-family:" + FONT_STACK + ";");
+                        // 긴 안내문이 창 폭에 눌려 "…"로 잘리거나, 줄바꿈된 문장이 세로 공간을
+                        // 덜 받아 겹치지 않도록 한다 (고급 설정·시작 화면에서 실측된 문제).
+                        l.setWrapText(true);
+                        l.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+                    }
                 });
                 dp.lookupAll(".text-field").forEach(tf -> {
                     if (tf instanceof TextField t) styleTextField(t);
@@ -463,6 +469,10 @@ public class Styles {
                 // Tab pane
                 Node tp = dp.lookup(".tab-pane");
                 if (tp instanceof TabPane tabPane) styleTabPane(tabPane);
+                // 창은 이 스타일들이 입혀지기 전 크기로 열렸다 — 바뀐 내용 크기에 다시 맞춘다.
+                if (dp.getScene() != null && dp.getScene().getWindow() != null) {
+                    dp.getScene().getWindow().sizeToScene();
+                }
             });
         };
         dp.sceneProperty().addListener((obs, oldScene, newScene) -> {

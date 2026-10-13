@@ -33,6 +33,8 @@ public class TopToolbar {
     private Runnable onResetSolver;
     private Consumer<AppState.Tool> onToolChanged;
     private Runnable onRecommendAp;
+    /** 캔버스 위에 띄울 줌 컨트롤 (툴바에는 넣지 않음) */
+    private Node zoomControls;
     private Runnable onShowAdvanced;
     /** "🌊 전파 흐름 보기" 토글 — true=시작, false=정지. MainController가 tool 전환 + solver 제어. */
     private Consumer<Boolean> onWaveToggle;
@@ -166,19 +168,8 @@ public class TopToolbar {
                 "-fx-border-radius: 10;" +
                 "-fx-border-width: 0.5;");
 
-        Label bandLabel = new Label("밴드:");
-        Runnable applyBandLabel = () -> bandLabel.setStyle(
-                "-fx-text-fill:" + Styles.textSub() + ";" +
-                "-fx-font-size:11px;"
-        );
-        applyBandLabel.run();
-        Styles.addThemeListener(applyBandLabel);
 
-        // ── [고급 모드 전용] AP 추천 / 히트맵 생성 / 클리어 (일반 모드에선 숨김) ──
-        Button recommendBtn = new Button("AP 추천");
-        Styles.styleFlatButton(recommendBtn);
-        recommendBtn.setTooltip(new Tooltip("최적 AP 위치 추천 (Ray-cast + FDTD)"));
-        recommendBtn.setOnAction(e -> { if (onRecommendAp != null) onRecommendAp.run(); });
+        // ── [고급 모드 전용] 히트맵 생성 / 지우기 (일반 모드에선 숨김) ──
 
         Button gen = new Button("히트맵 생성");
         Styles.styleAccentButton(gen);
@@ -246,20 +237,20 @@ public class TopToolbar {
                 new Separator(),
                 actionGroup,
                 // ── 아래는 고급 모드에서만 노출 ──
-                recommendBtn,
                 gen, clear,
                 solverStartBtn, solverStopBtn, solverResetBtn,
                 new Separator(),
-                bandLabel, bandPill,
+                bandPill,   // 밴드 pill 은 툴팁으로 설명 — "밴드:" 라벨은 폭만 차지해 뺐다
                 spacer,
                 advancedBtn,
-                zoomBox,
                 new Separator(),
                 darkBtn
         );
+        // 줌 컨트롤은 툴바에서 빼고 캔버스 오른쪽 아래 떠 있는 컨트롤로 둔다 (MainWindow 가 배치).
+        // 툴바가 기본 창 폭(1200px)보다 넓어(실측 ≈1,440px) 줌·테마 버튼이 '>>' 뒤로 숨던 문제.
+        this.zoomControls = zoomBox;
 
         // 고급 모드 전용 노드 등록
-        advancedOnlyNodes.add(recommendBtn);
         advancedOnlyNodes.add(gen);
         advancedOnlyNodes.add(clear);
 
@@ -313,7 +304,16 @@ public class TopToolbar {
 
         HBox box = new HBox(4, fit, minus, zoomLabel, plus);
         box.setAlignment(Pos.CENTER);
-        box.setPadding(new Insets(1, 0, 1, 0));
+        box.setPadding(new Insets(5));
+        box.setMaxSize(javafx.scene.layout.Region.USE_PREF_SIZE, javafx.scene.layout.Region.USE_PREF_SIZE);
+        // 캔버스 위에 떠 있는 컨트롤 — 지도 앱의 줌 버튼처럼 유리 패널 + 그림자
+        Themed.bind(box, () ->
+                "-fx-background-color:" + Styles.bgPanel() + ";" +
+                "-fx-background-radius:12;" +
+                "-fx-border-color:" + Styles.borderSoft() + ";" +
+                "-fx-border-radius:12;" +
+                "-fx-border-width:0.5;" +
+                "-fx-effect:dropshadow(gaussian,rgba(0,0,0,0.16),14,0.1,0,3);");
         return box;
     }
 
@@ -330,6 +330,9 @@ public class TopToolbar {
     public void setOnResetSolver(Runnable r)            { this.onResetSolver = r; }
     public void setOnToolChanged(Consumer<AppState.Tool> c) { this.onToolChanged = c; }
     public void setOnRecommendAp(Runnable r)             { this.onRecommendAp = r; }
+
+    /** 캔버스 오른쪽 아래에 띄우는 줌 컨트롤 (맞춤 · − · 배율 · +). */
+    public Node getZoomControls() { return zoomControls; }
     public void setOnBandFilterChanged(Consumer<AppState.BandFilter> c) { this.onBandFilterChanged = c; }
 
     public void setBandFilter(AppState.BandFilter f) {

@@ -84,7 +84,6 @@ public class MainController {
     private double mouseProbeX = 0.0;
     private double mouseProbeY = 0.0;
     private final PauseTransition heatmapRefreshDebounce = new PauseTransition(Duration.millis(280));
-    private boolean gpuFallbackWarned = false;
     private SolverV2Engine fdtdSolver;
     private final AnimationTimer solverTimer;
     private boolean solverRunning = false;
@@ -187,14 +186,9 @@ public class MainController {
             render();
         });
 
-        window.getBottomBar().setClientHeight(env.getClientHeightM());
-        window.getBottomBar().setRssiLegendRange(state.legendMinProperty().get(), state.legendMaxProperty().get());
+        // (수신 단말 높이 입력은 제거됨 — DPM·FDTD 모두 2차원이라 높이가 결과에 반영되지 않았다.
+        //  env.clientHeightM 은 설정 파일 호환과 Legacy 기준선용으로 불러오기만 한다.)
         window.getBottomBar().setCurrentRssi(Double.NaN);
-        window.getBottomBar().setOnApplyClientHeight(h -> {
-            env.setClientHeightM(Math.max(0.1, h));
-            solverConfigDirty = true;
-            scheduleHeatmapRefreshIfVisible();
-        });
 
         window.getTopToolbar().setOnToolChanged(tool -> activateTool(tool, true));
         window.getTopToolbar().setOnRecommendAp(this::openApRecommender);
@@ -230,6 +224,13 @@ public class MainController {
 
         // 고급 모드 ↔ TopToolbar 가시성 양방향 바인딩
         window.getTopToolbar().bindAdvancedMode(state.advancedModeProperty());
+        window.getLeftPanel().setOnNotify(this::showToast);
+        // 솔버 카드의 스텝·fps·디버그 수치도 고급 모드에서만
+        window.getLeftPanel().setAdvancedDetailsVisible(state.isAdvancedMode());
+        state.advancedModeProperty().addListener((obs, oldV, newV) -> {
+            window.getLeftPanel().setAdvancedDetailsVisible(newV);
+            render();
+        });
 
         // 줌 박스
         try {
@@ -246,7 +247,7 @@ public class MainController {
 
             window.getTopToolbar().setOnZoomFit(() -> {
                 if (window.getCanvasView().getBaseImageView().getImage() == null) {
-                    showInfo("먼저 평면도를 열어주세요.");
+                    showToast("먼저 평면도를 불러와 주세요.");
                     return;
                 }
                 double w = window.getCanvasView().getDrawCanvas().getWidth();
@@ -265,7 +266,7 @@ public class MainController {
                     });
 
                     if (!ok) {
-                        showError("스케일 선분(두 점)을 먼저 확정하세요.");
+                        showToast("도면에서 길이를 아는 두 점을 먼저 찍어 주세요.");
                         stopPan();
                         updateCursorByMode();
                         render();
@@ -275,20 +276,18 @@ public class MainController {
                     double mPerPx = state.getScaleMPerPx();
                     env.setScaleMPerPx(mPerPx);
                     solverConfigDirty = true;
-                    double inchPerPx = mPerPx * 39.37007874015748;
-                    String scaleAppliedMsg = String.format(
-                            "스케일 적용됨\n1px = %.6f m (%.6f inch)",
-                            mPerPx, inchPerPx
-                    );
+                    // (예전엔 "1px = 0.023729 m (0.934205 inch)" 를 모달로 띄웠다 — 사용자에겐 의미 없는 수치)
+                    String scaleAppliedMsg = String.format("도면 크기를 맞췄습니다 (기준 길이 %.1f m).",
+                            state.getCalibRealMeters());
 
                     if (onboardingStep == OnboardingStep.SCALE) {
                         onboardingStep = OnboardingStep.WALL;
-                        showInfo(scaleAppliedMsg + "\n\n다음 단계\n벽그리기 툴에서 집의 벽을 그린 뒤, 왼쪽 '벽 그리기 완료' 버튼을 누르세요.");
+                        showToast(scaleAppliedMsg + " 이제 벽을 그려 주세요.");
                         activateTool(AppState.Tool.WALL, true);
                         return;
                     }
 
-                    showInfo(scaleAppliedMsg);
+                    showToast(scaleAppliedMsg);
 
                     stopPan();
                     updateCursorByMode();
@@ -387,11 +386,11 @@ public class MainController {
     private void openApRecommender() {
         Image img = window.getCanvasView().getBaseImageView().getImage();
         if (img == null) {
-            showInfo("먼저 평면도를 열어주세요.");
+            showToast("먼저 평면도를 불러와 주세요.");
             return;
         }
         if (!Double.isFinite(env.getScaleMPerPx()) || env.getScaleMPerPx() <= 0) {
-            showInfo("스케일을 먼저 설정해주세요.");
+            showToast("먼저 도면 크기(스케일)를 맞춰 주세요.");
             return;
         }
 
@@ -490,11 +489,11 @@ public class MainController {
      */
     private void finishWallsAndRecommend() {
         if (!Double.isFinite(env.getScaleMPerPx()) || env.getScaleMPerPx() <= 0) {
-            showInfo("스케일을 먼저 설정해주세요.");
+            showToast("먼저 도면 크기(스케일)를 맞춰 주세요.");
             return;
         }
         if (env.getWalls().isEmpty()) {
-            showInfo("먼저 벽을 1개 이상 그려주세요.");
+            showToast("먼저 벽을 1개 이상 그려 주세요.");
             return;
         }
         onboardingStep = OnboardingStep.NONE;
@@ -529,7 +528,6 @@ public class MainController {
         double solverTimeNs = (fdtdSolver == null) ? 0.0 : fdtdSolver.timeNs();
         window.getLeftPanel().setSolverStatus(solverRunning, solverStep, solverTimeNs, solverFpsEma);
         window.getLeftPanel().setSolverDebug(solverDebugText);
-        window.getBottomBar().setRssiLegendRange(state.legendMinProperty().get(), state.legendMaxProperty().get());
         window.getBottomBar().setCurrentRssi(currentMouseStrongestRssi());
 
         WritableImage visibleSolverOverlay =
@@ -549,11 +547,15 @@ public class MainController {
                 selectedAp,
                 hoverWall,
                 selectedWall,
-                (state.getTool() == AppState.Tool.SOLVER) ? solverDebugText : null
+                // FDTD 디버그 수치(max/outMax/vis …)는 고급 모드에서만 캔버스에 표시
+                (state.getTool() == AppState.Tool.SOLVER && state.isAdvancedMode()) ? solverDebugText : null
         );
 
         // 단계별 가이드 오버레이 갱신
         boolean hasFloorplan = window.getCanvasView().getBaseImageView().getImage() != null;
+        // 도면이 없으면 확대할 대상이 없으므로 줌 컨트롤도 숨긴다
+        javafx.scene.Node zoom = window.getTopToolbar().getZoomControls();
+        if (zoom != null) zoom.setVisible(hasFloorplan);
         boolean hasAps = !env.getAps().isEmpty();
         boolean hasHeatmap = (heatmapImage != null) || (visibleSolverOverlay != null);
         window.getCanvasView().updateGuideOverlay(hasFloorplan, hasAps, hasHeatmap);
@@ -725,22 +727,14 @@ public class MainController {
     private void startGuidedOnboardingFlow() {
         if (!Double.isFinite(env.getScaleMPerPx()) || env.getScaleMPerPx() <= 0.0) {
             onboardingStep = OnboardingStep.SCALE;
-            showInfo("""
-                    시작 가이드
-                    1) 스케일 툴에서 도면의 실제 길이를 두 점으로 찍으세요.
-                    2) 왼쪽 패널에서 실제 거리(m)를 입력하고 '적용'을 누르세요.
-                    """);
+            showToast("1단계 · 도면에서 길이를 아는 두 점을 찍고, 왼쪽에 실제 길이(m)를 입력한 뒤 [적용]을 누르세요.");
             activateTool(AppState.Tool.SCALE, true);
             return;
         }
 
         if (env.getWalls().isEmpty()) {
             onboardingStep = OnboardingStep.WALL;
-            showInfo("""
-                    시작 가이드
-                    벽그리기 툴에서 집의 벽을 그린 뒤,
-                    왼쪽 '벽 그리기 완료' 버튼을 누르면 공유기 위치를 추천해 드립니다.
-                    """);
+            showToast("2단계 · 벽을 따라 클릭해 그려 주세요. 다 그리면 왼쪽 [벽 그리기 완료]를 눌러 공유기 위치를 추천받으세요.");
             activateTool(AppState.Tool.WALL, true);
             return;
         }
@@ -755,7 +749,7 @@ public class MainController {
      */
     private void saveSettingsSnapshot() {
         if (window.getCanvasView().getBaseImageView().getImage() == null) {
-            showInfo("먼저 평면도를 열어주세요.");
+            showToast("먼저 평면도를 불러와 주세요.");
             return;
         }
         if (currentSettingsFile != null && currentSettingsFile.getParentFile() != null
@@ -773,7 +767,7 @@ public class MainController {
      */
     private void saveSettingsSnapshotAs() {
         if (window.getCanvasView().getBaseImageView().getImage() == null) {
-            showInfo("먼저 평면도를 열어주세요.");
+            showToast("먼저 평면도를 불러와 주세요.");
             return;
         }
 
@@ -873,12 +867,8 @@ public class MainController {
             currentSettingsFile = out;
             rememberRecentFile(out);
             // 빠른 저장(Cmd+S)에선 BottomBar 토스트, 다른 이름으로는 다이얼로그
-            if (verbose) {
-                showInfo("저장 완료:\n" + out.getAbsolutePath()
-                        + (floorplanBI != null ? "\n(평면도 이미지 포함)" : ""));
-            } else {
-                window.getBottomBar().showToast("저장됨 · " + out.getName());
-            }
+            showToast("저장했습니다 · " + out.getName()
+                    + (verbose && floorplanBI != null ? " (평면도 포함)" : ""));
         } catch (Exception ex) {
             showError("저장 실패: " + ex.getMessage());
         }
@@ -1001,7 +991,6 @@ public class MainController {
 
         double clientHeight = Math.max(0.1, parseDouble(p.getProperty("env.client_height_m"), env.getClientHeightM()));
         env.setClientHeightM(clientHeight);
-        window.getBottomBar().setClientHeight(clientHeight);
         double loadedPathLossN = Math.max(1.0, parseDouble(p.getProperty("env.path_loss_n"), env.getPathLossN()));
         env.setPathLossN(loadedPathLossN);
         state.setPathLossN(loadedPathLossN);
@@ -1068,7 +1057,7 @@ public class MainController {
         window.getLeftPanel().clearMeasurementResult();
 
         if (showSuccessInfo) {
-            showInfo(String.format("설정값 불러오기 완료\nAP %d개, Wall %d개", loadedAps.size(), loadedWalls.size()));
+            showToast(String.format("불러왔습니다 · 공유기 %d대 · 벽 %d개", loadedAps.size(), loadedWalls.size()));
         }
         return true;
     }
@@ -1120,14 +1109,14 @@ public class MainController {
 
     private void generateHeatmapNow() {
         if (window.getCanvasView().getBaseImageView().getImage() == null) {
-            showInfo("먼저 평면도를 열어주세요.");
+            showToast("먼저 평면도를 불러와 주세요.");
             return;
         }
 
         syncModelParamsFromState();
 
         if (!Double.isFinite(env.getScaleMPerPx()) || env.getScaleMPerPx() <= 0.0) {
-            showError("스케일을 먼저 적용해주세요.");
+            showToast("먼저 도면 크기(스케일)를 맞춰 주세요.");
             return;
         }
 
@@ -1190,17 +1179,12 @@ public class MainController {
 
             double elapsedSec = (System.currentTimeMillis() - startMs) / 1000.0;
             // DPM 모드면 측정값을 BottomBar에 표시 (발표 시연용), 아니면 일반 완료 메시지
-            if (result.dpmExpandedNodes > 0) {
+            // DPM 탐색 측정값(발표용)은 고급 모드에서만 — 일반 사용자에겐 완료 메시지
+            if (result.dpmExpandedNodes > 0 && state.isAdvancedMode()) {
                 window.getBottomBar().setDpmStats(
                         result.dpmExpandedNodes, result.dpmPrunedNodes, result.dpmElapsedMs);
             } else {
                 window.getBottomBar().setHeatmapComplete(elapsedSec);
-            }
-
-            if (result.gpuFallback && !gpuFallbackWarned) {
-                gpuFallbackWarned = true;
-                showInfo("GPU 솔버를 찾지 못해 CPU로 계산했습니다.\n" +
-                        "GPU 백엔드를 ServiceLoader로 추가하면 자동으로 사용됩니다.");
             }
 
             // 결과 카드 갱신 — 도면 전역 통계
@@ -1247,7 +1231,6 @@ public class MainController {
 
         // ── 측정 영역 = 사용 공간 마스크 안의 격자점만 ──
         final int step = 40;
-        final double SIGNAL_VALID_THRESHOLD_DBM = -85.0;  // 외부·매우 약한 신호 제외
 
         int total = 0;
         int strong = 0, good = 0, weak = 0, dead = 0;
@@ -1259,13 +1242,16 @@ public class MainController {
                 List<RssiResult> dpmRows = sampleRssiFromDpmGrids(x, y);
                 double rssi = dpmRows.isEmpty() ? Double.NaN : dpmRows.get(0).rssiDbm;
                 if (!Double.isFinite(rssi)) continue;
-                if (rssi < SIGNAL_VALID_THRESHOLD_DBM) continue;  // 매우 약한 신호 제외
-
+                // 등급 기준은 RssiLevel 한 곳 — 히트맵 색·범례와 같은 의미.
+                // (예전엔 -85 dBm 미만을 "매우 약한 신호"로 분모에서 빼서, 지정한 공간 안의
+                //  진짜 사각지대가 통계에서 사라지고 커버율이 실제보다 높게 나왔다.)
                 total++;
-                if      (rssi >= -55) strong++;
-                else if (rssi >= -65) good++;
-                else if (rssi >= -75) weak++;
-                else                  dead++;
+                switch (app.model.RssiLevel.of(rssi)) {
+                    case STRONG -> strong++;
+                    case GOOD   -> good++;
+                    case WEAK   -> weak++;
+                    case DEAD   -> dead++;
+                }
             }
         }
         if (total == 0) {
@@ -1425,7 +1411,7 @@ public class MainController {
 
     private boolean ensureSolverReady(boolean showErrorIfMissingMap) {
         if (window.getCanvasView().getBaseImageView().getImage() == null) {
-            if (showErrorIfMissingMap) showInfo("먼저 평면도를 열어주세요.");
+            if (showErrorIfMissingMap) showToast("먼저 평면도를 불러와 주세요.");
             return false;
         }
         int w = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getWidth()));
@@ -1481,7 +1467,7 @@ public class MainController {
             solverOverlayImage = null;
             solverDebugText = "debug: no active source";
             if (showErrorIfMissingMap) {
-                showInfo("선택된 표시 밴드에 활성 AP 라디오가 없습니다.\n밴드를 'All' 또는 활성 밴드로 바꿔주세요.");
+                showToast("선택한 밴드를 켠 공유기가 없습니다. 밴드를 [전체]로 바꾸거나 공유기의 밴드를 켜 주세요.");
             }
             return false;
         }
@@ -1760,6 +1746,11 @@ public class MainController {
 
     private void showInfo(String msg) {
         app.ui.Notify.info(stage, msg);
+    }
+
+    /** 흐름을 막지 않는 짧은 알림 (성공·안내용). 확인이 필요한 경고·오류는 showInfo/showError. */
+    private void showToast(String msg) {
+        window.getCanvasView().showToast(msg);
     }
 
     private List<RssiResult> currentMouseRssiRows() {

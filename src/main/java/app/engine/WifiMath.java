@@ -808,36 +808,13 @@ public final class WifiMath {
     // ===== 색상 매핑 및 픽셀 유틸 =====
 
     /**
-     * RSSI(dBm) → 강(빨강) ~ 중(노랑) ~ 약(초록) 색상 매핑
+     * RSSI → 히트맵 색 (반투명 0.55). 색 정의는 {@link app.model.RssiLevel} 한 곳에 있다 —
+     * 결과 카드·하단 범례와 같은 등급 색이 나오도록 dBm 기준점에 고정된 그라데이션.
+     * (예전엔 범례 범위 -96~-10 dBm 에 고르게 펴서 -55 dBm 이 초록으로 칠해졌다.)
      */
-    public static Color rssiToColor(double rssi, double vmin, double vmax) {
-        double t = (rssi - vmin) / (vmax - vmin);
-        t = Math.max(0.0, Math.min(1.0, t));
-
-        // [t, R, G, B] — 5단계 색상 정지점 (BottomBar 범례와 동기화)
-        // 파랑(#2D6CF6) → 시안(#34D1FF) → 녹색(#2FD44A) → 노랑(#F6D32D) → 주황(#F0632D)
-        double[][] stops = {
-                {0.00,  45, 108, 246},   // #2D6CF6 Blue   — 매우 약한 신호
-                {0.25,  52, 209, 255},   // #34D1FF Cyan
-                {0.50,  47, 212,  74},   // #2FD44A Green
-                {0.75, 246, 211,  45},   // #F6D32D Yellow
-                {1.00, 240,  99,  45}    // #F0632D Orange — 매우 강한 신호
-        };
-
-        int i = 0;
-        while (i < stops.length - 1 && t > stops[i + 1][0]) {
-            i++;
-        }
-
-        double t0 = stops[i][0];
-        double t1 = stops[i + 1][0];
-        double u = (t1 == t0) ? 0.0 : (t - t0) / (t1 - t0);
-
-        double r = stops[i][1] + u * (stops[i + 1][1] - stops[i][1]);
-        double g = stops[i][2] + u * (stops[i + 1][2] - stops[i][2]);
-        double b = stops[i][3] + u * (stops[i + 1][3] - stops[i][3]);
-
-        return new Color(r / 255.0, g / 255.0, b / 255.0, 0.55);
+    public static Color rssiToColor(double rssi) {
+        Color c = app.model.RssiLevel.gradientColor(rssi);
+        return new Color(c.getRed(), c.getGreen(), c.getBlue(), 0.55);
     }
 
     // ===== 내부 복소수 유틸 =====
