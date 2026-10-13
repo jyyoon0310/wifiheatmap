@@ -15,6 +15,7 @@ Flood Fill 기반 영역 선택 + 그리디 Ray-cast + FDTD 검증을 통한 AP 
 - Java 21, JavaFX 21.0.9, Gradle 8.14
 - Jackson 2.17.2 (JSON 직렬화)
 - Aparapi 3.0.2 (GPU 가속, fallback 포함)
+- JNA 5.14.0 (macOS 제목 막대 꾸미기 전용)
 
 ## 아키텍처 (MVC)
 ```
@@ -28,6 +29,8 @@ src/main/java/app/
 │   ├── Band.java                 # 주파수 대역 enum (2.4/5/6 GHz)
 │   ├── Wall.java                 # 벽 선분 + 재질
 │   ├── WallMaterial.java         # 재질 프리셋 (drywall, concrete, glass 등)
+│   ├── ApPreset.java             # 공유기 기종 프리셋
+│   ├── RssiLevel.java            # 신호 등급(강함/양호/약함/사각지대)·색 기준 — 단일 출처
 │   └── RssiResult.java           # RSSI 측정 결과 DTO
 ├── controller/
 │   ├── MainController.java       # 주 오케스트레이터 (파일 I/O, 다이얼로그 연동)
@@ -35,11 +38,12 @@ src/main/java/app/
 │   ├── ToolsController.java      # 툴 상호작용 (스케일, 벽, AP 배치)
 │   └── ApController.java         # AP 선택/드래그/호버
 ├── engine/                       # 계산 엔진 (UI 코드 금지)
-│   ├── HeatmapGenerator.java     # Legacy 모델 (경로손실 + 벽감쇠 + 반사/회절)
+│   ├── HeatmapGenerator.java     # 히트맵 생성 (generateDpm / Legacy generateCpu)
+│   ├── DpmPathGrid.java          # DPM 지배경로 Dijkstra
+│   ├── BuildingMask.java         # 건물 안쪽 마스크 (히트맵을 건물 안에만 칠함)
 │   ├── FdtdWaveSimulator.java    # FDTD 실시간 시각화 + AP추천 검증용
 │   ├── ApRecommender.java        # AP 위치 추천 (그리디 + FDTD 피드백 루프)
 │   ├── WifiMath.java             # 기하학 계산, 경로손실 공식
-│   ├── GpuHeatmapSolver.java     # GPU 가속 히트맵
 │   └── fdtd/                     # FDTD 서브시스템
 │       ├── TezFdtdSolver.java    # 핵심 TEz FDTD 솔버
 │       ├── FdtdConfig.java       # FDTD 파라미터 (dx, dt, PML 등)
@@ -58,11 +62,15 @@ src/main/java/app/
 │   ├── MainWindow.java           # 루트 BorderPane 레이아웃
 │   ├── CanvasView.java           # 메인 캔버스 (도면 + 히트맵 + AP 렌더링)
 │   ├── LeftPanel.java            # AP/벽 편집 사이드 패널
-│   ├── TopToolbar.java           # 툴 선택, 모델 전환, AP 추천 버튼
-│   ├── BottomBar.java            # 솔버 상태 표시
+│   ├── TopToolbar.java           # 툴 선택, 보기 전환, 공유기 자리 추천 버튼 (+ 캔버스 줌 컨트롤)
+│   ├── BottomBar.java            # 진행 상태 + 신호 범례
+│   ├── StepIndicator.java        # 작업 단계 표시 (도면→축척→벽→공유기→신호 지도)
+│   ├── Icons.java                # 단색 벡터 아이콘
+│   ├── MacWindowChrome.java      # macOS 제목 막대를 앱 테마에 맞춤 (JNA, 실패 시 무시)
 │   └── Styles.java               # Liquid Glass 테마 시스템 (다크/라이트)
 ├── dialog/
-│   ├── ApEditorDialog.java       # AP 상세 편집 모달
+│   ├── WelcomeDialog.java        # 시작 화면 (새 평면도 / 저장된 작업 / 빈 화면)
+│   ├── AdvancedSettingsDialog.java # 고급(연구·실험) 모드 토글
 │   └── ApRecommendDialog.java    # AP 추천 다이얼로그 (Flood Fill 영역 선택)
 └── resources/
     └── glass.css                 # 글로벌 CSS (스크롤바, 셀 스타일)
@@ -77,6 +85,10 @@ src/main/java/app/
 ### 렌더링
 - `CanvasView.render()` ← `MainController`가 직접 호출
 - 비동기 히트맵: JavaFX `Task`로 솔버 실행 (UI 블로킹 방지)
+
+### 메뉴·단축키
+- `MainController.buildMenuBar()` — 파일/보기/도구 메뉴 (macOS 는 시스템 메뉴 막대)
+- macOS 단축키는 메뉴가 처리, 장면 키 핸들러의 ⌘O/⌘S 는 macOS 외 OS 에서만 동작 (중복 실행 방지)
 
 ### 직렬화
 - `WifiEnvironment` ↔ JSON (Jackson)

@@ -12,7 +12,6 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -77,9 +76,6 @@ public class HeatmapGenerator {
     private final AppState.HeatmapSolverMode solverMode;
     private final AppState.HeatmapModel heatmapModel;
     private final AppState.BandFilter bandFilter;
-    private static final GpuHeatmapSolver GPU_SOLVER = loadGpuSolver();
-    private boolean usedGpuLastRun = false;
-    private boolean gpuFallbackLastRun = false;
 
     // ===== Reflection(1-bounce) 튜닝 =====
     // 후보 12→8: 통계적으로 근거리 상위 8개 벽이 반사 기여의 95%+ 차지.
@@ -150,43 +146,17 @@ public class HeatmapGenerator {
                                    Consumer<Double> progressCallback) {
         // DPM 모드: GPU/CPU 선택과 무관한 별도 경로
         if (heatmapModel == AppState.HeatmapModel.DPM) {
-            usedGpuLastRun = false;
-            gpuFallbackLastRun = false;
             return generateDpm(width, height, gridStepPx, legendMinDbm, legendMaxDbm,
                     smoothRadiusPx, progressCallback);
         }
 
-        // GPU 모드
-        if (solverMode == AppState.HeatmapSolverMode.GPU && GPU_SOLVER != null) {
-            WritableImage gpuImg = GPU_SOLVER.generate(env, width, height, gridStepPx,
-                    legendMinDbm, legendMaxDbm, smoothRadiusPx);
-            if (gpuImg != null) {
-                usedGpuLastRun = true;
-                gpuFallbackLastRun = false;
-                if (progressCallback != null) progressCallback.accept(1.0);
-                int[] px = new int[width * height];
-                gpuImg.getPixelReader().getPixels(0, 0, width, height,
-                        javafx.scene.image.PixelFormat.getIntArgbInstance(), px, 0, width);
-                return new HeatmapResult(px, width, height, 0, true, false);
-            }
-            gpuFallbackLastRun = true;
-        }
-
-        usedGpuLastRun = false;
+        // (GPU 히트맵 경로는 구현이 등록된 적이 없어 항상 CPU 로 떨어졌으므로 제거했다.
+        //  전파 흐름 보기의 GPU 솔버 app.solver.v2.AparapiGpuWaveSolver 와는 별개.)
         return generateCpu(width, height, gridStepPx, legendMinDbm, legendMaxDbm, smoothRadiusPx, progressCallback);
     }
 
-    public boolean usedGpuLastRun() {
-        return usedGpuLastRun;
-    }
 
-    public boolean gpuFallbackLastRun() {
-        return gpuFallbackLastRun;
-    }
 
-    public static boolean isGpuAvailable() {
-        return GPU_SOLVER != null;
-    }
 
     /**
      * DPM (Dominant Path Model) 히트맵 생성.
@@ -610,7 +580,7 @@ public class HeatmapGenerator {
 
         // WritableImage는 JavaFX Thread에서만 생성 가능 → int[] 버퍼만 반환
         return new HeatmapResult(argbPixels, width, height, 0,
-                usedGpuLastRun, gpuFallbackLastRun);
+                false, false);
     }
 
     /** sampleMap에서 값을 조회하고, 없으면 코스 그리드에서 최근접 값 반환 */
@@ -909,16 +879,4 @@ public class HeatmapGenerator {
         return (a << 24) | (r << 16) | (g << 8) | b;
     }
 
-    private static GpuHeatmapSolver loadGpuSolver() {
-        try {
-            for (GpuHeatmapSolver solver : ServiceLoader.load(GpuHeatmapSolver.class)) {
-                if (solver != null && solver.isAvailable()) {
-                    return solver;
-                }
-            }
-        } catch (Throwable ignored) {
-            // optional backend - unavailable
-        }
-        return null;
-    }
 }

@@ -60,6 +60,11 @@ public class MainWindow {
 
     public Parent getRoot() { return root; }
 
+    /** 메뉴 막대를 툴바 위에 둔다 (macOS 에서는 시스템 메뉴 막대로 올라가 창 안 공간을 차지하지 않는다). */
+    public void setMenuBar(javafx.scene.control.MenuBar menuBar) {
+        root.setTop(new javafx.scene.layout.VBox(menuBar, topToolbar.getNode()));
+    }
+
     public TopToolbar getTopToolbar() { return topToolbar; }
 
     public LeftPanel getLeftPanel() { return leftPanel; }

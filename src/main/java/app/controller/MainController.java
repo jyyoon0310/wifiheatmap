@@ -134,6 +134,65 @@ public class MainController {
 
     public void bindScene(Scene scene) {
         installSceneShortcuts(scene);
+        window.setMenuBar(buildMenuBar());
+    }
+
+    private static final boolean IS_MAC =
+            System.getProperty("os.name", "").toLowerCase().contains("mac");
+
+    /**
+     * 메뉴 막대 — macOS 에서는 화면 맨 위 시스템 메뉴 막대에 들어간다.
+     *
+     * <p>단축키(⌘S·⌘O 등)를 macOS 네이티브 앱과 같은 방식으로 메뉴가 처리하고, 단축키를 모르는
+     * 사용자도 기능을 메뉴에서 찾을 수 있다. 다른 OS 에서는 창 안 맨 위에 보통 메뉴 막대로 나온다.</p>
+     */
+    private javafx.scene.control.MenuBar buildMenuBar() {
+        javafx.scene.control.Menu file = new javafx.scene.control.Menu("파일");
+        file.getItems().addAll(
+                menuItem("평면도 열기…", "Shortcut+Shift+O", this::openFloorplan),
+                menuItem("작업 불러오기…", "Shortcut+O", this::openSettingsSnapshot),
+                new javafx.scene.control.SeparatorMenuItem(),
+                menuItem("저장", "Shortcut+S", this::saveSettingsSnapshot),
+                menuItem("다른 이름으로 저장…", "Shortcut+Shift+S", this::saveSettingsSnapshotAs));
+
+        javafx.scene.control.Menu view = new javafx.scene.control.Menu("보기");
+        view.getItems().addAll(
+                menuItem("신호 지도 만들기", "Shortcut+R", this::generateHeatmapNow),
+                new javafx.scene.control.SeparatorMenuItem(),
+                menuItem("화면에 맞춤", "Shortcut+0", this::zoomToFit),
+                menuItem("확대", "Shortcut+Equals", () -> zoomAtViewportCenter(1.10)),
+                menuItem("축소", "Shortcut+Minus", () -> zoomAtViewportCenter(1.0 / 1.10)),
+                new javafx.scene.control.SeparatorMenuItem(),
+                menuItem("다크 모드 전환", "Shortcut+Shift+D", () -> Styles.setDark(!Styles.isDark())));
+
+        javafx.scene.control.Menu tools = new javafx.scene.control.Menu("도구");
+        tools.getItems().addAll(
+                menuItem("축척 맞추기", "Shortcut+1", () -> activateTool(AppState.Tool.SCALE, true)),
+                menuItem("벽 그리기", "Shortcut+2", () -> activateTool(AppState.Tool.WALL, true)),
+                menuItem("공유기 배치", "Shortcut+3", () -> activateTool(AppState.Tool.AP, true)),
+                new javafx.scene.control.SeparatorMenuItem(),
+                menuItem("공유기 자리 추천…", "Shortcut+Shift+R", this::openApRecommender));
+
+        javafx.scene.control.MenuBar bar = new javafx.scene.control.MenuBar(file, view, tools);
+        bar.setUseSystemMenuBar(true);
+        return bar;
+    }
+
+    private static javafx.scene.control.MenuItem menuItem(String text, String accelerator, Runnable action) {
+        javafx.scene.control.MenuItem item = new javafx.scene.control.MenuItem(text);
+        item.setAccelerator(javafx.scene.input.KeyCombination.keyCombination(accelerator));
+        item.setOnAction(e -> action.run());
+        return item;
+    }
+
+    private void zoomToFit() {
+        if (window.getCanvasView().getBaseImageView().getImage() == null) {
+            showToast("먼저 평면도를 불러와 주세요.");
+            return;
+        }
+        double w = window.getCanvasView().getDrawCanvas().getWidth();
+        double h = window.getCanvasView().getDrawCanvas().getHeight();
+        viewportController.fitToViewport(20, w, h);
     }
 
     public void afterShown() {
@@ -156,6 +215,8 @@ public class MainController {
 
         app.dialog.WelcomeDialog.Result r = app.dialog.WelcomeDialog.show(stage, recent);
         if (r.dontShowAgain) PREFS.putBoolean(PREFS_KEY_SKIP_WELCOME, true);
+        // macOS 메뉴 막대는 포커스를 가진 창의 것으로 바뀐다 — 환영 창이 닫히면 주 창으로 확실히 돌린다
+        stage.requestFocus();
 
         switch (r.choice) {
             case NEW_FLOORPLAN -> openFloorplan();
@@ -256,15 +317,7 @@ public class MainController {
                 viewportController.centerViewport();
             });
 
-            window.getTopToolbar().setOnZoomFit(() -> {
-                if (window.getCanvasView().getBaseImageView().getImage() == null) {
-                    showToast("먼저 평면도를 불러와 주세요.");
-                    return;
-                }
-                double w = window.getCanvasView().getDrawCanvas().getWidth();
-                double h = window.getCanvasView().getDrawCanvas().getHeight();
-                viewportController.fitToViewport(20, w, h);
-            });
+            window.getTopToolbar().setOnZoomFit(this::zoomToFit);
         } catch (Exception ignored) {}
 
         // LeftPanel: scale apply/reset
@@ -581,9 +634,9 @@ public class MainController {
 
     private void installSceneShortcuts(Scene scene) {
         scene.setOnKeyPressed(e -> {
-            // ── 파일 단축키 (Cmd+O / Cmd+S / Cmd+Shift+S) ─────────────
-            // macOS는 META, 그 외는 CTRL — Shortcut 키 처리
-            if (e.isShortcutDown()) {
+            // ── 파일 단축키 (Ctrl+O / Ctrl+S / Ctrl+Shift+S) — macOS 외 ─────────
+            // macOS 에서는 시스템 메뉴 막대(buildMenuBar)의 단축키가 처리한다 — 여기서도 처리하면 두 번 실행된다.
+            if (e.isShortcutDown() && !IS_MAC) {
                 if (e.getCode() == KeyCode.O) {
                     openSettingsSnapshot();
                     e.consume();

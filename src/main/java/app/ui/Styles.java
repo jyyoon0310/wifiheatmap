@@ -67,9 +67,12 @@ public class Styles {
     public static final String STATUS_SUCCESS = "#22C55E";
     public static final String STATUS_ERROR   = "#EF4444";
 
-    public static final String FONT_STACK =
-            "'SF Pro Text','-Apple SD Gothic Neo','Apple SD 산돌고딕 Neo','Noto Sans KR','Malgun Gothic',sans-serif";
-    public static final String FONT_MONO  = "'SF Mono','Menlo','Monaco','Consolas',monospace";
+    // JavaFX CSS 는 웹처럼 글꼴 목록을 차례로 시도하지 않는다 — 예전 목록('SF Pro Text', 오타
+    // '-Apple SD Gothic Neo', 한글 이름 'Apple SD 산돌고딕 Neo' 등)은 실측 결과 전부 등록되지
+    // 않은 이름이라 결국 System 으로 떨어졌다. 실제로 쓰이는 값을 명시한다.
+    // macOS 의 System 은 SF 계열 + 한글 Apple SD Gothic Neo 대체가 자동으로 적용된다.
+    public static final String FONT_STACK = "'System'";
+    public static final String FONT_MONO  = "'Menlo'";
 
     // ── 폰트 사이즈 (px) — 매직 넘버 제거 ───────────────────────────────────
     /** ResultCard 헤드라인 / 큰 수치 표시 */
