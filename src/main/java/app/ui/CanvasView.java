@@ -149,7 +149,6 @@ public class CanvasView {
                        AP selectedAp,
                        Wall hoverWall,
                        Wall selectedWall,
-                       List<PropagationPath> debugPaths,
                        String solverDebugText) {
 
         g.clearRect(0, 0, drawCanvas.getWidth(), drawCanvas.getHeight());
@@ -190,40 +189,6 @@ public class CanvasView {
                 g.setFill(Color.ORANGE);
                 g.fillOval(w.x1 - 3, w.y1 - 3, 6, 6);
                 g.fillOval(w.x2 - 3, w.y2 - 3, 6, 6);
-            }
-        }
-
-        // propagation debug paths
-        if (debugPaths != null && !debugPaths.isEmpty()) {
-            for (PropagationPath p : debugPaths) {
-                if (p == null || p.p1 == null || p.p2 == null) continue;
-                switch (p.type) {
-                    case LOS -> {
-                        g.setStroke(Color.web("#94A3B8"));
-                        g.setLineDashes(6, 6);
-                        g.setLineWidth(1.5);
-                        g.strokeLine(p.p1.getX(), p.p1.getY(), p.p2.getX(), p.p2.getY());
-                        g.setLineDashes(null);
-                    }
-                    case REFLECTION -> {
-                        if (p.p3 == null) break;
-                        g.setStroke(Color.web("#2563EB"));
-                        g.setLineWidth(2.0);
-                        g.strokeLine(p.p1.getX(), p.p1.getY(), p.p2.getX(), p.p2.getY());
-                        g.strokeLine(p.p2.getX(), p.p2.getY(), p.p3.getX(), p.p3.getY());
-                        g.setFill(Color.web("#2563EB"));
-                        g.fillOval(p.p2.getX() - 3, p.p2.getY() - 3, 6, 6);
-                    }
-                    case DIFFRACTION -> {
-                        if (p.p3 == null) break;
-                        g.setStroke(Color.web("#16A34A"));
-                        g.setLineWidth(2.0);
-                        g.strokeLine(p.p1.getX(), p.p1.getY(), p.p2.getX(), p.p2.getY());
-                        g.strokeLine(p.p2.getX(), p.p2.getY(), p.p3.getX(), p.p3.getY());
-                        g.setFill(Color.web("#16A34A"));
-                        g.fillOval(p.p2.getX() - 3, p.p2.getY() - 3, 6, 6);
-                    }
-                }
             }
         }
 
@@ -288,7 +253,7 @@ public class CanvasView {
                        List<Point2D> calibPts,
                        Point2D wallFirst,
                        Point2D wallHover) {
-        render(env, state, heatmap, null, calibPts, wallFirst, wallHover, null, null, null, null, null, null);
+        render(env, state, heatmap, null, calibPts, wallFirst, wallHover, null, null, null, null, null);
     }
 
     public void render(WifiEnvironment env,
@@ -299,7 +264,7 @@ public class CanvasView {
                        Point2D wallHover,
                        AP hoverAp,
                        AP selectedAp) {
-        render(env, state, heatmap, null, calibPts, wallFirst, wallHover, hoverAp, selectedAp, null, null, null, null);
+        render(env, state, heatmap, null, calibPts, wallFirst, wallHover, hoverAp, selectedAp, null, null, null);
     }
 
     private void drawSolverDebugHud(String solverDebugText) {

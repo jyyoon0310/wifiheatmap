@@ -142,11 +142,7 @@ public class ApController {
         ap.y = y;
         ap.enabled = true;
 
-        try {
-            ap.radios.get(Band.GHZ_24).ssid = ap.name + "_24G";
-            ap.radios.get(Band.GHZ_5).ssid  = ap.name + "_5G";
-            ap.radios.get(Band.GHZ_6).ssid  = ap.name + "_6G";
-        } catch (Exception ignored) {}
+        ap.resetSsidsFromName();
 
         env.getAps().add(ap);
         return ap;

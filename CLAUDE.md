@@ -2,7 +2,7 @@
 
 ## 개요
 JavaFX 21 기반 실내 Wi-Fi 전파 시뮬레이터.
-도면 위에 AP와 벽을 배치하고, Legacy 경로손실 모델 또는 FDTD 전자기파 시뮬레이션으로 RSSI 히트맵을 생성.
+도면 위에 AP와 벽을 배치하고, DPM(지배경로 모델)으로 RSSI 히트맵을 생성. FDTD 전자기파 시뮬레이션은 "전파 흐름 보기"와 AP 추천 검증에 사용.
 Flood Fill 기반 영역 선택 + 그리디 Ray-cast + FDTD 검증을 통한 AP 최적 배치 추천 기능 포함.
 
 ## 빌드 & 실행
@@ -28,8 +28,7 @@ src/main/java/app/
 │   ├── Band.java                 # 주파수 대역 enum (2.4/5/6 GHz)
 │   ├── Wall.java                 # 벽 선분 + 재질
 │   ├── WallMaterial.java         # 재질 프리셋 (drywall, concrete, glass 등)
-│   ├── RssiResult.java           # RSSI 측정 결과 DTO
-│   └── PropagationPath.java      # 전파 경로 (디버그 오버레이용)
+│   └── RssiResult.java           # RSSI 측정 결과 DTO
 ├── controller/
 │   ├── MainController.java       # 주 오케스트레이터 (파일 I/O, 다이얼로그 연동)
 │   ├── ViewportController.java   # 패닝/줌
@@ -90,8 +89,9 @@ src/main/java/app/
 ## 히트맵 모델
 | 모델 | 클래스 | 특성 |
 |------|--------|------|
-| Legacy | `HeatmapGenerator` | 경로손실 + 벽감쇠 + 반사/회절, 빠름 |
-| FDTD | `TezFdtdSolver` / `FdtdWaveSimulator` | 전자기파 수치 시뮬레이션, PML 경계, 느리지만 정확 |
+| DPM (히트맵 유일 모델) | `DpmPathGrid` → `HeatmapGenerator.generateDpm` | 지배경로 Dijkstra, 빠름 (1~2초) |
+| FDTD | `TezFdtdSolver` / `FdtdWaveSimulator` | 전자기파 수치 시뮬레이션. "전파 흐름 보기" 실시간 표시 + AP 추천 정밀 검증 |
+| Legacy (화면 비노출) | `WifiEnvironment.sampleRssiAt`, `HeatmapGenerator.generateCpu` | 경로손실 n + 반사/회절. 발표 비교 기준선(`presentation/MeasureHarness`)·골든 테스트용으로만 유지 |
 
 ## AP 추천 알고리즘 (`ApRecommender`)
 ```

@@ -42,6 +42,7 @@ public class ApRecommendDialog {
                             int canvasW, int canvasH,
                             app.model.WifiEnvironment env,
                             app.model.AppState state,
+                            app.model.ApPreset preset,
                             Consumer<List<Point2D>> onApply) {
         if (floorplanImage == null) return;
 
@@ -255,7 +256,8 @@ public class ApRecommendDialog {
                     maskCopy, maskW, maskH, FLOOD_CELL_SIZE,
                     true,    // useDpmEvaluation — 후보 평가 시 DPM 사용 (격자 기반 DPM)
                     true,    // dpmGreedyEnabled — 가지치기 ON (메모리 효율)
-                    150.0    // pruningThresholdDb — 표준 임계값
+                    150.0,   // pruningThresholdDb — 표준 임계값
+                    preset   // 선택한 공유기 스펙으로 평가 (EIRP)
             );
 
             runBtn.setText("중지");

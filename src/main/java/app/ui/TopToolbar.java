@@ -36,19 +36,13 @@ public class TopToolbar {
     private Runnable onShowAdvanced;
     /** "🌊 전파 흐름 보기" 토글 — true=시작, false=정지. MainController가 tool 전환 + solver 제어. */
     private Consumer<Boolean> onWaveToggle;
-    private Consumer<AppState.HeatmapModel> onHeatmapModelChanged;
-    private Consumer<AppState.HeatmapSolverMode> onHeatmapSolverModeChanged;
     private Consumer<AppState.BandFilter> onBandFilterChanged;
 
-    private final ComboBox<AppState.HeatmapModel> heatmapModelCombo = new ComboBox<>();
-    private final ComboBox<AppState.HeatmapSolverMode> solverModeCombo = new ComboBox<>();
     private final ToggleGroup bandGroup = new ToggleGroup();
     private final ToggleButton bandAllBtn  = new ToggleButton("전체");
     private final ToggleButton band24Btn   = new ToggleButton("2.4 GHz");
     private final ToggleButton band5Btn    = new ToggleButton("5 GHz");
     private final ToggleButton band6Btn    = new ToggleButton("6 GHz");
-    private boolean suppressHeatmapModelNotify = false;
-    private boolean suppressSolverNotify = false;
     private boolean suppressBandNotify = false;
 
     private Runnable onZoomFit;
@@ -130,68 +124,6 @@ public class TopToolbar {
                 "-fx-border-color: " + Styles.borderSoft() + ";" +
                 "-fx-border-radius: 10;" +
                 "-fx-border-width: 0.5;");
-
-        // ── 히트맵 엔진 모델 콤보 ──────────────────────────────────────────
-        heatmapModelCombo.getItems().setAll(AppState.HeatmapModel.values());
-        heatmapModelCombo.setConverter(new StringConverter<>() {
-            @Override public String toString(AppState.HeatmapModel m) {
-                if (m == null) return "Legacy";
-                return switch (m) {
-                    case LEGACY   -> "Legacy";
-                    case DPM      -> "DPM";
-                    case FDTD_TEZ -> "FDTD";
-                };
-            }
-            @Override public AppState.HeatmapModel fromString(String s) { return null; }
-        });
-        heatmapModelCombo.setCellFactory(list -> new ListCell<>() {
-            @Override protected void updateItem(AppState.HeatmapModel item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? "" : heatmapModelCombo.getConverter().toString(item));
-            }
-        });
-        heatmapModelCombo.setButtonCell(new ListCell<>() {
-            @Override protected void updateItem(AppState.HeatmapModel item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? "" : heatmapModelCombo.getConverter().toString(item));
-            }
-        });
-        heatmapModelCombo.getSelectionModel().select(AppState.HeatmapModel.LEGACY);
-        heatmapModelCombo.setOnAction(e -> {
-            if (suppressHeatmapModelNotify) return;
-            if (onHeatmapModelChanged != null) onHeatmapModelChanged.accept(heatmapModelCombo.getValue());
-        });
-        Themed.bind(heatmapModelCombo, Styles::comboBase);
-        Styles.installComboPopupStyle(heatmapModelCombo);
-
-        // ── 솔버 모드 콤보 ─────────────────────────────────────────────────
-        solverModeCombo.getItems().setAll(AppState.HeatmapSolverMode.values());
-        solverModeCombo.setConverter(new StringConverter<>() {
-            @Override public String toString(AppState.HeatmapSolverMode m) {
-                return m == AppState.HeatmapSolverMode.GPU ? "Solver: GPU" : "Solver: CPU";
-            }
-            @Override public AppState.HeatmapSolverMode fromString(String s) { return null; }
-        });
-        solverModeCombo.setCellFactory(list -> new ListCell<>() {
-            @Override protected void updateItem(AppState.HeatmapSolverMode item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? "" :
-                        (item == AppState.HeatmapSolverMode.GPU ? "GPU (실험)" : "CPU"));
-            }
-        });
-        solverModeCombo.setButtonCell(new ListCell<>() {
-            @Override protected void updateItem(AppState.HeatmapSolverMode item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? "" : solverModeCombo.getConverter().toString(item));
-            }
-        });
-        solverModeCombo.getSelectionModel().select(AppState.HeatmapSolverMode.CPU);
-        solverModeCombo.setOnAction(e -> {
-            if (suppressSolverNotify) return;
-            if (onHeatmapSolverModeChanged != null) onHeatmapSolverModeChanged.accept(solverModeCombo.getValue());
-        });
-        Themed.bind(solverModeCombo, Styles::comboBase);
-        Styles.installComboPopupStyle(solverModeCombo);
 
         // ── 밴드 필터 (히트맵 표시 밴드 선택) ──────────────────────────
         bandAllBtn.setToggleGroup(bandGroup);
@@ -315,7 +247,7 @@ public class TopToolbar {
                 actionGroup,
                 // ── 아래는 고급 모드에서만 노출 ──
                 recommendBtn,
-                heatmapModelCombo, gen, clear, solverModeCombo,
+                gen, clear,
                 solverStartBtn, solverStopBtn, solverResetBtn,
                 new Separator(),
                 bandLabel, bandPill,
@@ -328,10 +260,8 @@ public class TopToolbar {
 
         // 고급 모드 전용 노드 등록
         advancedOnlyNodes.add(recommendBtn);
-        advancedOnlyNodes.add(heatmapModelCombo);
         advancedOnlyNodes.add(gen);
         advancedOnlyNodes.add(clear);
-        advancedOnlyNodes.add(solverModeCombo);
 
         // 초기 가시성: 일반 모드 + 솔버 비활성
         applyAdvancedVisibility();
@@ -400,8 +330,6 @@ public class TopToolbar {
     public void setOnResetSolver(Runnable r)            { this.onResetSolver = r; }
     public void setOnToolChanged(Consumer<AppState.Tool> c) { this.onToolChanged = c; }
     public void setOnRecommendAp(Runnable r)             { this.onRecommendAp = r; }
-    public void setOnHeatmapModelChanged(Consumer<AppState.HeatmapModel> c) { this.onHeatmapModelChanged = c; }
-    public void setOnHeatmapSolverModeChanged(Consumer<AppState.HeatmapSolverMode> c) { this.onHeatmapSolverModeChanged = c; }
     public void setOnBandFilterChanged(Consumer<AppState.BandFilter> c) { this.onBandFilterChanged = c; }
 
     public void setBandFilter(AppState.BandFilter f) {
@@ -414,18 +342,6 @@ public class TopToolbar {
             case GHZ_6   -> band6Btn  .setSelected(true);
         }
         suppressBandNotify = false;
-    }
-
-    public void setHeatmapModel(AppState.HeatmapModel mode) {
-        suppressHeatmapModelNotify = true;
-        heatmapModelCombo.getSelectionModel().select(mode == null ? AppState.HeatmapModel.LEGACY : mode);
-        suppressHeatmapModelNotify = false;
-    }
-
-    public void setHeatmapSolverMode(AppState.HeatmapSolverMode mode) {
-        suppressSolverNotify = true;
-        solverModeCombo.getSelectionModel().select(mode == null ? AppState.HeatmapSolverMode.CPU : mode);
-        suppressSolverNotify = false;
     }
 
     public void setOnZoomFit(Runnable r)  { this.onZoomFit  = r; }

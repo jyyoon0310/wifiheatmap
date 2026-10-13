@@ -33,15 +33,27 @@ public class ApRecommender {
             int maskCellSize,         // 마스크 셀 크기 (px) — floodFill 시 사용한 값
             boolean useDpmEvaluation, // 후보 평가 시 DPM 사용 (false=기존 sampleRssiAt)
             boolean dpmGreedyEnabled, // 가지치기 ON/OFF (메모리 효율 도구)
-            double pruningThresholdDb // selCost 가지치기 임계값 [dB]. 무한대→OFF
+            double pruningThresholdDb, // selCost 가지치기 임계값 [dB]. 무한대→OFF
+            ApPreset preset           // 추천 AP의 전파 스펙 (EIRP 등). null → CUSTOM(17dBm+5dBi)
     ) {
         public static Params defaults() {
             return new Params(2, -65.0, 25, 15, true, 6000, Band.GHZ_5, null, 0, 0, 1,
                     true,   // useDpmEvaluation: 영구 ON (이번 캡스톤 기여)
                     true,   // dpmGreedyEnabled: 영구 ON (메모리 효율)
-                    150.0); // pruningThresholdDb: 기본 150dB
+                    150.0,  // pruningThresholdDb: 기본 150dB
+                    ApPreset.CUSTOM);
         }
     }
+
+    /**
+     * 모든 측정점이 이미 목표를 넘은 뒤 추가 AP 를 평가할 때 보는 "약한 구역"의 비율.
+     * 하위 20% 지점의 평균 신호를 가장 많이 끌어올리는 후보를 고른다.
+     *
+     * <p>최약 1점(min)만 보면 여러 후보가 같은 값으로 동점이 되고, 고정 상한(예: -55dBm)까지만
+     * 인정하면 DPM 처럼 이미 전 구역이 그보다 강한 경우 전부 동점이 된다 — 둘 다 실측
+     * 도면에서 확인됨. 수십 개 지점의 평균이라 동점이 사실상 나지 않는다.</p>
+     */
+    private static final double WEAK_FRACTION = 0.20;
 
     // ── 결과 ─────────────────────────────────────────────────────────────────
     public record Result(
@@ -184,6 +196,19 @@ public class ApRecommender {
         AP templateAp = new AP();
         templateAp.heightM = 2.5;
         templateAp.name = "Rec";
+        // 사용자가 고른 공유기 스펙을 평가에도 그대로 쓴다. (예전엔 EIRP 22dBm 고정이라
+        // "선택한 공유기의 전파 스펙으로 계산" 안내와 달리 프리셋이 계산에 반영되지 않았다.)
+        if (params.preset != null) params.preset.applyTo(templateAp);
+        // DPM 평가는 2.4GHz 격자로 하므로 2.4GHz 라디오의 EIRP 를 쓴다.
+        final double dpmEirpDbm = eirpDbm(templateAp, Band.GHZ_24);
+
+        // 측정점별로 "지금까지 배치한 AP 중 가장 강한 RSSI". 모든 점이 목표를 넘은 뒤
+        // 추가 AP 를 평가할 때 쓴다.
+        final double[] bestRssi = new double[measurePoints.size()];
+        Arrays.fill(bestRssi, Double.NEGATIVE_INFINITY);
+        // 모든 측정점이 처음으로 목표를 넘은 시점의 AP 수 (-1 = 끝까지 못 넘음).
+        // 요청 대수보다 적으면 "N대로 충분"을 결과에 알려 준다.
+        int apsForFullCoverage = -1;
 
         // DPM 누적 측정 카운터 (params.useDpmEvaluation일 때만 누적)
         java.util.concurrent.atomic.AtomicLong dpmExp = new java.util.concurrent.atomic.AtomicLong(0);
@@ -215,8 +240,8 @@ public class ApRecommender {
 
             WifiEnvironment tempEnv = cloneEnvWithAps(env, chosen, templateAp);
             CandidateScore best = evaluateCandidatesParallel(
-                    tempEnv, availableCandidates, measurePoints, params, coveredSet,
-                    canvasW, canvasH, walls, dpmExp, dpmPru, dpmMs, dpmCnt);
+                    tempEnv, availableCandidates, measurePoints, params, coveredSet, bestRssi,
+                    dpmEirpDbm, canvasW, canvasH, walls, dpmExp, dpmPru, dpmMs, dpmCnt);
 
             if (best == null) break;
             chosen.add(new Point2D(best.px, best.py));
@@ -227,11 +252,16 @@ public class ApRecommender {
             if (params.useDpmEvaluation && Double.isFinite(scaleMPerPx) && scaleMPerPx > 0) {
                 updateCoveredSetDpm(chosen.get(chosen.size() - 1),
                         canvasW, canvasH, scaleMPerPx, walls,
-                        measurePoints, params, coveredSet,
+                        measurePoints, params, dpmEirpDbm, coveredSet, bestRssi,
                         dpmExp, dpmPru, dpmMs, dpmCnt);
             } else {
                 WifiEnvironment withNew = cloneEnvWithAps(env, chosen, templateAp);
-                updateCoveredSet(withNew, measurePoints, params.targetRssiDbm, coveredSet);
+                updateCoveredSet(withNew, measurePoints, params.targetRssiDbm, coveredSet, bestRssi);
+            }
+
+            if (apsForFullCoverage < 0 && !measurePoints.isEmpty()
+                    && coveredSet.size() >= measurePoints.size()) {
+                apsForFullCoverage = chosen.size();
             }
         }
 
@@ -280,6 +310,11 @@ public class ApRecommender {
 
         String summary = buildSummary(rayCoverage, fdtdCoverage, finalStats);
         statusCallback.accept("완료! " + summary.split("\n")[0]);
+        if (apsForFullCoverage > 0 && apsForFullCoverage < chosen.size()) {
+            summary = summary + String.format(
+                    "%n공유기 %d대만으로 목표(%.0f dBm)를 모두 충족합니다. 나머지 %d대는 약한 구역 보강 위치입니다.",
+                    apsForFullCoverage, params.targetRssiDbm, chosen.size() - apsForFullCoverage);
+        }
 
         // wall-clock 시간 (실제 체감, 병렬 이득 포함)
         long wallMs = (System.nanoTime() - wallStartNanos) / 1_000_000L;
@@ -356,7 +391,7 @@ public class ApRecommender {
     private static CandidateScore evaluateCandidatesParallel(
             WifiEnvironment baseEnv, List<Point2D> candidates,
             List<Point2D> measurePoints, Params params,
-            Set<Integer> alreadyCovered,
+            Set<Integer> alreadyCovered, double[] bestRssi, double dpmEirpDbm,
             int canvasW, int canvasH, List<Wall> walls,
             java.util.concurrent.atomic.AtomicLong dpmExp,
             java.util.concurrent.atomic.AtomicLong dpmPru,
@@ -395,6 +430,35 @@ public class ApRecommender {
                     dpmCnt.incrementAndGet();
                 }
 
+                final DpmPathGrid grid = dpmGrid;
+                java.util.function.ToDoubleFunction<Point2D> rssiAt = mp -> (grid != null)
+                        // DPM 기반 RSSI: 선택한 공유기의 EIRP - PL
+                        ? dpmEirpDbm - grid.getPathLossDb(mp.getX(), mp.getY())
+                        // 기존 sampleRssiAt (LEGACY/FDTD 모드용)
+                        : testEnv.sampleRssiAt((int) mp.getX(), (int) mp.getY());
+
+                // ── 모든 측정점이 이미 목표 이상인 경우 ──────────────────────
+                // 아래 커버 수 기반 점수는 "아직 미커버인 점"만 보므로 전 후보가 0점 동점이 되고,
+                // 목록의 첫 후보(격자 좌상단)가 약한 구역과 무관하게 뽑혔다.
+                // 대신 각 점의 신호를 "기존 AP 와 이 후보 중 강한 쪽"으로 보고,
+                // 하위 WEAK_FRACTION 지점의 평균(동점이면 전체 평균)이 가장 높은 후보를 고른다.
+                if (!measurePoints.isEmpty() && alreadyCovered.size() >= measurePoints.size()) {
+                    int n = measurePoints.size();
+                    double[] combined = new double[n];
+                    double allSum = 0;
+                    for (int i = 0; i < n; i++) {
+                        combined[i] = Math.max(bestRssi[i], rssiAt.applyAsDouble(measurePoints.get(i)));
+                        allSum += combined[i];
+                    }
+                    Arrays.sort(combined);
+                    int k = Math.max(1, (int) Math.ceil(n * WEAK_FRACTION));
+                    double weakSum = 0;
+                    for (int i = 0; i < k; i++) weakSum += combined[i];
+                    // 약한 구역 평균이 우선(×1e4). 전체 평균은 약한 구역 평균이 사실상 같을 때만 순위를 가른다.
+                    double score = (weakSum / k) * 1.0e4 + allSum / n;
+                    return new CandidateScore((int) cand.getX(), (int) cand.getY(), score);
+                }
+
                 int newCovered = 0;
                 double rssiSum = 0;
                 double minRssi = 0;  // 미커버 포인트 중 최약값
@@ -404,15 +468,7 @@ public class ApRecommender {
                 for (int i = 0; i < measurePoints.size(); i++) {
                     if (alreadyCovered.contains(i)) continue;
                     Point2D mp = measurePoints.get(i);
-                    double rssi;
-                    if (dpmGrid != null) {
-                        // DPM 기반 RSSI: 22 dBm EIRP - PL (대표값)
-                        double pl = dpmGrid.getPathLossDb(mp.getX(), mp.getY());
-                        rssi = 22.0 - pl;
-                    } else {
-                        // 기존 sampleRssiAt (LEGACY/FDTD 모드용)
-                        rssi = testEnv.sampleRssiAt((int) mp.getX(), (int) mp.getY());
-                    }
+                    double rssi = rssiAt.applyAsDouble(mp);
                     rssiSum += rssi;
                     sqSum += rssi * rssi;
                     uncoveredCount++;
@@ -686,22 +742,43 @@ public class ApRecommender {
         return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
     }
 
+    /**
+     * 추천 AP 들만 놓인 환경을 만든다 (벽·스케일은 원본에서 복사).
+     *
+     * <p>원본의 기존 AP 는 넣지 않는다. 추천은 "이 공간을 AP N대로 덮는 배치"를 찾는 것이고
+     * Phase 1(DPM 후보 평가)도 기존 AP 를 보지 않는다. 예전엔 여기서 기존 AP 까지 복사해서
+     * Phase 2(FDTD 검증)만 기존 AP 를 포함한 커버율로 판정하는 불일치가 있었다.</p>
+     */
     private static WifiEnvironment cloneEnvWithAps(WifiEnvironment src, List<Point2D> apPositions, AP template) {
         WifiEnvironment e = new WifiEnvironment();
         e.setScaleMPerPx(src.getScaleMPerPx());
         e.setPathLossN(src.getPathLossN());
         e.setClientHeightM(src.getClientHeightM());
         e.getWalls().addAll(src.getWalls());
-        e.getAps().addAll(src.getAps());
         int idx = 1;
         for (Point2D pos : apPositions) {
             AP ap = new AP();
             ap.name = "추천-" + idx++;
             ap.x = pos.getX(); ap.y = pos.getY();
             ap.heightM = template.heightM; ap.enabled = true;
+            copyRadioSpecs(template, ap);  // 선택한 공유기 스펙 (FDTD 검증 EIRP 와 일치)
             e.getAps().add(ap);
         }
         return e;
+    }
+
+    /** 라디오 전파 스펙(on/off·송신전력·안테나이득·채널·대역폭)을 복사한다. SSID 는 유지. */
+    private static void copyRadioSpecs(AP from, AP to) {
+        for (Band b : Band.values()) {
+            RadioConfig s = from.radios.get(b);
+            RadioConfig d = to.radios.get(b);
+            if (s == null || d == null) continue;
+            d.enabled = s.enabled;
+            d.txPowerDbm = s.txPowerDbm;
+            d.antennaGain = s.antennaGain;
+            d.channel = s.channel;
+            d.channelWidth = s.channelWidth;
+        }
     }
 
     private static WifiEnvironment cloneEnvForScoring(WifiEnvironment src, AP testAp) {
@@ -716,12 +793,14 @@ public class ApRecommender {
     }
 
     private static void updateCoveredSet(WifiEnvironment env, List<Point2D> measurePoints,
-                                         double targetRssi, Set<Integer> coveredSet) {
+                                         double targetRssi, Set<Integer> coveredSet,
+                                         double[] bestRssi) {
         for (int i = 0; i < measurePoints.size(); i++) {
-            if (coveredSet.contains(i)) continue;
             Point2D mp = measurePoints.get(i);
-            if (env.sampleRssiAt((int) mp.getX(), (int) mp.getY()) >= targetRssi)
-                coveredSet.add(i);
+            // env 에는 지금까지 고른 AP 가 모두 들어 있으므로 sampleRssiAt 이 곧 최강 RSSI
+            double rssi = env.sampleRssiAt((int) mp.getX(), (int) mp.getY());
+            bestRssi[i] = Math.max(bestRssi[i], rssi);
+            if (rssi >= targetRssi) coveredSet.add(i);
         }
     }
 
@@ -738,7 +817,8 @@ public class ApRecommender {
                                              int canvasW, int canvasH,
                                              double scaleMPerPx, List<Wall> walls,
                                              List<Point2D> measurePoints, Params params,
-                                             Set<Integer> coveredSet,
+                                             double eirpDbm,
+                                             Set<Integer> coveredSet, double[] bestRssi,
                                              java.util.concurrent.atomic.AtomicLong dpmExp,
                                              java.util.concurrent.atomic.AtomicLong dpmPru,
                                              java.util.concurrent.atomic.AtomicLong dpmMs,
@@ -755,15 +835,21 @@ public class ApRecommender {
         dpmMs .addAndGet(grid.getElapsedMs());
         dpmCnt.incrementAndGet();
 
-        // EIRP = 22 dBm (txPower 17 + antennaGain 5) — 평가와 동일한 상수
-        final double eirpDbm = 22.0;
+        // eirpDbm 은 후보 평가와 같은 값(선택한 공유기의 2.4GHz EIRP)
         for (int i = 0; i < measurePoints.size(); i++) {
-            if (coveredSet.contains(i)) continue;
             Point2D mp = measurePoints.get(i);
-            double pl = grid.getPathLossDb(mp.getX(), mp.getY());
-            double rssi = eirpDbm - pl;
+            double rssi = eirpDbm - grid.getPathLossDb(mp.getX(), mp.getY());
+            bestRssi[i] = Math.max(bestRssi[i], rssi);
             if (rssi >= params.targetRssiDbm) coveredSet.add(i);
         }
+    }
+
+    /** AP 의 해당 밴드 EIRP [dBm] = 송신 전력 + 안테나 이득. 라디오가 없으면 기본값(22). */
+    private static double eirpDbm(AP ap, Band band) {
+        RadioConfig rc = ap.radios.get(band);
+        return (rc != null)
+                ? rc.txPowerDbm + rc.antennaGain
+                : RadioConfig.FIXED_TX_POWER_DBM + RadioConfig.DEFAULT_ANTENNA_GAIN_DBI;
     }
 
     // ── FDTD 신호 통계 계산 ──────────────────────────────────────────────────

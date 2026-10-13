@@ -213,38 +213,23 @@ public class MainController {
             }
         });
 
-        // 히트맵 엔진 모델 선택 — 고급 모드에서만 노출. 일반 모드에선 DPM 고정.
-        window.getTopToolbar().setHeatmapModel(state.getHeatmapModel());
-        window.getTopToolbar().setHeatmapSolverMode(state.getHeatmapSolverMode());
-        window.getTopToolbar().setOnHeatmapModelChanged(mode -> {
-            if (mode != null) {
-                state.setHeatmapModel(mode);
-                heatmapImage = null;
-                scheduleHeatmapRefreshIfVisible();
-            }
+        // 히트맵은 DPM 전용 — 엔진 선택 UI 는 없다. Legacy 는 발표 수치 재현(MeasureHarness)과
+        // 회귀 테스트용 기준선으로 엔진에만 남아 있고, FDTD 는 "전파 흐름 보기"로 제공한다.
+        // (예전 모델 콤보의 "FDTD" 항목은 FDTD 히트맵 경로가 끊겨 실제로는 Legacy 를 그렸다.)
+
+        // 밴드 필터 — AppState 가 단일 진실 원천. 툴바·설정 불러오기는 state 만 바꾸고,
+        // 리스너가 툴바 표시 동기화와 히트맵 무효화·재생성을 한곳에서 처리한다.
+        window.getTopToolbar().setBandFilter(state.getBandFilter());
+        window.getTopToolbar().setOnBandFilterChanged(filter -> {
+            if (filter != null) state.setBandFilter(filter);
         });
-        window.getTopToolbar().setOnHeatmapSolverModeChanged(mode -> {
-            if (mode != null) {
-                state.setHeatmapSolverMode(mode);
-                heatmapImage = null;
-                scheduleHeatmapRefreshIfVisible();
-            }
+        state.bandFilterProperty().addListener((obs, oldV, newV) -> {
+            window.getTopToolbar().setBandFilter(newV);
+            invalidateHeatmapForSettingChange();
         });
 
         // 고급 모드 ↔ TopToolbar 가시성 양방향 바인딩
         window.getTopToolbar().bindAdvancedMode(state.advancedModeProperty());
-
-        // 밴드 필터 — TopToolbar의 pill에서만 관리 (LeftPanel 콤보는 제거됨)
-        window.getTopToolbar().setBandFilter(state.getBandFilter());
-        window.getTopToolbar().setOnBandFilterChanged(filter -> {
-            if (filter != null) {
-                state.setBandFilter(filter);
-                heatmapImage = null;
-                scheduleHeatmapRefreshIfVisible();
-                // 솔버가 밴드별 작동한다면 재구성 트리거
-                solverConfigDirty = true;
-            }
-        });
 
         // 줌 박스
         try {
@@ -420,22 +405,61 @@ public class MainController {
         env.setScaleMPerPx(state.getScaleMPerPx());
         env.setPathLossN(state.getPathLossN());
 
-        app.dialog.ApRecommendDialog.show(stage, img, w, h, env, state, positions -> {
-            int idx = env.getAps().size() + 1;
-            for (javafx.geometry.Point2D pos : positions) {
-                AP ap = new AP();
-                ap.name = "추천-" + idx++;
-                ap.x = pos.getX();
-                ap.y = pos.getY();
-                ap.heightM = 2.5;
-                ap.enabled = true;
-                preset.applyTo(ap);  // 선택한 공유기 스펙을 추천 AP에 적용
-                env.getAps().add(ap);
+        app.dialog.ApRecommendDialog.show(stage, img, w, h, env, state, preset, positions ->
+                // onApply 는 추천 창이 닫히기 전에 호출된다 — 확인 창이 모달끼리 겹치지 않도록 뒤로 미룬다.
+                Platform.runLater(() -> applyRecommendedAps(positions, preset)));
+    }
+
+    /**
+     * 추천 위치에 AP 를 배치한다.
+     *
+     * <p>추천은 "이 공간을 AP N대로 덮는 배치"로, 기존 AP 는 계산에 넣지 않았다.
+     * 그래서 기존 AP 가 있으면 교체할지 추가할지 묻는다 — 예전엔 무조건 추가해서
+     * AP 2대를 추천받아도 기존 AP 와 합쳐 4대가 되었고, 사용자가 놓은 AP 를
+     * 말없이 지우는 것도 곤란하기 때문이다.</p>
+     */
+    private void applyRecommendedAps(List<javafx.geometry.Point2D> positions, app.model.ApPreset preset) {
+        if (positions == null || positions.isEmpty()) return;
+
+        if (!env.getAps().isEmpty()) {
+            javafx.scene.control.ButtonType replaceBtn = new javafx.scene.control.ButtonType(
+                    "교체", javafx.scene.control.ButtonBar.ButtonData.YES);
+            javafx.scene.control.ButtonType addBtn = new javafx.scene.control.ButtonType(
+                    "추가", javafx.scene.control.ButtonBar.ButtonData.NO);
+            javafx.scene.control.ButtonType cancelBtn = new javafx.scene.control.ButtonType(
+                    "취소", javafx.scene.control.ButtonBar.ButtonData.CANCEL_CLOSE);
+            javafx.scene.control.Alert ask = new javafx.scene.control.Alert(
+                    javafx.scene.control.Alert.AlertType.CONFIRMATION,
+                    String.format("추천은 공유기 %d대만으로 계산한 배치입니다.%n교체하면 기존 %d대를 지웁니다.",
+                            positions.size(), env.getAps().size()),
+                    replaceBtn, addBtn, cancelBtn);
+            ask.setTitle("추천 적용");
+            ask.setHeaderText("기존 공유기를 어떻게 할까요?");
+            ask.initOwner(stage);
+            Styles.styleAlert(ask);
+            Optional<javafx.scene.control.ButtonType> res = ask.showAndWait();
+            if (res.isEmpty() || res.get() == cancelBtn) return;
+            if (res.get() == replaceBtn) {
+                toolsController.clearApSelection();
+                env.getAps().clear();
             }
-            render();
-            // 적용 직후 곧바로 히트맵 생성 → 추천 결과를 바로 확인할 수 있게 한다.
-            generateHeatmapNow();
-        });
+        }
+
+        int idx = env.getAps().size() + 1;
+        for (javafx.geometry.Point2D pos : positions) {
+            AP ap = new AP();
+            ap.name = "추천-" + idx++;
+            ap.resetSsidsFromName();  // 생성자는 "AP-1" 기준 SSID — 이름에 맞춰 중복 방지
+            ap.x = pos.getX();
+            ap.y = pos.getY();
+            ap.heightM = 2.5;
+            ap.enabled = true;
+            preset.applyTo(ap);  // 선택한 공유기 스펙을 추천 AP에 적용
+            env.getAps().add(ap);
+        }
+        render();
+        // 적용 직후 곧바로 히트맵 생성 → 추천 결과를 바로 확인할 수 있게 한다.
+        generateHeatmapNow();
     }
 
     /**
@@ -525,7 +549,6 @@ public class MainController {
                 selectedAp,
                 hoverWall,
                 selectedWall,
-                List.of(),
                 (state.getTool() == AppState.Tool.SOLVER) ? solverDebugText : null
         );
 
@@ -633,16 +656,10 @@ public class MainController {
             window.getTopToolbar().setToolSelection(AppState.Tool.VIEW);
             toolsController.onToolChanged(AppState.Tool.VIEW);
 
-            boolean presetLoaded = false;
+            // (예전엔 여기서 "경로 손실 지수 n" 을 물었는데, n 은 Legacy 모델에만 쓰이고
+            //  DPM 은 자유공간 n=2 고정이라 답이 결과에 아무 영향도 없었다 — 질문 제거.)
             if (promptPathLossPreset) {
-                presetLoaded = maybeLoadPresetForOnboarding(f);
-                if (!presetLoaded) {
-                    Double selectedN = chooseIndoorPathLossPreset();
-                    if (selectedN != null) {
-                        state.setPathLossN(selectedN);
-                        env.setPathLossN(selectedN);
-                    }
-                }
+                maybeLoadPresetForOnboarding(f);
             }
 
             if (promptPathLossPreset) {
@@ -730,50 +747,6 @@ public class MainController {
 
         onboardingStep = OnboardingStep.NONE;
         activateTool(AppState.Tool.VIEW, true);
-    }
-
-    private Double chooseIndoorPathLossPreset() {
-        List<String> options = List.of(
-                "텅 빈 공간 (n=2.5)",
-                "기본 실내 (n=3.0, 추천)",
-                "가구/차폐 많음 (n=3.5)",
-                "사용자 설정..."
-        );
-
-        javafx.scene.control.ChoiceDialog<String> dlg =
-                new javafx.scene.control.ChoiceDialog<>(options.get(1), options);
-        dlg.setTitle("실내 감쇠 설정");
-        dlg.setHeaderText("경로 손실 지수(n)를 선택하세요");
-        dlg.setContentText("환경");
-        dlg.initOwner(stage);
-        Styles.styleDialog(dlg);
-
-        Optional<String> selected = dlg.showAndWait();
-        if (selected.isEmpty()) return null;
-
-        String choice = selected.get();
-        if (choice.startsWith("텅 빈")) return 2.5;
-        if (choice.startsWith("기본")) return 3.0;
-        if (choice.startsWith("가구")) return 3.5;
-
-        String initial = String.format("%.2f", state.getPathLossN());
-        while (true) {
-            javafx.scene.control.TextInputDialog td = new javafx.scene.control.TextInputDialog(initial);
-            td.setTitle("사용자 경로 손실 지수");
-            td.setHeaderText("n 값을 입력하세요 (권장 2.0 ~ 4.5)");
-            td.setContentText("n");
-            td.initOwner(stage);
-            Styles.styleDialog(td);
-            Optional<String> raw = td.showAndWait();
-            if (raw.isEmpty()) return null;
-
-            double n = parseDouble(raw.get(), Double.NaN);
-            if (Double.isFinite(n) && n >= 1.5 && n <= 6.0) {
-                return n;
-            }
-            initial = raw.get();
-            showError("유효한 숫자를 입력해주세요. (1.5 ~ 6.0)");
-        }
     }
 
     /**
@@ -1091,12 +1064,6 @@ public class MainController {
         stopSolver();
         activateTool(AppState.Tool.VIEW, true);
 
-        // 일반 사용자 모드면 히트맵 엔진을 항상 DPM으로 복원 (구버전 파일 호환).
-        // 고급 모드에서는 사용자가 명시적으로 LEGACY/FDTD_TEZ로 바꾼 상태를 존중.
-        if (!state.isAdvancedMode()
-                && state.getHeatmapModel() != AppState.HeatmapModel.DPM) {
-            state.setHeatmapModel(AppState.HeatmapModel.DPM);
-        }
         state.clearCoverageMask();  // 다른 환경 로드 → 사용 공간 마스크 무효화
         window.getLeftPanel().clearMeasurementResult();
 
@@ -1172,8 +1139,9 @@ public class MainController {
         int w = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getWidth()));
         int h = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getHeight()));
 
+        // 히트맵은 DPM 전용 (Legacy 는 엔진에만 남은 비교 기준선 — 화면에서 선택 불가)
         HeatmapGenerator generator = new HeatmapGenerator(env,
-                state.getHeatmapSolverMode(), state.getHeatmapModel(), state.getBandFilter());
+                AppState.HeatmapSolverMode.CPU, AppState.HeatmapModel.DPM, state.getBandFilter());
         int gridStep = computeAdaptiveGridStep(env);
         int smoothRadius = computeAdaptiveSmoothRadius(gridStep);
         double legendMin = state.legendMinProperty().get();
@@ -1182,17 +1150,28 @@ public class MainController {
         long startMs = System.currentTimeMillis();
         window.getBottomBar().setHeatmapProgress(0);
 
-        legacyHeatmapTask = new Task<>() {
+        // 핸들러에서는 필드(legacyHeatmapTask)가 아니라 이 지역 변수(task)를 기준으로 판단한다.
+        // 설정을 연달아 바꾸면 옛 작업의 onCancelled 가 나중에 도착하는데, 필드를 무조건
+        // null 로 만들면 새 작업의 참조가 사라져 다음 변경 때 취소하지 못하고, 옛 작업이
+        // 새 작업의 진행률 표시까지 지워 버린다.
+        final Task<HeatmapGenerator.HeatmapResult> task = new Task<>() {
             @Override
             protected HeatmapGenerator.HeatmapResult call() {
                 return generator.generate(w, h, gridStep, legendMin, legendMax, smoothRadius,
-                        progress -> Platform.runLater(() ->
-                                window.getBottomBar().setHeatmapProgress(progress * 100.0)));
+                        progress -> {
+                            // 생성기는 취소를 확인하지 않고 끝까지 돈다 — 교체된 작업의
+                            // 진행률이 새 작업의 진행률 막대를 덮어쓰지 않게 한다.
+                            if (isCancelled()) return;
+                            Platform.runLater(() ->
+                                    window.getBottomBar().setHeatmapProgress(progress * 100.0));
+                        });
             }
         };
+        legacyHeatmapTask = task;
 
-        legacyHeatmapTask.setOnSucceeded(e -> {
-            HeatmapGenerator.HeatmapResult result = legacyHeatmapTask.getValue();
+        task.setOnSucceeded(e -> {
+            if (legacyHeatmapTask != task) return;  // 이미 새 작업으로 교체됨
+            HeatmapGenerator.HeatmapResult result = task.getValue();
             legacyHeatmapTask = null;
 
             // DPM 그리드 캐시 저장 (마우스 호버 RSSI에서 사용)
@@ -1228,17 +1207,19 @@ public class MainController {
             updateResultCardFromCurrentHeatmap(result.width, result.height);
             render();
         });
-        legacyHeatmapTask.setOnFailed(e -> {
+        task.setOnFailed(e -> {
+            if (legacyHeatmapTask != task) return;
             legacyHeatmapTask = null;
             window.getBottomBar().clearHeatmapStatus();
             // 에러 발생 시 히트맵은 이전 상태 유지 (null로 초기화하지 않음)
         });
-        legacyHeatmapTask.setOnCancelled(e -> {
+        task.setOnCancelled(e -> {
+            if (legacyHeatmapTask != task) return;  // 새 작업으로 교체되며 취소된 경우 — 건드리지 않음
             legacyHeatmapTask = null;
             window.getBottomBar().clearHeatmapStatus();
         });
 
-        Thread worker = new Thread(legacyHeatmapTask, "legacy-heatmap-worker");
+        Thread worker = new Thread(task, "legacy-heatmap-worker");
         worker.setDaemon(true);
         worker.start();
     }
@@ -1273,15 +1254,10 @@ public class MainController {
         for (int y = step / 2; y < height; y += step) {
             for (int x = step / 2; x < width; x += step) {
                 if (!state.coverageContains(x, y)) continue;  // 사용 공간 밖 제외
-                // DPM 모드: 실제 히트맵 생성에 사용된 DPM 그리드로 RSSI 계산 (일관성)
-                // Legacy 모드 fallback: env.sampleRssiAt (반사·회절 포함)
-                double rssi;
-                if (state.getHeatmapModel() == AppState.HeatmapModel.DPM && cachedDpmGrids != null) {
-                    List<RssiResult> dpmRows = sampleRssiFromDpmGrids(x, y);
-                    rssi = dpmRows.isEmpty() ? Double.NaN : dpmRows.get(0).rssiDbm;
-                } else {
-                    rssi = env.sampleRssiAt(x, y);
-                }
+                // 히트맵 생성에 쓴 DPM 그리드로 계산 — 색과 통계가 같은 모델에서 나온다.
+                // (예전엔 그리드가 없으면 Legacy 로 몰래 대체 계산했다.)
+                List<RssiResult> dpmRows = sampleRssiFromDpmGrids(x, y);
+                double rssi = dpmRows.isEmpty() ? Double.NaN : dpmRows.get(0).rssiDbm;
                 if (!Double.isFinite(rssi)) continue;
                 if (rssi < SIGNAL_VALID_THRESHOLD_DBM) continue;  // 매우 약한 신호 제외
 
@@ -1330,12 +1306,10 @@ public class MainController {
 
     /** gridStep에 맞게 smoothRadius도 자동 연동. DPM은 cellPx 기반으로 더 넓게. */
     private int computeAdaptiveSmoothRadius(int gridStep) {
-        if (state.getHeatmapModel() == AppState.HeatmapModel.DPM) {
-            double scaleMPerPx = state.getScaleMPerPx();
-            if (Double.isFinite(scaleMPerPx) && scaleMPerPx > 0) {
-                double cellPx = DpmPathGrid.GRID_CELL_M / scaleMPerPx;
-                return Math.min(50, Math.max(4, (int)(cellPx * 1.2)));
-            }
+        double scaleMPerPx = state.getScaleMPerPx();
+        if (Double.isFinite(scaleMPerPx) && scaleMPerPx > 0) {
+            double cellPx = DpmPathGrid.GRID_CELL_M / scaleMPerPx;
+            return Math.min(50, Math.max(4, (int)(cellPx * 1.2)));
         }
         return Math.max(4, gridStep);
     }
@@ -1364,6 +1338,27 @@ public class MainController {
             return;
         }
         heatmapRefreshDebounce.playFromStart();
+    }
+
+    /**
+     * 모델·솔버·밴드처럼 계산 결과 자체를 바꾸는 설정이 변경됐을 때 호출.
+     *
+     * <p>이전 설정으로 만든 히트맵과 DPM 캐시는 즉시 버린다 — 새 밴드를 골랐는데 옛 밴드
+     * 색을 계속 보여주면 안 되기 때문. 그리고 히트맵이 보이던 중이었거나 생성 중이었다면
+     * 새 설정으로 바로 다시 생성한다.</p>
+     *
+     * <p>"보이던 중인지"는 반드시 지우기 <b>전에</b> 판정해야 한다. 예전 코드는
+     * {@code heatmapImage = null} 을 먼저 한 뒤 {@link #scheduleHeatmapRefreshIfVisible()}
+     * 로 판정해서 항상 "안 보임"이 되어, 설정을 바꾸면 히트맵이 사라지기만 했다.</p>
+     */
+    private void invalidateHeatmapForSettingChange() {
+        boolean wasVisible = heatmapImage != null
+                || (legacyHeatmapTask != null && legacyHeatmapTask.isRunning());
+        heatmapImage = null;
+        cachedDpmGrids = null;
+        solverConfigDirty = true;
+        render();  // 옛 설정의 색을 즉시 지운다 (재생성 중에도 잘못된 색을 보여주지 않도록)
+        if (wasVisible) generateHeatmapNow();
     }
 
     private void invalidateSolverAll() {
@@ -1772,11 +1767,11 @@ public class MainController {
         if (window.getCanvasView().getBaseImageView().getImage() == null) return List.of();
         if (!Double.isFinite(env.getScaleMPerPx()) || env.getScaleMPerPx() <= 0.0) return List.of();
 
-        // DPM 모드: 캐시된 Dijkstra 그리드에서 RSSI 계산
-        if (state.getHeatmapModel() == AppState.HeatmapModel.DPM && cachedDpmGrids != null) {
-            return sampleRssiFromDpmGrids((int) Math.round(mouseProbeX), (int) Math.round(mouseProbeY));
-        }
-        return env.sampleRssiAllAt((int) Math.round(mouseProbeX), (int) Math.round(mouseProbeY));
+        // 히트맵(DPM)을 만든 그리드에서만 값을 읽는다 — 호버 숫자와 히트맵 색이 항상 같은 모델.
+        // 분석 전이면 값 없이(AP 목록만) 표시한다. 예전엔 이때 Legacy 로 몰래 계산해서,
+        // 같은 지점 값이 분석 전후로 모델을 바꿔 가며 달라졌다(실측: -107 → DPM 값).
+        if (cachedDpmGrids == null) return List.of();
+        return sampleRssiFromDpmGrids((int) Math.round(mouseProbeX), (int) Math.round(mouseProbeY));
     }
 
     /**

@@ -23,6 +23,20 @@ public class AP {
         radios.put(Band.GHZ_6,  new RadioConfig(Band.GHZ_6,  name + "_6G"));
     }
 
+    /**
+     * 밴드별 SSID 를 현재 이름 기준 기본값(이름_24G/_5G/_6G)으로 맞춘다.
+     * 생성자는 기본 이름("AP-1")으로 SSID 를 만들므로, 생성 후 이름을 바꿨다면 호출해야
+     * 여러 AP 가 같은 SSID 를 갖지 않는다.
+     */
+    public void resetSsidsFromName() {
+        RadioConfig r24 = radios.get(Band.GHZ_24);
+        RadioConfig r5  = radios.get(Band.GHZ_5);
+        RadioConfig r6  = radios.get(Band.GHZ_6);
+        if (r24 != null) r24.ssid = name + "_24G";
+        if (r5  != null) r5.ssid  = name + "_5G";
+        if (r6  != null) r6.ssid  = name + "_6G";
+    }
+
     @Override
     public String toString() {
         // 리스트에서 보이기: 켜진 밴드만 요약
