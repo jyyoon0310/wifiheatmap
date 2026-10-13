@@ -179,6 +179,10 @@ public class Styles {
     public static String comboBase() {
         return "-fx-background-color:" + inputBg() + ";" +
                "-fx-text-fill:" + textMain() + ";" +
+               // 표시 칸(ListCell)은 -fx-text-fill 이 아니라 기본 테마의 "배경 기준 글자색"을 쓴다 —
+               // 밝은 테마 값이 남아 다크 모드에서 어두운 배경에 어두운 글자가 나왔다.
+               "-fx-text-background-color:" + textMain() + ";" +
+               "-fx-text-base-color:" + textMain() + ";" +
                "-fx-border-color:" + borderSoft() + ";" +
                "-fx-border-radius:9;" +
                "-fx-background-radius:9;" +
@@ -355,6 +359,7 @@ public class Styles {
             Runnable applyLv = () -> lv.setStyle(
                     "-fx-background-color:" + popupBg() + ";" +
                     "-fx-border-color:transparent;" +
+                    "-fx-text-background-color:" + textMain() + ";" +   // 다크 모드 목록 글자
                     "-fx-padding:4;");
             applyLv.run();
             if (registerOnce(lv)) addThemeListener(applyLv);
