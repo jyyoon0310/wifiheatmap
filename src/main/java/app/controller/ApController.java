@@ -1,7 +1,6 @@
 package app.controller;
 
 import app.model.AP;
-import app.model.Band;
 import app.model.WifiEnvironment;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseButton;
@@ -31,7 +30,6 @@ public class ApController {
 
     public AP getHoverAp() { return hoverAp; }
     public AP getSelectedAp() { return selectedAp; }
-    public boolean isDragging() { return dragging; }
 
     public void clearInteraction() {
         hoverAp = null;

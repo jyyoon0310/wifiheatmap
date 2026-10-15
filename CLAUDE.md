@@ -9,11 +9,10 @@ Flood Fill 기반 영역 선택 + 그리디 Ray-cast + FDTD 검증을 통한 AP 
 - 실행: `./gradlew run`
 - 빌드: `./gradlew build`
 - 정리: `./gradlew clean`
-- 테스트 없음 (수동 시각 검증)
+- 테스트: `./gradlew test` — 엔진 회귀 테스트 (골든 격자 + 신호 지도 픽셀 해시). 화면은 수동 검증
 
 ## 기술 스택
 - Java 21, JavaFX 21.0.9, Gradle 8.14
-- Jackson 2.17.2 (JSON 직렬화)
 - Aparapi 3.0.2 (GPU 가속, fallback 포함)
 - JNA 5.14.0 (macOS 제목 막대 꾸미기 전용)
 
@@ -38,25 +37,22 @@ src/main/java/app/
 │   ├── ToolsController.java      # 툴 상호작용 (스케일, 벽, AP 배치)
 │   └── ApController.java         # AP 선택/드래그/호버
 ├── engine/                       # 계산 엔진 (UI 코드 금지)
-│   ├── HeatmapGenerator.java     # 히트맵 생성 (generateDpm / Legacy generateCpu)
+│   ├── HeatmapGenerator.java     # DPM 신호 지도 생성 (int[] ARGB, 백그라운드 스레드)
 │   ├── DpmPathGrid.java          # DPM 지배경로 Dijkstra
 │   ├── BuildingMask.java         # 건물 안쪽 마스크 (히트맵을 건물 안에만 칠함)
 │   ├── FdtdWaveSimulator.java    # FDTD 실시간 시각화 + AP추천 검증용
 │   ├── ApRecommender.java        # AP 위치 추천 (그리디 + FDTD 피드백 루프)
 │   ├── WifiMath.java             # 기하학 계산, 경로손실 공식
-│   └── fdtd/                     # FDTD 서브시스템
-│       ├── TezFdtdSolver.java    # 핵심 TEz FDTD 솔버
+│   └── fdtd/                     # FDTD 재질 격자·설정 (솔버는 FdtdWaveSimulator / GPU)
 │       ├── FdtdConfig.java       # FDTD 파라미터 (dx, dt, PML 등)
-│       ├── FdtdHeatmapGenerator.java
 │       ├── FdtdMaterialGrid.java
 │       ├── FdtdMaterialGridBuilder.java
 │       ├── FdtdWallPreset.java
-│       ├── FdtdProgress.java
 │       └── FdtdReferenceMode.java
-├── solver/v2/                    # GPU 솔버 v2
-│   ├── SolverV2Engine.java
-│   ├── GpuWaveSolver.java
-│   ├── AparapiGpuWaveSolver.java
+├── solver/v2/                    # "전파 흐름 보기" 실행 엔진 (CPU/GPU 백엔드 선택)
+│   ├── SolverV2Engine.java       # 백엔드 선택 + close() 로 스레드 풀·GPU 커널 해제
+│   ├── GpuWaveSolver.java        # GPU 백엔드 SPI (META-INF/services 로 등록)
+│   ├── AparapiGpuWaveSolver.java # Aparapi(OpenCL) 구현
 │   └── FloorplanGridTransform.java
 ├── ui/                           # UI 컴포넌트
 │   ├── MainWindow.java           # 루트 BorderPane 레이아웃
@@ -90,8 +86,9 @@ src/main/java/app/
 - `MainController.buildMenuBar()` — 파일/보기/도구 메뉴 (macOS 는 시스템 메뉴 막대)
 - macOS 단축키는 메뉴가 처리, 장면 키 핸들러의 ⌘O/⌘S 는 macOS 외 OS 에서만 동작 (중복 실행 방지)
 
-### 직렬화
-- `WifiEnvironment` ↔ JSON (Jackson)
+### 작업 파일 (.wifisettings)
+- zip 컨테이너: `settings.properties`(축척·공유기·벽) + `floorplan.png`(평면도)
+- 저장·불러오기: `MainController.writeSettingsTo` / `applySettingsSnapshot`
 
 ### UI 테마 (Liquid Glass)
 - `Styles.java`: `isDark()`, `setDark()`, `addThemeListener()`
@@ -102,8 +99,8 @@ src/main/java/app/
 | 모델 | 클래스 | 특성 |
 |------|--------|------|
 | DPM (히트맵 유일 모델) | `DpmPathGrid` → `HeatmapGenerator.generateDpm` | 지배경로 Dijkstra, 빠름 (1~2초) |
-| FDTD | `TezFdtdSolver` / `FdtdWaveSimulator` | 전자기파 수치 시뮬레이션. "전파 흐름 보기" 실시간 표시 + AP 추천 정밀 검증 |
-| Legacy (화면 비노출) | `WifiEnvironment.sampleRssiAt`, `HeatmapGenerator.generateCpu` | 경로손실 n + 반사/회절. 발표 비교 기준선(`presentation/MeasureHarness`)·골든 테스트용으로만 유지 |
+| FDTD | `FdtdWaveSimulator`(CPU) / `AparapiGpuWaveSolver`(GPU) | 전자기파 수치 시뮬레이션. "전파 흐름 보기" 실시간 표시 + AP 추천 정밀 검증 |
+| Legacy (화면 비노출) | `WifiEnvironment.sampleRssiAt` | 경로손실 n + 반사/회절. 발표 비교 기준선(`presentation/MeasureHarness`)·골든 테스트용으로만 유지 |
 
 ## AP 추천 알고리즘 (`ApRecommender`)
 ```

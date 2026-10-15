@@ -22,8 +22,6 @@ import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Separator;
-import javafx.scene.control.Alert;
-import javafx.scene.control.ButtonType;
 import javafx.util.StringConverter;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.FlowPane;
@@ -932,14 +930,6 @@ public class LeftPanel {
         this.onApPresetChanged = c;
     }
 
-    public boolean isShowPathsEnabled() {
-        return false;
-    }
-
-    public void setOnShowPathsChanged(Runnable onShowPathsChanged) {
-        // 전파 경로 표시 기능 제거: no-op
-    }
-
     private void applySectionVisibility() {
         if (solverToolActive) {
             setCardVisible(solverCard, true);
@@ -1034,16 +1024,6 @@ public class LeftPanel {
     private void styleIntCombo(ComboBox<Integer> cb) {
         cb.setMinWidth(0);
         cb.setPrefWidth(120);
-        cb.setMaxWidth(Double.MAX_VALUE);
-        Runnable apply = () -> cb.setStyle(Styles.comboBase());
-        apply.run();
-        if (Styles.registerOnce(cb)) Styles.addThemeListener(apply);
-        Styles.installComboPopupStyle(cb);
-    }
-
-    private void styleTextCombo(ComboBox<String> cb) {
-        cb.setMinWidth(0);
-        cb.setPrefWidth(160);
         cb.setMaxWidth(Double.MAX_VALUE);
         Runnable apply = () -> cb.setStyle(Styles.comboBase());
         apply.run();
@@ -1364,15 +1344,6 @@ public class LeftPanel {
         if (s == null) return fallback;
         try {
             return Double.parseDouble(s.trim());
-        } catch (Exception ignored) {
-            return fallback;
-        }
-    }
-
-    private static int parseIntOr(String s, int fallback) {
-        if (s == null) return fallback;
-        try {
-            return Integer.parseInt(s.trim());
         } catch (Exception ignored) {
             return fallback;
         }

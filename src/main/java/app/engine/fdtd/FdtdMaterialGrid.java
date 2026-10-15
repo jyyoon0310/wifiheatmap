@@ -71,17 +71,6 @@ public final class FdtdMaterialGrid {
         return clamp(local + pmlCells, 0, ny - 1);
     }
 
-    /**
-     * Ez 격자 인덱스를 평면도 map 내부 인덱스로 변환(0..mapN-1).
-     */
-    public int toMapX(int gx) {
-        return clamp(gx - pmlCells, 0, mapNx - 1);
-    }
-
-    public int toMapY(int gy) {
-        return clamp(gy - pmlCells, 0, mapNy - 1);
-    }
-
     private static int clamp(int v, int lo, int hi) {
         return Math.max(lo, Math.min(hi, v));
     }

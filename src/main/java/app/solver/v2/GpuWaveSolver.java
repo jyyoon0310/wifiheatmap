@@ -52,5 +52,8 @@ public interface GpuWaveSolver {
         default String visualDebugSummary() {
             return "";
         }
+
+        /** GPU 커널 등 네이티브 자원을 놓는다. 세션을 버릴 때 반드시 부른다. */
+        default void close() {}
     }
 }

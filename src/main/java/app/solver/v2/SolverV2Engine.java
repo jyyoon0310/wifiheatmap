@@ -14,7 +14,7 @@ import java.util.ServiceLoader;
  * - GPU backend가 ServiceLoader로 제공되면 AUTO 모드에서 자동 선택한다.
  * - MainController는 이 타입만 참조하므로, 엔진 교체가 UI 코드에 침투하지 않는다.
  */
-public final class SolverV2Engine {
+public final class SolverV2Engine implements AutoCloseable {
 
     public enum BackendPreference {
         AUTO,
@@ -41,6 +41,7 @@ public final class SolverV2Engine {
         FdtdWaveSimulator.MaterialStats materialStats();
         String diagnosticsSummary();
         String visualDebugSummary();
+        void close();
     }
 
     private static final class CpuBackend implements Backend {
@@ -68,6 +69,7 @@ public final class SolverV2Engine {
         @Override public FdtdWaveSimulator.MaterialStats materialStats() { return sim.materialStats(); }
         @Override public String diagnosticsSummary() { return sim.diagnosticsSummary(); }
         @Override public String visualDebugSummary() { return sim.visualDebugSummary(); }
+        @Override public void close() { sim.shutdown(); }
     }
 
     private static final class GpuBackend implements Backend {
@@ -95,6 +97,7 @@ public final class SolverV2Engine {
         @Override public FdtdWaveSimulator.MaterialStats materialStats() { return session.materialStats(); }
         @Override public String diagnosticsSummary() { return session.diagnosticsSummary(); }
         @Override public String visualDebugSummary() { return session.visualDebugSummary(); }
+        @Override public void close() { session.close(); }
     }
 
     private final Backend backend;
@@ -151,7 +154,6 @@ public final class SolverV2Engine {
     }
 
     public String backendName() { return backendName; }
-    public boolean isGpuBackend() { return "GPU".equals(backendName); }
 
     public int widthPx() { return backend.widthPx(); }
     public int heightPx() { return backend.heightPx(); }
@@ -171,4 +173,8 @@ public final class SolverV2Engine {
     public FdtdWaveSimulator.MaterialStats materialStats() { return backend.materialStats(); }
     public String diagnosticsSummary() { return backend.diagnosticsSummary(); }
     public String visualDebugSummary() { return backend.visualDebugSummary(); }
+
+    /** 스레드 풀(CPU)·GPU 커널을 놓는다. 이 엔진을 버리거나 새로 만들기 전에 부른다. */
+    @Override
+    public void close() { backend.close(); }
 }

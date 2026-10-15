@@ -524,66 +524,70 @@ public class ApRecommender {
 
             FdtdWaveSimulator sim = new FdtdWaveSimulator(
                     fdtdEnv, canvasW, canvasH, cellPx, params.fdtdBand);
+            try {
 
-            int totalSteps = params.fdtdSteps;
-            int batchSize = 100;
-            for (int s = 0; s < totalSteps; s += batchSize) {
-                sim.step(Math.min(batchSize, totalSteps - s));
-                statusCallback.accept(String.format("파동 시뮬레이션 %d%%...",
-                        (int) (100.0 * Math.min(s + batchSize, totalSteps) / totalSteps)));
-            }
+                int totalSteps = params.fdtdSteps;
+                int batchSize = 100;
+                for (int s = 0; s < totalSteps; s += batchSize) {
+                    sim.step(Math.min(batchSize, totalSteps - s));
+                    statusCallback.accept(String.format("파동 시뮬레이션 %d%%...",
+                            (int) (100.0 * Math.min(s + batchSize, totalSteps) / totalSteps)));
+                }
 
-            int pml = sim.pmlCells();
-            int gNx = sim.gridNx(), gNy = sim.gridNy();
+                int pml = sim.pmlCells();
+                int gNx = sim.gridNx(), gNy = sim.gridNy();
 
-            // AP의 실제 EIRP 사용 (txPower + antennaGain)
-            RadioConfig radio = templateAp.radios.get(params.fdtdBand);
-            double eirpDbm = (radio != null)
-                    ? radio.txPowerDbm + radio.antennaGain
-                    : RadioConfig.FIXED_TX_POWER_DBM + RadioConfig.DEFAULT_ANTENNA_GAIN_DBI;
+                // AP의 실제 EIRP 사용 (txPower + antennaGain)
+                RadioConfig radio = templateAp.radios.get(params.fdtdBand);
+                double eirpDbm = (radio != null)
+                        ? radio.txPowerDbm + radio.antennaGain
+                        : RadioConfig.FIXED_TX_POWER_DBM + RadioConfig.DEFAULT_ANTENNA_GAIN_DBI;
 
-            // AP 근처에서 기준 전력(refPower) 측정
-            double refPower = 1.0e-20;
-            for (Point2D ap : apPositions) {
-                int gx = (int) (ap.getX() / cellPx) + pml;
-                int gy = (int) (ap.getY() / cellPx) + pml;
-                for (int dx = -3; dx <= 3; dx++)
-                    for (int dy = -3; dy <= 3; dy++) {
-                        double p = sim.getPowerAt(gx + dx, gy + dy);
-                        if (p > refPower) refPower = p;
+                // AP 근처에서 기준 전력(refPower) 측정
+                double refPower = 1.0e-20;
+                for (Point2D ap : apPositions) {
+                    int gx = (int) (ap.getX() / cellPx) + pml;
+                    int gy = (int) (ap.getY() / cellPx) + pml;
+                    for (int dx = -3; dx <= 3; dx++)
+                        for (int dy = -3; dy <= 3; dy++) {
+                            double p = sim.getPowerAt(gx + dx, gy + dy);
+                            if (p > refPower) refPower = p;
+                        }
+                }
+
+                // 각 측정점에서 RSSI 수집 + 커버 판정
+                int covered = 0;
+                List<Integer> uncovered = new ArrayList<>();
+                List<Double> allRssi = new ArrayList<>(measurePoints.size());
+
+                for (int i = 0; i < measurePoints.size(); i++) {
+                    Point2D mp = measurePoints.get(i);
+                    int gx = (int) (mp.getX() / cellPx) + pml;
+                    int gy = (int) (mp.getY() / cellPx) + pml;
+                    if (gx < 0 || gx >= gNx || gy < 0 || gy >= gNy) {
+                        uncovered.add(i);
+                        allRssi.add(-100.0);
+                        continue;
                     }
-            }
+                    double pathLossDb = 10.0 * Math.log10(
+                            Math.max(sim.getPowerAt(gx, gy), 1e-30) / refPower);
+                    double rssiDbm = eirpDbm + pathLossDb;
+                    allRssi.add(rssiDbm);
 
-            // 각 측정점에서 RSSI 수집 + 커버 판정
-            int covered = 0;
-            List<Integer> uncovered = new ArrayList<>();
-            List<Double> allRssi = new ArrayList<>(measurePoints.size());
-
-            for (int i = 0; i < measurePoints.size(); i++) {
-                Point2D mp = measurePoints.get(i);
-                int gx = (int) (mp.getX() / cellPx) + pml;
-                int gy = (int) (mp.getY() / cellPx) + pml;
-                if (gx < 0 || gx >= gNx || gy < 0 || gy >= gNy) {
-                    uncovered.add(i);
-                    allRssi.add(-100.0);
-                    continue;
+                    if (rssiDbm >= params.targetRssiDbm) {
+                        covered++;
+                    } else {
+                        uncovered.add(i);
+                    }
                 }
-                double pathLossDb = 10.0 * Math.log10(
-                        Math.max(sim.getPowerAt(gx, gy), 1e-30) / refPower);
-                double rssiDbm = eirpDbm + pathLossDb;
-                allRssi.add(rssiDbm);
 
-                if (rssiDbm >= params.targetRssiDbm) {
-                    covered++;
-                } else {
-                    uncovered.add(i);
-                }
+                double pct = measurePoints.isEmpty() ? 0 : 100.0 * covered / measurePoints.size();
+                FdtdSignalStats stats = computeSignalStats(allRssi);
+                double[] rssiArray = allRssi.stream().mapToDouble(Double::doubleValue).toArray();
+                return new FdtdValidationResult(pct, uncovered, stats, rssiArray);
+            } finally {
+                sim.shutdown();  // 검증마다 만드는 전용 스레드 풀을 바로 정리
             }
-
-            double pct = measurePoints.isEmpty() ? 0 : 100.0 * covered / measurePoints.size();
-            FdtdSignalStats stats = computeSignalStats(allRssi);
-            double[] rssiArray = allRssi.stream().mapToDouble(Double::doubleValue).toArray();
-            return new FdtdValidationResult(pct, uncovered, stats, rssiArray);
         } catch (Exception e) {
             statusCallback.accept("FDTD 검증 실패: " + e.getMessage());
             return new FdtdValidationResult(-1, List.of(), null, new double[0]);

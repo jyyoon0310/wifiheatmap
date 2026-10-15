@@ -1,11 +1,9 @@
 package app.ui;
 
 import javafx.scene.control.Alert;
-import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.stage.Window;
 
-import java.util.Optional;
 
 /**
  * 알림 다이얼로그(Alert) 보일러플레이트 통합.
@@ -32,28 +30,9 @@ public final class Notify {
         show(Alert.AlertType.INFORMATION, owner, message);
     }
 
-    /** 경고 알림. */
-    public static void warn(Window owner, String message) {
-        show(Alert.AlertType.WARNING, owner, message);
-    }
-
     /** 오류 알림. */
     public static void error(Window owner, String message) {
         show(Alert.AlertType.ERROR, owner, message);
-    }
-
-    /**
-     * Yes/No 확인 다이얼로그. 사용자가 "예"를 누르면 true.
-     * 다이얼로그를 닫거나 "아니오"를 누르면 false.
-     */
-    public static boolean confirm(Window owner, String message) {
-        Alert a = new Alert(Alert.AlertType.CONFIRMATION, message,
-                new ButtonType("예", ButtonBar.ButtonData.YES),
-                new ButtonType("아니오", ButtonBar.ButtonData.NO));
-        if (owner != null) a.initOwner(owner);
-        Styles.styleAlert(a);
-        Optional<ButtonType> r = a.showAndWait();
-        return r.isPresent() && r.get().getButtonData() == ButtonBar.ButtonData.YES;
     }
 
     // ── 내부 헬퍼 ───────────────────────────────────────────────────────────

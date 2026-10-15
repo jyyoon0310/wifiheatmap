@@ -36,8 +36,6 @@ public class WifiEnvironment {
     public double getClientHeightM() { return clientHeightM; }
     public void setClientHeightM(double clientHeightM) { this.clientHeightM = clientHeightM; }
 
-    public double getMinDistanceM() { return MIN_DISTANCE_M; }
-
     /** ✅ 호버용: 해당 지점에서 수신되는 (SSID, Band)별 RSSI 리스트 */
     public List<RssiResult> sampleRssiAllAt(int px, int py) {
         if (Double.isNaN(scaleMPerPx) || aps.isEmpty()) return List.of();

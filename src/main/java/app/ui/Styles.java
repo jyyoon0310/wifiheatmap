@@ -58,11 +58,6 @@ public class Styles {
         return new String[]{ RSSI_DEAD_HEX, RSSI_WEAK_HEX, RSSI_GOOD_HEX, RSSI_STRONG_HEX };
     }
 
-    /** RSSI 값(dBm) → 4단계 디스크리트 컬러. */
-    public static javafx.scene.paint.Color rssiColorFor(double rssiDbm) {
-        return app.model.RssiLevel.of(rssiDbm).color();
-    }
-
     public static final String STATUS_INFO    = "#3B82F6";
     public static final String STATUS_SUCCESS = "#22C55E";
     public static final String STATUS_ERROR   = "#EF4444";

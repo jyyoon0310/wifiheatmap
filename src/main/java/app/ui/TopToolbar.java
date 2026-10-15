@@ -11,7 +11,6 @@ import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import javafx.util.StringConverter;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -437,8 +436,4 @@ public class TopToolbar {
 
     public void setOnWaveToggle(Consumer<Boolean> c) { this.onWaveToggle = c; }
 
-    /** "🌊 전파 흐름 보기" 토글 상태 외부 동기화 (예: 다른 경로로 솔버가 정지될 때) */
-    public void setWaveToggleSelected(boolean selected) {
-        if (waveToggleBtn.isSelected() != selected) waveToggleBtn.setSelected(selected);
-    }
 }

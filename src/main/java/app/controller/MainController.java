@@ -1199,13 +1199,9 @@ public class MainController {
         int w = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getWidth()));
         int h = Math.max(1, (int) Math.round(window.getCanvasView().getDrawCanvas().getHeight()));
 
-        // 히트맵은 DPM 전용 (Legacy 는 엔진에만 남은 비교 기준선 — 화면에서 선택 불가)
-        HeatmapGenerator generator = new HeatmapGenerator(env,
-                AppState.HeatmapSolverMode.CPU, AppState.HeatmapModel.DPM, state.getBandFilter());
+        HeatmapGenerator generator = new HeatmapGenerator(env, state.getBandFilter().band);
         int gridStep = computeAdaptiveGridStep(env);
         int smoothRadius = computeAdaptiveSmoothRadius(gridStep);
-        double legendMin = state.legendMinProperty().get();
-        double legendMax = state.legendMaxProperty().get();
 
         long startMs = System.currentTimeMillis();
         window.getBottomBar().setHeatmapProgress(0);
@@ -1217,7 +1213,7 @@ public class MainController {
         final Task<HeatmapGenerator.HeatmapResult> task = new Task<>() {
             @Override
             protected HeatmapGenerator.HeatmapResult call() {
-                return generator.generate(w, h, gridStep, legendMin, legendMax, smoothRadius,
+                return generator.generate(w, h, gridStep, smoothRadius,
                         progress -> {
                             // 생성기는 취소를 확인하지 않고 끝까지 돈다 — 교체된 작업의
                             // 진행률이 새 작업의 진행률 막대를 덮어쓰지 않게 한다.
@@ -1427,7 +1423,7 @@ public class MainController {
     }
 
     private void invalidateSolverAll() {
-        fdtdSolver = null;
+        closeSolver();
         solverSourceSignature = Long.MIN_VALUE;
         solverMaterialSignature = Long.MIN_VALUE;
         solverScaleSignature = Double.NaN;
@@ -1435,6 +1431,14 @@ public class MainController {
         solverStartWallNs = 0L;
         solverLastTelemetryNs = 0L;
         solverDebugText = "debug: -";
+    }
+
+    /** 이전 솔버의 스레드 풀·GPU 커널을 놓는다 (그냥 null 로 버리면 자원이 남는다). */
+    private void closeSolver() {
+        if (fdtdSolver != null) {
+            fdtdSolver.close();
+            fdtdSolver = null;
+        }
     }
 
     private void startSolver() {
@@ -1518,6 +1522,7 @@ public class MainController {
                     "[SolverV2] rebuild(material/geometry) geo=%s band=%s scale=%s material=%s%n",
                     geometryChanged, bandChanged, scaleChanged, materialChanged
             );
+            closeSolver();
             fdtdSolver = new SolverV2Engine(env, w, h, cellPx, solverBand);
             System.out.printf("[SolverV2] backend=%s%n", fdtdSolver.backendName());
             System.out.println(fdtdSolver.diagnosticsSummary());

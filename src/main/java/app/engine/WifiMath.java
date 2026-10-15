@@ -167,18 +167,6 @@ public final class WifiMath {
         return new Point2D(a.getX() + t * vx, a.getY() + t * vy);
     }
 
-    /**
-     * 두 벡터(u, v)의 각도(0~180도)
-     */
-    public static double angleDeg(Point2D u, Point2D v) {
-        double du = u.magnitude();
-        double dv = v.magnitude();
-        if (du < EPS || dv < EPS) return 0.0;
-        double cos = (u.getX() * v.getX() + u.getY() * v.getY()) / (du * dv);
-        cos = Math.max(-1.0, Math.min(1.0, cos));
-        return Math.toDegrees(Math.acos(cos));
-    }
-
     // ===== 벽 관련 =====
 
     /**
@@ -273,81 +261,6 @@ public final class WifiMath {
             sum += crossLossDb.get(i);
         }
         return sum;
-    }
-
-    /**
-     * 모든 활성 Band에 대한 wallLoss를 한 번의 교차점 계산으로 일괄 반환.
-     * 동일 경로(ax,ay)→(bx,by)에서 Band별로 attenuationDb만 다르므로,
-     * 교차 벽 탐색 및 각도/경계 보정을 1회만 수행하고 Band별 감쇠를 별도 합산한다.
-     *
-     * @param bands  계산할 Band 목록 (null 항목 허용, 그 경우 해당 인덱스는 0.0 반환)
-     * @return bands 인덱스와 1:1 대응하는 wallLoss(dB) 배열
-     */
-    public static double[] wallLossAlongAllBands(double ax, double ay,
-                                                  double bx, double by,
-                                                  java.util.List<Wall> walls,
-                                                  Band[] bands) {
-        double[] result = new double[bands.length];
-        if (walls == null || walls.isEmpty()) return result;
-
-        Point2D a = new Point2D(ax, ay);
-        Point2D b = new Point2D(bx, by);
-
-        // 교차 벽별로 (교차점, 공통 스케일, Band별 기본 감쇠) 수집
-        java.util.ArrayList<Point2D> crossPoints = new java.util.ArrayList<>();
-        // 교차점별로 Band수 크기의 손실 배열 저장
-        java.util.ArrayList<double[]> crossLossPerBand = new java.util.ArrayList<>();
-
-        double wx_full = bx - ax, wy_full = by - ay; // 수신점 방향 벡터 (boundaryWeight용)
-
-        for (Wall w : walls) {
-            if (w == null) continue;
-            Point2D c = new Point2D(w.x1, w.y1);
-            Point2D d = new Point2D(w.x2, w.y2);
-            if (!segmentsIntersect(a, b, c, d)) continue;
-
-            Point2D cross = segmentIntersectionPoint(a, b, c, d);
-            if (cross == null) continue;
-
-            double obliqueScale = wallObliqueScale(a, b, c, d);
-            double endpointWeight = endpointRelaxWeight(a, b, cross);
-
-            double wx = w.x2 - w.x1, wy = w.y2 - w.y1;
-            double wlen = Math.hypot(wx, wy);
-            double boundaryWeight = 1.0;
-            if (wlen > EPS) {
-                double perpDist = Math.abs((bx - w.x1) * wy - (by - w.y1) * wx) / wlen;
-                boundaryWeight = smoothstep(Math.min(1.0, perpDist / WALL_BOUNDARY_SOFT_PX));
-            }
-
-            double commonScale = obliqueScale * endpointWeight * boundaryWeight;
-
-            // Band별 손실 계산
-            double[] lossPerBand = new double[bands.length];
-            for (int bi = 0; bi < bands.length; bi++) {
-                lossPerBand[bi] = w.attenuationDb(bands[bi]) * commonScale;
-            }
-
-            int idx = findCrossingCluster(crossPoints, cross, WALL_CROSS_DEDUP_PX);
-            if (idx >= 0) {
-                // 같은 교차점: Band별로 더 큰 손실 유지
-                double[] existing = crossLossPerBand.get(idx);
-                for (int bi = 0; bi < bands.length; bi++) {
-                    if (lossPerBand[bi] > existing[bi]) existing[bi] = lossPerBand[bi];
-                }
-            } else {
-                crossPoints.add(cross);
-                crossLossPerBand.add(lossPerBand);
-            }
-        }
-
-        // 교차점별 합산
-        for (double[] lossPerBand : crossLossPerBand) {
-            for (int bi = 0; bi < bands.length; bi++) {
-                result[bi] += lossPerBand[bi];
-            }
-        }
-        return result;
     }
 
     /**
@@ -622,27 +535,6 @@ public final class WifiMath {
     }
 
     /**
-     * 선분(a,b) 경로가 벽을 몇 개 관통하는지(디버깅/회절 후보 필터링에 유용)
-     */
-    public static int wallCrossCount(double ax, double ay,
-                                     double bx, double by,
-                                     java.util.List<Wall> walls,
-                                     Wall ignoreWall) {
-        int cnt = 0;
-        Point2D a = new Point2D(ax, ay);
-        Point2D b = new Point2D(bx, by);
-        for (Wall w : walls) {
-            if (ignoreWall != null && w == ignoreWall) continue;
-            if (segmentsIntersect(a, b,
-                    new Point2D(w.x1, w.y1),
-                    new Point2D(w.x2, w.y2))) {
-                cnt++;
-            }
-        }
-        return cnt;
-    }
-
-    /**
      * 단일 전파 경로(LOS/반사/회절 등)를 표현
      */
     public static final class Path {
@@ -763,38 +655,6 @@ public final class WifiMath {
         return new Path(lenM, wallLossDb, diffLossDb, corner, null);
     }
 
-    /**
-     * 2차 회절(corner1 → corner2): AP → corner1 → corner2 → RX 경로
-     *
-     * @param ap          AP 위치
-     * @param rx          수신점 위치
-     * @param corner1     1차 회절 코너
-     * @param corner2     2차 회절 코너
-     * @param walls       전체 벽 목록
-     * @param scaleMPerPx 픽셀 → 미터 변환 스케일
-     * @param diffLossDb  두 코너의 knife-edge 손실 합(dB)
-     * @param band        주파수 밴드
-     * @return Path 객체 (경로 길이, 벽 손실, 회절 추가 손실 포함), 유효하지 않으면 null
-     */
-    public static Path buildDoubleCornerDiffraction(Point2D ap,
-                                                    Point2D rx,
-                                                    Point2D corner1,
-                                                    Point2D corner2,
-                                                    java.util.List<Wall> walls,
-                                                    double scaleMPerPx,
-                                                    double diffLossDb,
-                                                    Band band) {
-        double lenM = (ap.distance(corner1) + corner1.distance(corner2) + corner2.distance(rx)) * scaleMPerPx;
-
-        // 3개 세그먼트(ap→c1, c1→c2, c2→rx)의 벽 관통 감쇠 합산
-        double wl1 = wallLossAlong(ap.getX(), ap.getY(), corner1.getX(), corner1.getY(), walls, (Wall) null, band);
-        double wl2 = wallLossAlong(corner1.getX(), corner1.getY(), corner2.getX(), corner2.getY(), walls, (Wall) null, band);
-        double wl3 = wallLossAlong(corner2.getX(), corner2.getY(), rx.getX(), rx.getY(), walls, (Wall) null, band);
-        double wallLossDb = wl1 + wl2 + wl3;
-
-        return new Path(lenM, wallLossDb, diffLossDb, corner1, null);
-    }
-
     private static double reflectionEndpointMarginPx(Wall wall, double scaleMPerPx) {
         double wallLenPx = Math.hypot(wall.x2 - wall.x1, wall.y2 - wall.y1);
         double byLength = wallLenPx * 0.20; // 벽 길이의 20%
@@ -844,159 +704,6 @@ public final class WifiMath {
             if (z.im < 0) v = -v;
             return new Complex(u, v);
         }
-    }
-
-    /**
-     * (x,y)에서 wStep×hStep 블록을 색 c로 채움
-     */
-    public static void fillBlock(PixelWriter pw,
-                                 int x, int y,
-                                 int wStep, int hStep,
-                                 int w, int h,
-                                 Color c) {
-        for (int yy = y; yy < Math.min(y + hStep, h); yy++) {
-            for (int xx = x; xx < Math.min(x + wStep, w); xx++) {
-                pw.setColor(xx, yy, c);
-            }
-        }
-    }
-
-    // ===== Edge-Preserving Bilateral Filter (Tomasi & Manduchi 1998) =====
-
-    /**
-     * dBm 2D 그리드에 대한 Bilateral Filter.
-     *
-     * 공간적으로 가까운 픽셀끼리 스무딩하되,
-     * dBm 차이가 큰 경계(= 벽에 의한 신호 불연속)는 자동으로 보존.
-     *
-     * W(i,j→p,q) = exp(-(Δd²)/(2σ_s²)) × exp(-(ΔdBm²)/(2σ_r²))
-     *
-     * @param dbmGrid      width×height dBm 값 (row-major, dbmGrid[y*width+x])
-     * @param width        이미지 폭 (px)
-     * @param height       이미지 높이 (px)
-     * @param spatialSigma 공간 시그마 (px) — 블러 반경 (권장: gridStepPx)
-     * @param rangeSigma   범위 시그마 (dBm) — 값 차이 허용치 (권장: 6~8)
-     * @return 새로운 스무딩된 dBm 배열
-     */
-    public static double[] bilateralFilterDbm(double[] dbmGrid, int width, int height,
-                                               double spatialSigma, double rangeSigma) {
-        if (dbmGrid == null || width <= 0 || height <= 0) return dbmGrid;
-        if (spatialSigma <= 0.0 || rangeSigma <= 0.0) return dbmGrid.clone();
-
-        int radius = (int) Math.ceil(2.0 * spatialSigma);
-        double spatialDenom = 2.0 * spatialSigma * spatialSigma;
-        double rangeDenom = 2.0 * rangeSigma * rangeSigma;
-
-        // 공간 가우시안 커널 사전 계산 (대칭이므로 1/4만 계산)
-        double[] spatialKernel = new double[(radius + 1) * (radius + 1)];
-        for (int dy = 0; dy <= radius; dy++) {
-            for (int dx = 0; dx <= radius; dx++) {
-                spatialKernel[dy * (radius + 1) + dx] = Math.exp(-(dx * dx + dy * dy) / spatialDenom);
-            }
-        }
-
-        double[] result = new double[width * height];
-
-        // 행별 병렬 처리
-        java.util.stream.IntStream.range(0, height).parallel().forEach(y -> {
-            for (int x = 0; x < width; x++) {
-                double centerDbm = dbmGrid[y * width + x];
-                double weightSum = 0.0;
-                double valueSum = 0.0;
-
-                int yMin = Math.max(0, y - radius);
-                int yMax = Math.min(height - 1, y + radius);
-                int xMin = Math.max(0, x - radius);
-                int xMax = Math.min(width - 1, x + radius);
-
-                for (int qy = yMin; qy <= yMax; qy++) {
-                    int dy = Math.abs(qy - y);
-                    for (int qx = xMin; qx <= xMax; qx++) {
-                        int dx = Math.abs(qx - x);
-                        double neighborDbm = dbmGrid[qy * width + qx];
-
-                        // 공간 가중치 (사전 계산된 커널)
-                        double ws = spatialKernel[dy * (radius + 1) + dx];
-
-                        // 범위 가중치 (dBm 차이 → 벽 경계에서 자동 억제)
-                        double dDbm = neighborDbm - centerDbm;
-                        double wr = Math.exp(-(dDbm * dDbm) / rangeDenom);
-
-                        double w = ws * wr;
-                        weightSum += w;
-                        valueSum += w * neighborDbm;
-                    }
-                }
-
-                result[y * width + x] = (weightSum > 0.0) ? valueSum / weightSum : centerDbm;
-            }
-        });
-
-        return result;
-    }
-
-    // ===== Separable Gaussian Blur (dBm 그리드용) =====
-
-    /**
-     * 1D separable Gaussian blur on dBm grid.
-     * bilateral 필터 후 residual ray(바퀴살) 잔재 제거용 경량 후처리.
-     *
-     * 수평 → 수직 순서로 두 번 1D 컨볼루션 수행 (O(n·r), separability 활용).
-     * 경계: clamp-to-edge (border 픽셀을 그대로 연장)
-     *
-     * @param src    원본 dBm 배열 (row-major, src[y*width+x])
-     * @param width  이미지 폭 (px)
-     * @param height 이미지 높이 (px)
-     * @param sigma  가우시안 σ (px), 권장: 1.0~2.0
-     * @return 새로운 스무딩된 dBm 배열
-     */
-    public static double[] gaussianBlurDbm(double[] src, int width, int height, double sigma) {
-        if (src == null || width <= 0 || height <= 0 || sigma <= 0.0) return src;
-
-        int radius = (int) Math.ceil(3.0 * sigma); // 3σ rule: 99.7% 포함
-        int kernelSize = radius * 2 + 1;
-
-        // 1D 가우시안 커널 사전 계산
-        double[] kernel = new double[kernelSize];
-        double twoSigmaSq = 2.0 * sigma * sigma;
-        double kernelSum = 0.0;
-        for (int i = 0; i < kernelSize; i++) {
-            int x = i - radius;
-            kernel[i] = Math.exp(-(x * x) / twoSigmaSq);
-            kernelSum += kernel[i];
-        }
-        for (int i = 0; i < kernelSize; i++) {
-            kernel[i] /= kernelSum; // 정규화
-        }
-
-        double[] tmp = new double[width * height]; // 수평 패스 결과
-        double[] dst = new double[width * height]; // 수직 패스 결과 (최종)
-
-        // 수평 패스 (각 행에 1D 컨볼루션)
-        java.util.stream.IntStream.range(0, height).parallel().forEach(y -> {
-            for (int x = 0; x < width; x++) {
-                double sum = 0.0;
-                for (int k = 0; k < kernelSize; k++) {
-                    int sx = Math.max(0, Math.min(width - 1, x + k - radius)); // clamp
-                    sum += kernel[k] * src[y * width + sx];
-                }
-                tmp[y * width + x] = sum;
-            }
-        });
-
-        // 수직 패스 (각 열에 1D 컨볼루션)
-        java.util.stream.IntStream.range(0, height).parallel().forEach(y -> {
-            for (int x = 0; x < width; x++) {
-                double sum = 0.0;
-                for (int k = 0; k < kernelSize; k++) {
-                    int sy = Math.max(0, Math.min(height - 1, y + k - radius)); // clamp
-                    sum += kernel[k] * tmp[sy * width + x];
-                }
-                dst[y * width + x] = sum;
-            }
-        });
-
-        return dst;
     }
 
     // ===== 간단 박스 블러 =====
@@ -1084,44 +791,6 @@ public final class WifiMath {
         }
 
         return dst;
-    }
-
-    // ===== Bicubic (Catmull-Rom) 보간 =====
-
-    /**
-     * 1D Catmull-Rom spline 보간.
-     * p0, p1, p2, p3: 4개 제어점 값
-     * t: p1~p2 구간 내 보간 위치 [0, 1]
-     *
-     * p(t) = 0.5 * ((2·p1) + (-p0+p2)·t + (2·p0 - 5·p1 + 4·p2 - p3)·t² + (-p0 + 3·p1 - 3·p2 + p3)·t³)
-     */
-    public static double catmullRom(double p0, double p1, double p2, double p3, double t) {
-        double t2 = t * t;
-        double t3 = t2 * t;
-        return 0.5 * ((2.0 * p1)
-                + (-p0 + p2) * t
-                + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
-                + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
-    }
-
-    /**
-     * 2D Bicubic Catmull-Rom 보간 (separable).
-     * grid4x4[row][col]: 4×4 이웃 격자점 값 (row=0..3, col=0..3)
-     *   - grid4x4[1][1] ~ grid4x4[2][2]가 보간 대상 셀의 4 꼭짓점
-     *   - grid4x4[0][*], grid4x4[3][*] 등은 외곽 패딩(clamp 처리된)
-     * tx, ty: 셀 내 보간 위치 [0, 1]
-     *
-     * 1) Y 방향으로 4줄 각각 Catmull-Rom → 4개 중간값
-     * 2) X 방향으로 1줄 Catmull-Rom → 최종값
-     */
-    public static double bicubicCatmullRom(double[][] grid4x4, double tx, double ty) {
-        // 각 행을 X 방향으로 보간
-        double c0 = catmullRom(grid4x4[0][0], grid4x4[0][1], grid4x4[0][2], grid4x4[0][3], tx);
-        double c1 = catmullRom(grid4x4[1][0], grid4x4[1][1], grid4x4[1][2], grid4x4[1][3], tx);
-        double c2 = catmullRom(grid4x4[2][0], grid4x4[2][1], grid4x4[2][2], grid4x4[2][3], tx);
-        double c3 = catmullRom(grid4x4[3][0], grid4x4[3][1], grid4x4[3][2], grid4x4[3][3], tx);
-        // Y 방향으로 보간
-        return catmullRom(c0, c1, c2, c3, ty);
     }
 
     // ===== 경로손실 모델 =====

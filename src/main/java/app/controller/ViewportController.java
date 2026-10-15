@@ -55,7 +55,6 @@ public class ViewportController {
     }
 
     public DoubleProperty zoomScaleProperty() { return zoomScale; }
-    public double getZoom() { return zoomScale.get(); }
     public void setZoom(double z) { zoomScale.set(z); }
 
     public void setBaseContentSize(double w, double h) {

@@ -30,16 +30,6 @@ public class RadioConfig {
     }
 
     /**
-     * 채널 중심주파수 + 대역폭 절반(상단 edge)을 대표 주파수로 사용해
-     * 대역폭 증가 시 추가 감쇠가 반영되도록 한다.
-     */
-    public double effectiveFreqGhzForLoss() {
-        double center = centerFreqGhz();
-        double halfBwGhz = Math.max(20, channelWidth) / 2000.0;
-        return center + halfBwGhz;
-    }
-
-    /**
      * 대역폭 증가에 따른 수신 난이도(노이즈 대역 증가)를 간단히 dB 패널티로 반영.
      * 20MHz를 기준으로 10*log10(BW/20).
      */

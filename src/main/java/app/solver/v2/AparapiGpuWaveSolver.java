@@ -463,6 +463,14 @@ public final class AparapiGpuWaveSolver implements GpuWaveSolver {
         }
 
         @Override
+        public void close() {
+            // Aparapi 커널은 OpenCL 버퍼·프로그램을 잡고 있어 dispose 하지 않으면 GPU 메모리가 남는다
+            updateHKernel.dispose();
+            updateEKernel.dispose();
+            powerKernel.dispose();
+        }
+
+        @Override
         public FdtdWaveSimulator.MaterialStats materialStats() {
             return materialStats;
         }
