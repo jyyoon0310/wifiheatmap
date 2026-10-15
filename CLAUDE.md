@@ -9,7 +9,7 @@ Flood Fill 기반 영역 선택 + 그리디 Ray-cast + FDTD 검증을 통한 AP 
 - 실행: `./gradlew run`
 - 빌드: `./gradlew build`
 - 정리: `./gradlew clean`
-- 테스트: `./gradlew test` — 엔진 회귀 테스트 (골든 격자 + 신호 지도 픽셀 해시). 화면은 수동 검증
+- 테스트: `./gradlew test` — 골든 격자·신호 지도 픽셀 해시·자리 추천 회귀 + 작업 파일 왕복. 화면은 수동 검증
 
 ## 기술 스택
 - Java 21, JavaFX 21.0.9, Gradle 8.14
@@ -43,6 +43,7 @@ src/main/java/app/
 │   ├── FdtdWaveSimulator.java    # FDTD 실시간 시각화 + AP추천 검증용
 │   ├── ApRecommender.java        # AP 위치 추천 (그리디 + FDTD 피드백 루프)
 │   ├── WifiMath.java             # 기하학 계산, 경로손실 공식
+│   ├── LinkBudget.java           # 수신 신호 세기 공식 (EIRP − 경로손실 − 대역폭 보정) — 단일 출처
 │   └── fdtd/                     # FDTD 재질 격자·설정 (솔버는 FdtdWaveSimulator / GPU)
 │       ├── FdtdConfig.java       # FDTD 파라미터 (dx, dt, PML 등)
 │       ├── FdtdMaterialGrid.java
@@ -64,6 +65,8 @@ src/main/java/app/
 │   ├── Icons.java                # 단색 벡터 아이콘
 │   ├── MacWindowChrome.java      # macOS 제목 막대를 앱 테마에 맞춤 (JNA, 실패 시 무시)
 │   └── Styles.java               # Liquid Glass 테마 시스템 (다크/라이트)
+├── io/
+│   └── ProjectFile.java          # 작업 파일(.wifisettings) 읽기·쓰기
 ├── dialog/
 │   ├── WelcomeDialog.java        # 시작 화면 (새 평면도 / 저장된 작업 / 빈 화면)
 │   ├── AdvancedSettingsDialog.java # 고급(연구·실험) 모드 토글
@@ -88,7 +91,7 @@ src/main/java/app/
 
 ### 작업 파일 (.wifisettings)
 - zip 컨테이너: `settings.properties`(축척·공유기·벽) + `floorplan.png`(평면도)
-- 저장·불러오기: `MainController.writeSettingsTo` / `applySettingsSnapshot`
+- 읽기·쓰기: `io/ProjectFile` (순수 입출력, `ProjectFileTest` 로 왕복 검증) → `MainController` 는 화면 반영만
 
 ### UI 테마 (Liquid Glass)
 - `Styles.java`: `isDark()`, `setDark()`, `addThemeListener()`

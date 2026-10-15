@@ -2,6 +2,7 @@ package app.controller;
 
 import app.engine.DpmPathGrid;
 import app.engine.HeatmapGenerator;
+import app.io.ProjectFile;
 import app.model.AP;
 import app.model.AppState;
 import app.model.Band;
@@ -37,16 +38,10 @@ import javafx.util.Duration;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.Properties;
 
 public class MainController {
     private enum OnboardingStep {
@@ -861,83 +856,20 @@ public class MainController {
         writeSettingsTo(out, /*verbose*/ true);
     }
 
-    /** 실제 ZIP 쓰기 로직 — 두 저장 경로(빠른/다른이름)의 공통 본체. */
+    /** 작업 파일 쓰기 — 두 저장 경로(빠른/다른 이름)의 공통 본체. 형식은 {@link ProjectFile}. */
     private void writeSettingsTo(File out, boolean verbose) {
-
-        Properties p = new Properties();
-        p.setProperty("version", "1");
-        if (currentFloorplanFile != null) {
-            p.setProperty("floorplan.path", currentFloorplanFile.getAbsolutePath());
-        }
-        if (Double.isFinite(env.getScaleMPerPx()) && env.getScaleMPerPx() > 0.0) {
-            p.setProperty("scale.m_per_px", Double.toString(env.getScaleMPerPx()));
-        }
-        p.setProperty("state.calib_real_m", Double.toString(state.getCalibRealMeters()));
-        p.setProperty("env.client_height_m", Double.toString(env.getClientHeightM()));
-        p.setProperty("env.path_loss_n", Double.toString(state.getPathLossN()));
-
-        p.setProperty("ap.count", Integer.toString(env.getAps().size()));
-        for (int i = 0; i < env.getAps().size(); i++) {
-            AP ap = env.getAps().get(i);
-            if (ap == null) continue;
-            String key = "ap." + i + ".";
-            p.setProperty(key + "name", nullToEmpty(ap.name));
-            p.setProperty(key + "x", Double.toString(ap.x));
-            p.setProperty(key + "y", Double.toString(ap.y));
-            p.setProperty(key + "height_m", Double.toString(ap.heightM));
-            p.setProperty(key + "enabled", Boolean.toString(ap.enabled));
-
-            for (Band band : Band.values()) {
-                RadioConfig rc = ap.radios.get(band);
-                if (rc == null) continue;
-                String rk = key + "radio." + band.name() + ".";
-                p.setProperty(rk + "enabled", Boolean.toString(rc.enabled));
-                p.setProperty(rk + "ssid", nullToEmpty(rc.ssid));
-                p.setProperty(rk + "tx_dbm", Double.toString(rc.txPowerDbm));
-                p.setProperty(rk + "gain_dbi", Double.toString(rc.antennaGain));
-                p.setProperty(rk + "channel", Integer.toString(rc.channel));
-                p.setProperty(rk + "bandwidth_mhz", Integer.toString(rc.channelWidth));
-            }
-        }
-
-        p.setProperty("wall.count", Integer.toString(env.getWalls().size()));
-        for (int i = 0; i < env.getWalls().size(); i++) {
-            Wall w = env.getWalls().get(i);
-            if (w == null) continue;
-            String key = "wall." + i + ".";
-            p.setProperty(key + "x1", Double.toString(w.x1));
-            p.setProperty(key + "y1", Double.toString(w.y1));
-            p.setProperty(key + "x2", Double.toString(w.x2));
-            p.setProperty(key + "y2", Double.toString(w.y2));
-            WallMaterial material = (w.getMaterial() == null) ? WallMaterial.CUSTOM : w.getMaterial();
-            p.setProperty(key + "material", material.name());
-            p.setProperty(key + "att_24_db", Double.toString(w.attenuationDb24));
-            p.setProperty(key + "att_5_db", Double.toString(w.attenuationDb5));
-        }
-
-        // ── ZIP 컨테이너로 저장 (settings.properties + floorplan.png) ──
-        try (java.util.zip.ZipOutputStream zos =
-                     new java.util.zip.ZipOutputStream(new FileOutputStream(out))) {
-
-            // 1) settings.properties — UTF-8 텍스트
-            zos.putNextEntry(new java.util.zip.ZipEntry("settings.properties"));
-            java.io.ByteArrayOutputStream propsBuf = new java.io.ByteArrayOutputStream();
-            try (OutputStreamWriter writer = new OutputStreamWriter(propsBuf, StandardCharsets.UTF_8)) {
-                p.store(writer, "Wi-Fi Heatmap settings snapshot");
-            }
-            zos.write(propsBuf.toByteArray());
-            zos.closeEntry();
-
-            // 2) floorplan.png — 평면도 이미지를 묶음 (있을 때만)
-            if (floorplanBI != null) {
-                zos.putNextEntry(new java.util.zip.ZipEntry("floorplan.png"));
-                javax.imageio.ImageIO.write(floorplanBI, "png", zos);
-                zos.closeEntry();
-            }
-
+        ProjectFile.Snapshot snapshot = new ProjectFile.Snapshot(
+                currentFloorplanFile != null ? currentFloorplanFile.getAbsolutePath() : null,
+                floorplanBI,
+                env.getScaleMPerPx(),
+                state.getCalibRealMeters(),
+                env.getClientHeightM(),
+                state.getPathLossN(),
+                env.getAps(), env.getWalls());
+        try {
+            ProjectFile.write(out, snapshot);
             currentSettingsFile = out;
             rememberRecentFile(out);
-            // 빠른 저장(Cmd+S)에선 BottomBar 토스트, 다른 이름으로는 다이얼로그
             showToast("저장했습니다 · " + out.getName()
                     + (verbose && floorplanBI != null ? " (평면도 포함)" : ""));
         } catch (Exception ex) {
@@ -966,49 +898,22 @@ public class MainController {
     private boolean loadSettingsSnapshotFromFile(File file, boolean showSuccessInfo) {
         if (file == null) return false;
 
-        Properties p = new Properties();
-        java.awt.image.BufferedImage embeddedFloorplan = null;
-
-        // ZIP인지 plain properties인지 자동 감지 — 첫 4바이트가 PK 시그니처면 ZIP
-        boolean isZip = isZipFile(file);
-
+        ProjectFile.Snapshot snapshot;
         try {
-            if (isZip) {
-                // ZIP 컨테이너 — settings.properties + (있으면) floorplan.png 추출
-                try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(file)) {
-                    java.util.zip.ZipEntry propsEntry = zf.getEntry("settings.properties");
-                    if (propsEntry == null) {
-                        showError("작업 파일을 열 수 없습니다. 이 앱에서 저장한 .wifisettings 파일인지 확인해 주세요.");
-                        return false;
-                    }
-                    try (InputStreamReader r = new InputStreamReader(
-                            zf.getInputStream(propsEntry), StandardCharsets.UTF_8)) {
-                        p.load(r);
-                    }
-                    java.util.zip.ZipEntry imgEntry = zf.getEntry("floorplan.png");
-                    if (imgEntry != null) {
-                        try (java.io.InputStream in = zf.getInputStream(imgEntry)) {
-                            embeddedFloorplan = javax.imageio.ImageIO.read(in);
-                        }
-                    }
-                }
-            } else {
-                // 구버전 — plain properties
-                try (InputStreamReader reader = new InputStreamReader(
-                        new FileInputStream(file), StandardCharsets.UTF_8)) {
-                    p.load(reader);
-                }
-            }
+            snapshot = ProjectFile.read(file);
+        } catch (ProjectFile.FormatException ex) {
+            showError(ex.getMessage());
+            return false;
         } catch (Exception ex) {
             showError("작업 파일을 열지 못했습니다.\n" + ex.getMessage());
             return false;
         }
 
-        // ZIP에 평면도가 포함돼 있으면 외부 경로보다 그것을 우선 사용
-        if (embeddedFloorplan != null) {
-            floorplanBI = embeddedFloorplan;
-            currentFloorplanFile = file;  // 설정파일 자체를 출처로 표시
-            javafx.scene.image.Image fx = javafx.embed.swing.SwingFXUtils.toFXImage(embeddedFloorplan, null);
+        // 파일에 평면도가 들어 있으면 외부 경로보다 그것을 우선 사용
+        if (snapshot.floorplan() != null) {
+            floorplanBI = snapshot.floorplan();
+            currentFloorplanFile = file;  // 작업 파일 자체를 출처로 표시
+            javafx.scene.image.Image fx = javafx.embed.swing.SwingFXUtils.toFXImage(floorplanBI, null);
             window.getCanvasView().getBaseImageView().setImage(fx);
             window.getCanvasView().getDrawCanvas().setWidth(fx.getWidth());
             window.getCanvasView().getDrawCanvas().setHeight(fx.getHeight());
@@ -1016,98 +921,41 @@ public class MainController {
             viewportController.setZoom(1.0);
             viewportController.updateViewportSize();
             viewportController.centerViewport();
-            // applySettingsSnapshot 안의 floorplan.path 로드는 건너뛰도록 플래그
-            p.remove("floorplan.path");
-        }
-
-        boolean ok = applySettingsSnapshot(p, showSuccessInfo);
-        if (ok) {
-            rememberRecentFile(file);
-            currentSettingsFile = file;  // 이후 Cmd+S 빠른 저장에 사용
-        }
-        return ok;
-    }
-
-    /** 파일 시그니처로 ZIP 여부 판별 (PK\003\004) */
-    private static boolean isZipFile(File f) {
-        try (java.io.InputStream in = new FileInputStream(f)) {
-            byte[] sig = new byte[4];
-            int n = in.read(sig);
-            return n == 4 && sig[0] == 'P' && sig[1] == 'K' && sig[2] == 0x03 && sig[3] == 0x04;
-        } catch (Exception ex) {
-            return false;
-        }
-    }
-
-    private boolean applySettingsSnapshot(Properties p, boolean showSuccessInfo) {
-        if (p == null) return false;
-
-        String floorPath = trimToNull(p.getProperty("floorplan.path"));
-        if (floorPath != null) {
-            File floor = new File(floorPath);
+        } else if (snapshot.floorplanPath() != null) {
+            File floor = new File(snapshot.floorplanPath());
             if (floor.exists()) {
                 loadFloorplanFromFile(floor, false);
             } else {
-                showInfo("저장된 평면도 파일을 찾지 못했습니다.\n경로: " + floorPath);
+                showInfo("저장된 평면도 파일을 찾지 못했습니다.\n경로: " + snapshot.floorplanPath());
             }
         }
 
-        double loadedScale = parseDouble(p.getProperty("scale.m_per_px"), Double.NaN);
-        state.setScaleMPerPx(loadedScale);
-        env.setScaleMPerPx(loadedScale);
+        applySnapshot(snapshot);
+        rememberRecentFile(file);
+        currentSettingsFile = file;  // 이후 Cmd+S 빠른 저장에 사용
+        if (showSuccessInfo) {
+            showToast(String.format("불러왔습니다 · 공유기 %d대 · 벽 %d개",
+                    snapshot.aps().size(), snapshot.walls().size()));
+        }
+        return true;
+    }
 
-        double calibMeters = parseDouble(p.getProperty("state.calib_real_m"), state.getCalibRealMeters());
+    /** 불러온 내용을 상태·환경에 반영하고, 이전 작업의 계산 결과·선택을 모두 비운다. */
+    private void applySnapshot(ProjectFile.Snapshot s) {
+        state.setScaleMPerPx(s.scaleMPerPx());
+        env.setScaleMPerPx(s.scaleMPerPx());
+
+        double calibMeters = Double.isNaN(s.calibRealMeters()) ? state.getCalibRealMeters() : s.calibRealMeters();
         state.setCalibRealMeters(calibMeters);
         window.getLeftPanel().getRealMetersField().setText(Double.toString(calibMeters));
 
-        double clientHeight = Math.max(0.1, parseDouble(p.getProperty("env.client_height_m"), env.getClientHeightM()));
-        env.setClientHeightM(clientHeight);
-        double loadedPathLossN = Math.max(1.0, parseDouble(p.getProperty("env.path_loss_n"), env.getPathLossN()));
-        env.setPathLossN(loadedPathLossN);
-        state.setPathLossN(loadedPathLossN);
+        if (!Double.isNaN(s.clientHeightM())) env.setClientHeightM(s.clientHeightM());
+        double pathLossN = Double.isNaN(s.pathLossN()) ? env.getPathLossN() : s.pathLossN();
+        env.setPathLossN(pathLossN);
+        state.setPathLossN(pathLossN);
 
-        int apCount = Math.max(0, parseInt(p.getProperty("ap.count"), 0));
-        List<AP> loadedAps = new ArrayList<>(apCount);
-        for (int i = 0; i < apCount; i++) {
-            String key = "ap." + i + ".";
-            AP ap = new AP();
-            ap.name = p.getProperty(key + "name", ap.name);
-            ap.x = parseDouble(p.getProperty(key + "x"), ap.x);
-            ap.y = parseDouble(p.getProperty(key + "y"), ap.y);
-            ap.heightM = Math.max(0.1, parseDouble(p.getProperty(key + "height_m"), ap.heightM));
-            ap.enabled = parseBoolean(p.getProperty(key + "enabled"), ap.enabled);
-            for (Band band : Band.values()) {
-                RadioConfig rc = ap.radios.get(band);
-                if (rc == null) continue;
-                String rk = key + "radio." + band.name() + ".";
-                rc.enabled = parseBoolean(p.getProperty(rk + "enabled"), rc.enabled);
-                rc.ssid = p.getProperty(rk + "ssid", rc.ssid);
-                rc.txPowerDbm = RadioConfig.FIXED_TX_POWER_DBM;
-                rc.antennaGain = parseDouble(p.getProperty(rk + "gain_dbi"), rc.antennaGain);
-                rc.channel = parseInt(p.getProperty(rk + "channel"), rc.channel);
-                rc.channelWidth = parseInt(p.getProperty(rk + "bandwidth_mhz"), rc.channelWidth);
-            }
-            loadedAps.add(ap);
-        }
-
-        int wallCount = Math.max(0, parseInt(p.getProperty("wall.count"), 0));
-        List<Wall> loadedWalls = new ArrayList<>(wallCount);
-        for (int i = 0; i < wallCount; i++) {
-            String key = "wall." + i + ".";
-            Wall w = new Wall();
-            w.x1 = parseDouble(p.getProperty(key + "x1"), w.x1);
-            w.y1 = parseDouble(p.getProperty(key + "y1"), w.y1);
-            w.x2 = parseDouble(p.getProperty(key + "x2"), w.x2);
-            w.y2 = parseDouble(p.getProperty(key + "y2"), w.y2);
-            w.setMaterial(parseWallMaterial(p.getProperty(key + "material")));
-            w.attenuationDb24 = parseDouble(p.getProperty(key + "att_24_db"), w.attenuationDb24);
-            w.attenuationDb5 = parseDouble(p.getProperty(key + "att_5_db"), w.attenuationDb5);
-            w.attenuationDb = w.attenuationDb24;
-            loadedWalls.add(w);
-        }
-
-        env.getAps().setAll(loadedAps);
-        env.getWalls().setAll(loadedWalls);
+        env.getAps().setAll(s.aps());
+        env.getWalls().setAll(s.walls());
         toolsController.clearApSelection();
         toolsController.clearApInteraction();
         toolsController.clearWallSelection();
@@ -1126,56 +974,6 @@ public class MainController {
 
         state.clearCoverageMask();  // 다른 환경 로드 → 사용 공간 마스크 무효화
         window.getLeftPanel().clearMeasurementResult();
-
-        if (showSuccessInfo) {
-            showToast(String.format("불러왔습니다 · 공유기 %d대 · 벽 %d개", loadedAps.size(), loadedWalls.size()));
-        }
-        return true;
-    }
-
-    private static String nullToEmpty(String value) {
-        return (value == null) ? "" : value;
-    }
-
-    private static String trimToNull(String value) {
-        if (value == null) return null;
-        String v = value.trim();
-        return v.isEmpty() ? null : v;
-    }
-
-    private static double parseDouble(String raw, double fallback) {
-        if (raw == null) return fallback;
-        try {
-            return Double.parseDouble(raw.trim());
-        } catch (Exception ignored) {
-            return fallback;
-        }
-    }
-
-    private static int parseInt(String raw, int fallback) {
-        if (raw == null) return fallback;
-        try {
-            return Integer.parseInt(raw.trim());
-        } catch (Exception ignored) {
-            return fallback;
-        }
-    }
-
-    private static boolean parseBoolean(String raw, boolean fallback) {
-        if (raw == null) return fallback;
-        String v = raw.trim().toLowerCase();
-        if ("true".equals(v) || "1".equals(v) || "yes".equals(v)) return true;
-        if ("false".equals(v) || "0".equals(v) || "no".equals(v)) return false;
-        return fallback;
-    }
-
-    private static WallMaterial parseWallMaterial(String raw) {
-        if (raw == null || raw.isBlank()) return WallMaterial.CONCRETE_WALL;
-        try {
-            return WallMaterial.valueOf(raw.trim());
-        } catch (Exception ignored) {
-            return WallMaterial.CONCRETE_WALL;
-        }
     }
 
     private void generateHeatmapNow() {
