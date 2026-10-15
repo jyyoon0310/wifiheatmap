@@ -605,7 +605,7 @@ public final class AparapiGpuWaveSolver implements GpuWaveSolver {
                     int periodSteps = Math.max(1, (int) Math.round((1.0 / fEff) / dtSeconds));
                     int rampSteps = Math.max(periodSteps * SOURCE_RAMP_CYCLES, 20);
                     float phase = (float) initialPhase(ap, band);
-                    float amp = (float) sourceAmplitudeFromEirpDbm(rc.txPowerDbm + rc.antennaGain);
+                    float amp = (float) sourceAmplitudeFromEirpDbm(app.engine.LinkBudget.eirpDbm(rc));
                     sources.add(new Source(gx, gy, band, amp, (float) omegaDt, rampSteps, phase));
                 }
             }

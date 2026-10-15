@@ -1867,8 +1867,7 @@ public class MainController {
                 if (rc == null || !rc.enabled) continue;
                 DpmPathGrid grid = bandGrids.get(b);
                 if (grid == null) continue;
-                double plDb = grid.getPathLossDb(px, py);
-                double rssi = rc.txPowerDbm + rc.antennaGain - plDb - rc.bandwidthPenaltyDb();
+                double rssi = app.engine.LinkBudget.rssiDbm(rc, grid.getPathLossDb(px, py));
                 results.add(new RssiResult(ap.name, rc.ssid, b, rssi));
             }
         }

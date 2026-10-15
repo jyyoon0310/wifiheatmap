@@ -153,9 +153,7 @@ public class HeatmapGenerator {
                                 if (rc == null || !rc.enabled) continue;
                                 DpmPathGrid grid = bandGrids.get(b);
                                 if (grid == null) continue;
-                                double plDb = grid.getPathLossDb(spx, spy);
-                                double rssi = rc.txPowerDbm + rc.antennaGain
-                                        - plDb - rc.bandwidthPenaltyDb();
+                                double rssi = LinkBudget.rssiDbm(rc, grid.getPathLossDb(spx, spy));
                                 if (rssi > bestRssi) bestRssi = rssi;
                             }
                             if (bestRssi > strongest) strongest = bestRssi;

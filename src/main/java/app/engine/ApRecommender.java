@@ -199,8 +199,8 @@ public class ApRecommender {
         // 사용자가 고른 공유기 스펙을 평가에도 그대로 쓴다. (예전엔 EIRP 22dBm 고정이라
         // "선택한 공유기의 전파 스펙으로 계산" 안내와 달리 프리셋이 계산에 반영되지 않았다.)
         if (params.preset != null) params.preset.applyTo(templateAp);
-        // DPM 평가는 2.4GHz 격자로 하므로 2.4GHz 라디오의 EIRP 를 쓴다.
-        final double dpmEirpDbm = eirpDbm(templateAp, Band.GHZ_24);
+        // DPM 평가는 2.4GHz 격자로 하므로 2.4GHz 라디오 설정으로 신호 세기를 계산한다 (LinkBudget).
+        final RadioConfig dpmRadio = templateAp.radios.get(Band.GHZ_24);
 
         // 측정점별로 "지금까지 배치한 AP 중 가장 강한 RSSI". 모든 점이 목표를 넘은 뒤
         // 추가 AP 를 평가할 때 쓴다.
@@ -241,7 +241,7 @@ public class ApRecommender {
             WifiEnvironment tempEnv = cloneEnvWithAps(env, chosen, templateAp);
             CandidateScore best = evaluateCandidatesParallel(
                     tempEnv, availableCandidates, measurePoints, params, coveredSet, bestRssi,
-                    dpmEirpDbm, canvasW, canvasH, walls, dpmExp, dpmPru, dpmMs, dpmCnt);
+                    dpmRadio, canvasW, canvasH, walls, dpmExp, dpmPru, dpmMs, dpmCnt);
 
             if (best == null) break;
             chosen.add(new Point2D(best.px, best.py));
@@ -252,7 +252,7 @@ public class ApRecommender {
             if (params.useDpmEvaluation && Double.isFinite(scaleMPerPx) && scaleMPerPx > 0) {
                 updateCoveredSetDpm(chosen.get(chosen.size() - 1),
                         canvasW, canvasH, scaleMPerPx, walls,
-                        measurePoints, params, dpmEirpDbm, coveredSet, bestRssi,
+                        measurePoints, params, dpmRadio, coveredSet, bestRssi,
                         dpmExp, dpmPru, dpmMs, dpmCnt);
             } else {
                 WifiEnvironment withNew = cloneEnvWithAps(env, chosen, templateAp);
@@ -386,7 +386,7 @@ public class ApRecommender {
     private static CandidateScore evaluateCandidatesParallel(
             WifiEnvironment baseEnv, List<Point2D> candidates,
             List<Point2D> measurePoints, Params params,
-            Set<Integer> alreadyCovered, double[] bestRssi, double dpmEirpDbm,
+            Set<Integer> alreadyCovered, double[] bestRssi, RadioConfig dpmRadio,
             int canvasW, int canvasH, List<Wall> walls,
             java.util.concurrent.atomic.AtomicLong dpmExp,
             java.util.concurrent.atomic.AtomicLong dpmPru,
@@ -427,8 +427,8 @@ public class ApRecommender {
 
                 final DpmPathGrid grid = dpmGrid;
                 java.util.function.ToDoubleFunction<Point2D> rssiAt = mp -> (grid != null)
-                        // DPM 기반 RSSI: 선택한 공유기의 EIRP - PL
-                        ? dpmEirpDbm - grid.getPathLossDb(mp.getX(), mp.getY())
+                        // DPM 기반 RSSI: 신호 지도와 같은 식 (LinkBudget)
+                        ? LinkBudget.rssiDbm(dpmRadio, grid.getPathLossDb(mp.getX(), mp.getY()))
                         // 기존 sampleRssiAt (LEGACY/FDTD 모드용)
                         : testEnv.sampleRssiAt((int) mp.getX(), (int) mp.getY());
 
@@ -538,10 +538,10 @@ public class ApRecommender {
                 int gNx = sim.gridNx(), gNy = sim.gridNy();
 
                 // AP의 실제 EIRP 사용 (txPower + antennaGain)
+                // ⚠️ 신호 지도(LinkBudget.rssiDbm)와 달리 대역폭 보정을 빼지 않는다 — 5GHz 80MHz 면
+                //    지도보다 6dB 후하게 판정한다. 바꾸면 추천 결과가 달라지므로 보정 모델을 정할 때 함께 정리.
                 RadioConfig radio = templateAp.radios.get(params.fdtdBand);
-                double eirpDbm = (radio != null)
-                        ? radio.txPowerDbm + radio.antennaGain
-                        : RadioConfig.FIXED_TX_POWER_DBM + RadioConfig.DEFAULT_ANTENNA_GAIN_DBI;
+                double eirpDbm = LinkBudget.eirpDbm(radio);
 
                 // AP 근처에서 기준 전력(refPower) 측정
                 double refPower = 1.0e-20;
@@ -816,7 +816,7 @@ public class ApRecommender {
                                              int canvasW, int canvasH,
                                              double scaleMPerPx, List<Wall> walls,
                                              List<Point2D> measurePoints, Params params,
-                                             double eirpDbm,
+                                             RadioConfig radio,
                                              Set<Integer> coveredSet, double[] bestRssi,
                                              java.util.concurrent.atomic.AtomicLong dpmExp,
                                              java.util.concurrent.atomic.AtomicLong dpmPru,
@@ -834,21 +834,13 @@ public class ApRecommender {
         dpmMs .addAndGet(grid.getElapsedMs());
         dpmCnt.incrementAndGet();
 
-        // eirpDbm 은 후보 평가와 같은 값(선택한 공유기의 2.4GHz EIRP)
+        // 후보 평가와 같은 라디오 설정(선택한 공유기의 2.4GHz)·같은 식
         for (int i = 0; i < measurePoints.size(); i++) {
             Point2D mp = measurePoints.get(i);
-            double rssi = eirpDbm - grid.getPathLossDb(mp.getX(), mp.getY());
+            double rssi = LinkBudget.rssiDbm(radio, grid.getPathLossDb(mp.getX(), mp.getY()));
             bestRssi[i] = Math.max(bestRssi[i], rssi);
             if (rssi >= params.targetRssiDbm) coveredSet.add(i);
         }
-    }
-
-    /** AP 의 해당 밴드 EIRP [dBm] = 송신 전력 + 안테나 이득. 라디오가 없으면 기본값(22). */
-    private static double eirpDbm(AP ap, Band band) {
-        RadioConfig rc = ap.radios.get(band);
-        return (rc != null)
-                ? rc.txPowerDbm + rc.antennaGain
-                : RadioConfig.FIXED_TX_POWER_DBM + RadioConfig.DEFAULT_ANTENNA_GAIN_DBI;
     }
 
     // ── FDTD 신호 통계 계산 ──────────────────────────────────────────────────

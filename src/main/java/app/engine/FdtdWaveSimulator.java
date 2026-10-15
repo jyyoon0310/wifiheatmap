@@ -616,7 +616,7 @@ public class FdtdWaveSimulator {
                 int periodSteps = Math.max(1, (int) Math.round((1.0 / fEff) / dtSeconds));
                 int rampSteps = Math.max(periodSteps * SOURCE_RAMP_CYCLES, 20);
                 double phase = initialPhase(ap, band);
-                double amp = sourceAmplitudeFromEirpDbm(rc.txPowerDbm + rc.antennaGain);
+                double amp = sourceAmplitudeFromEirpDbm(LinkBudget.eirpDbm(rc));
                 sources.add(new Source(gx, gy, band, amp, omegaDt, rampSteps, phase));
             }
         }

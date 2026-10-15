@@ -168,7 +168,7 @@ public final class GoldenDump {
                         DpmPathGrid g = bandGrids.get(b);
                         if (g == null) continue;
                         double pl = g.getPathLossDb(x, y);
-                        double rssi = rc.txPowerDbm + rc.antennaGain - pl - rc.bandwidthPenaltyDb();
+                        double rssi = app.engine.LinkBudget.rssiDbm(rc, pl);
                         if (rssi > best) best = rssi;
                     }
                     if (best > strongest) strongest = best;
