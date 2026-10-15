@@ -19,10 +19,8 @@ public class RadioConfig {
         this.band = band;
         this.ssid = defaultSsid;
 
-        // 밴드별 초기값
-        if (band == Band.GHZ_24) { channel = 1;  channelWidth = 20; txPowerDbm = FIXED_TX_POWER_DBM; }
-        if (band == Band.GHZ_5)  { channel = 36; channelWidth = 80; txPowerDbm = FIXED_TX_POWER_DBM; }
-        if (band == Band.GHZ_6)  { channel = 1;  channelWidth = 80; txPowerDbm = FIXED_TX_POWER_DBM; }
+        this.channel = band.defaultChannel;
+        this.channelWidth = band.defaultChannelWidthMhz;
     }
 
     public double centerFreqGhz() {

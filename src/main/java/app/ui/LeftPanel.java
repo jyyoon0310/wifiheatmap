@@ -80,22 +80,22 @@ public class LeftPanel {
     private final TextField ssid24Field = new TextField();
     private final Spinner<Double> tx24Spinner = createDoubleSpinner(0.0, 40.0, RadioConfig.FIXED_TX_POWER_DBM, 1.0);
     private final Spinner<Double> gain24Spinner = createDoubleSpinner(0.0, 15.0, RadioConfig.DEFAULT_ANTENNA_GAIN_DBI, 0.5);
-    private final ComboBox<Integer> ch24Combo = createIntCombo(channels24());
-    private final ComboBox<Integer> bw24Combo = createIntCombo(20, 40);
+    private final ComboBox<Integer> ch24Combo = createIntCombo(Band.GHZ_24.channels().toArray(new Integer[0]));
+    private final ComboBox<Integer> bw24Combo = createIntCombo(Band.GHZ_24.channelWidthsMhz.toArray(new Integer[0]));
     private final CheckBox enabled24Check = new CheckBox("활성화");
 
     private final TextField ssid5Field = new TextField();
     private final Spinner<Double> tx5Spinner = createDoubleSpinner(0.0, 40.0, RadioConfig.FIXED_TX_POWER_DBM, 1.0);
     private final Spinner<Double> gain5Spinner = createDoubleSpinner(0.0, 15.0, RadioConfig.DEFAULT_ANTENNA_GAIN_DBI, 0.5);
-    private final ComboBox<Integer> ch5Combo = createIntCombo(channels5());
-    private final ComboBox<Integer> bw5Combo = createIntCombo(20, 40, 80, 160);
+    private final ComboBox<Integer> ch5Combo = createIntCombo(Band.GHZ_5.channels().toArray(new Integer[0]));
+    private final ComboBox<Integer> bw5Combo = createIntCombo(Band.GHZ_5.channelWidthsMhz.toArray(new Integer[0]));
     private final CheckBox enabled5Check = new CheckBox("활성화");
 
     private final TextField ssid6Field = new TextField();
     private final Spinner<Double> tx6Spinner = createDoubleSpinner(0.0, 40.0, RadioConfig.FIXED_TX_POWER_DBM, 1.0);
     private final Spinner<Double> gain6Spinner = createDoubleSpinner(0.0, 15.0, RadioConfig.DEFAULT_ANTENNA_GAIN_DBI, 0.5);
-    private final ComboBox<Integer> ch6Combo = createIntCombo(channels6());
-    private final ComboBox<Integer> bw6Combo = createIntCombo(20, 40, 80, 160, 320);
+    private final ComboBox<Integer> ch6Combo = createIntCombo(Band.GHZ_6.channels().toArray(new Integer[0]));
+    private final ComboBox<Integer> bw6Combo = createIntCombo(Band.GHZ_6.channelWidthsMhz.toArray(new Integer[0]));
     private final CheckBox enabled6Check = new CheckBox("활성화");
 
     private final Button applyApBtn = new Button("적용");
@@ -1069,26 +1069,6 @@ public class LeftPanel {
         });
     }
 
-    private static Integer[] channels24() {
-        Integer[] arr = new Integer[14];
-        for (int i = 0; i < 14; i++) arr[i] = i + 1;
-        return arr;
-    }
-
-    private static Integer[] channels5() {
-        java.util.ArrayList<Integer> list = new java.util.ArrayList<>();
-        for (int ch = 36; ch <= 64; ch += 4) list.add(ch);
-        for (int ch = 100; ch <= 144; ch += 4) list.add(ch);
-        for (int ch = 149; ch <= 177; ch += 4) list.add(ch);
-        return list.toArray(new Integer[0]);
-    }
-
-    private static Integer[] channels6() {
-        java.util.ArrayList<Integer> list = new java.util.ArrayList<>();
-        for (int ch = 1; ch <= 233; ch += 4) list.add(ch);
-        return list.toArray(new Integer[0]);
-    }
-
     private static void applyBandTabStyle(ToggleButton b, boolean selected) {
         b.setMinWidth(70);
         b.setStyle(
@@ -1212,8 +1192,8 @@ public class LeftPanel {
             ssid.clear();
             tx.getValueFactory().setValue(RadioConfig.FIXED_TX_POWER_DBM);
             gain.getValueFactory().setValue(RadioConfig.DEFAULT_ANTENNA_GAIN_DBI);
-            selectComboValue(channel, defaultChannel(band));
-            selectComboValue(bandwidth, defaultBandwidth(band));
+            selectComboValue(channel, band.defaultChannel);
+            selectComboValue(bandwidth, band.defaultChannelWidthMhz);
             enabled.setSelected(false);
             return;
         }
@@ -1234,8 +1214,8 @@ public class LeftPanel {
         rc.ssid = ssidField.getText() == null ? "" : ssidField.getText().trim();
         rc.txPowerDbm = RadioConfig.FIXED_TX_POWER_DBM;
         rc.antennaGain = spinnerValue(gainSpinner);
-        rc.channel = comboValue(getChannelCombo(band), defaultChannel(band));
-        rc.channelWidth = comboValue(getBandwidthCombo(band), defaultBandwidth(band));
+        rc.channel = comboValue(getChannelCombo(band), band.defaultChannel);
+        rc.channelWidth = comboValue(getBandwidthCombo(band), band.defaultChannelWidthMhz);
     }
 
     private static double spinnerValue(Spinner<Double> spinner) {
@@ -1310,21 +1290,6 @@ public class LeftPanel {
             case GHZ_24 -> enabled24Check;
             case GHZ_5 -> enabled5Check;
             case GHZ_6 -> enabled6Check;
-        };
-    }
-
-    private static int defaultChannel(Band band) {
-        return switch (band) {
-            case GHZ_24 -> 1;
-            case GHZ_5 -> 36;
-            case GHZ_6 -> 1;
-        };
-    }
-
-    private static int defaultBandwidth(Band band) {
-        return switch (band) {
-            case GHZ_24 -> 20;
-            case GHZ_5, GHZ_6 -> 80;
         };
     }
 
