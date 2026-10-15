@@ -52,11 +52,11 @@ public class LeftPanel {
     // 색바 순서는 좌→우 "약함→강함" — BottomBar legend와 동일 방향
     private final VBox resultCard;
     private final Label resultHeadlineLabel = new Label("—");       // 큰 %
-    private final Label resultHeadlineSubLabel = new Label("");      // "신호 양호 공간 비율"
+    private final Label resultHeadlineSubLabel = new Label("");      // "영상통화·스트리밍이 원활한 공간"
     private final Label resultCoachLabel = new Label("");            // 색바 아래 코칭 메시지
     private VBox resultHeadlineBox, resultBarBox;                     // 안내 모드에서 통째로 숨김
     private final GridPane resultBarRow = new GridPane();            // 4단계 비율 색바 (색만)
-    private final StackPane[] resultBarCells = new StackPane[4];     // 약함/주의/양호/강함
+    private final StackPane[] resultBarCells = new StackPane[4];     // 사각지대/약함/보통/강함
     private final ColumnConstraints[] resultBarCols = new ColumnConstraints[4]; // 칸별 비율(%)
     private final FlowPane resultLegend = new FlowPane(12, 4);       // 색바 아래 범례
     private final HBox[]  resultLegendItems  = new HBox[4];          // 범례 항목 (점+텍스트)
@@ -511,24 +511,18 @@ public class LeftPanel {
      * <p>레이아웃:
      * <pre>
      *   ┌ 측정 결과 ────────────────────────────────────┐
-     *   │ 36%                                          │  ← 큰 헤드라인 (양호+ 비율)
-     *   │ 신호가 양호한 공간 비율                        │
+     *   │ 36%                                          │  ← 큰 헤드라인 (강함 비율)
+     *   │ 영상통화·스트리밍이 원활한 공간                │
      *   │                                              │
      *   │ [▓▓▓▓▓▓▓▓▓░░░░░░] 비율 색바 (좌→우 약→강)     │  ← 색만 표시
-     *   │ ● 약함 46%  ● 주의 18%  ● 양호 24%  ● 강함 12%│  ← 범례 (색점+이름+%)
+     *   │ ● 사각지대 4%  ● 약함 18%  ● 보통 6%  ● 강함 72% │  ← 범례 (색점+이름+%)
      *   │                                              │
-     *   │ 신호가 약한 곳이 많습니다. 공유기를 추가하거나   │  ← 코칭 메시지 (wrap)
-     *   │ 옮겨보세요.                                   │
+     *   │ 신호가 약한 곳이 꽤 있어요. 공유기 위치를       │  ← 코칭 메시지 (wrap)
+     *   │ 옮겨 보세요.                                  │
      *   └──────────────────────────────────────────────┘
      * </pre>
      *
-     * <p>색상은 히트맵 컬러맵({@code WifiMath.rssiToColor})과 일관:
-     * <ul>
-     *   <li>약함 → 파랑 (#2D6CF6)</li>
-     *   <li>주의 → 녹색 (#2FD44A)</li>
-     *   <li>양호 → 노랑 (#F6D32D)</li>
-     *   <li>강함 → 주황 (#F0632D)</li>
-     * </ul>
+     * <p>등급 이름·색·기준은 {@link app.model.RssiLevel} 한 곳에서 온다 (히트맵·범례와 같다).</p>
      */
     private VBox buildResultCard() {
         // ── 큰 헤드라인 ─────────────────────────────────────────────
@@ -617,8 +611,8 @@ public class LeftPanel {
     /**
      * 결과 카드에 측정 수치를 표시한다. 히트맵 생성 후 호출.
      *
-     * @param coveragePercent  신호가 양호한(≥ −65 dBm) 영역 비율 (%)
-     * @param gradeFractions   [약함, 주의, 양호, 강함] 비율 (합=1.0). 좌→우(약→강) 순서.
+     * @param coveragePercent  영상통화·스트리밍이 원활한(RssiLevel.TARGET 이상) 영역 비율 (%)
+     * @param gradeFractions   [사각지대, 약함, 보통, 강함] 비율 (합=1.0). 좌→우(약→강) 순서.
      */
     public void setMeasurementResult(double coveragePercent, double[] gradeFractions) {
         // 안내 상태에서 숨겼던 요소 복원
@@ -630,16 +624,16 @@ public class LeftPanel {
         setNodeShown(resultLegend, true);
 
         resultHeadlineLabel.setText(String.format("%.0f%%", coveragePercent));
-        resultHeadlineSubLabel.setText("신호가 양호한 공간 비율");
+        resultHeadlineSubLabel.setText("영상통화·스트리밍이 원활한 공간");
 
         // 코칭 메시지 — 비율에 따라 자연어로 (색바 아래에 별도 라인으로 wrap 표시)
         String coachMsg;
         if (coveragePercent >= 80) {
-            coachMsg = "신호 분포가 좋습니다. 현재 공유기 배치로 충분합니다.";
+            coachMsg = "대부분의 공간에서 끊김 없이 쓸 수 있어요.";
         } else if (coveragePercent >= 50) {
-            coachMsg = "공간의 절반 정도만 신호가 양호합니다. 공유기 위치를 조정해 보세요.";
+            coachMsg = "신호가 약한 곳이 꽤 있어요. 공유기 위치를 옮겨 보세요.";
         } else {
-            coachMsg = "신호가 약한 곳이 많습니다. 공유기를 추가하거나 다른 위치로 옮겨 보세요.";
+            coachMsg = "신호가 약한 곳이 많아요. 공유기를 추가하거나 다른 곳에 두어 보세요.";
         }
         resultCoachLabel.setText(coachMsg);
 

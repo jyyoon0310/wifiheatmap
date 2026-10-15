@@ -1,9 +1,7 @@
 package app.dialog;
 
 import app.model.AppState;
-import app.ui.Styles;
-import app.ui.Themed;
-import javafx.scene.control.*;
+import app.ui.Sheet;
 import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 
@@ -23,67 +21,20 @@ public final class AdvancedSettingsDialog {
     private AdvancedSettingsDialog() {}
 
     public static void show(Window owner, AppState state) {
-        Dialog<Void> dlg = new Dialog<>();
-        dlg.setTitle("고급 설정 (연구·실험 모드)");
-        if (owner != null) dlg.initOwner(owner);
+        Sheet.Switch toggle = new Sheet.Switch(state.isAdvancedMode());
+        VBox content = new VBox(16,
+                Sheet.settingRow("고급 모드",
+                        "DPM 탐색 통계와 전파 흐름 세부 정보를 화면에 함께 보여 줘요.", toggle),
+                Sheet.infoBox("FDTD 파동 시뮬레이션\n"
+                        + "격자 해상도 λ/8 이상 (자동) · 시간 간격 CFL 0.9\n"
+                        + "흡수 경계(PML) 8칸 이상 · 자리 추천 정밀 검증 6,000 스텝"));
 
-        VBox root = DialogBuilder.contentBox(14);
-
-        // ── 1) 고급 모드 토글 ─────────────────────────────────────────
-        CheckBox advancedToggle = new CheckBox("고급 모드 활성화");
-        styleCheck(advancedToggle);
-        advancedToggle.setSelected(state.isAdvancedMode());
-
-        Label advHint = styledSubLabel(
-                "체크 시 상단 도구모음에 연구용 버튼(히트맵 생성·지우기 등)과\n"
-              + "솔버 제어 버튼이 나타납니다.");
-
-        // ── 2) FDTD 정보 (읽기 전용) ───────────────────────────────
-        Label fdtdLbl = styledHeader("FDTD 솔버 (읽기 전용)");
-        Label fdtdInfo = styledSubLabel(
-                "• 격자 해상도: dx = λ/8 ~ λ/15 (자동)\n"
-              + "• 시간 스텝: CFL 안전 마진 99%\n"
-              + "• PML 두께: 최소 8 셀 / target reflection 10⁻⁸\n"
-              + "• AP 추천 검증: 6,000 step  ·  실시간 오버레이: 가변");
-
-        // ── 조립 ────────────────────────────────────────────────
-        root.getChildren().addAll(
-                advancedToggle, advHint,
-                new Separator(),
-                fdtdLbl, fdtdInfo
-        );
-
-        DialogBuilder.applyStandardLayout(dlg, root, ButtonType.APPLY, ButtonType.CANCEL);
-
-        dlg.setResultConverter(bt -> {
-            if (bt == ButtonType.APPLY) {
-                state.setAdvancedMode(advancedToggle.isSelected());
-            }
-            return null;
-        });
-
-        dlg.showAndWait();
+        String choice = Sheet.show(owner, "고급 설정", "연구·실험용 정보를 더 보여 줄 수 있어요.",
+                content, 420, true,
+                Sheet.Action.secondary("cancel", "취소"),
+                Sheet.Action.primary("apply", "적용"));
+        if ("apply".equals(choice)) {
+            state.setAdvancedMode(toggle.isOn());
+        }
     }
-
-    // ── 헬퍼 ────────────────────────────────────────────────────────────
-    private static Label styledHeader(String text) {
-        return Themed.bind(new Label(text),
-                () -> "-fx-text-fill:" + Styles.textMain() + ";"
-                    + "-fx-font-size:13px;"
-                    + "-fx-font-weight:bold;"
-                    + "-fx-font-family:" + Styles.FONT_STACK + ";");
-    }
-
-    private static Label styledSubLabel(String text) {
-        return Themed.subLabel(text);
-    }
-
-    private static void styleCheck(CheckBox cb) {
-        Themed.bind(cb,
-                () -> "-fx-text-fill:" + Styles.textMain() + ";"
-                    + "-fx-font-size:13px;"
-                    + "-fx-font-weight:600;"
-                    + "-fx-font-family:" + Styles.FONT_STACK + ";");
-    }
-
 }

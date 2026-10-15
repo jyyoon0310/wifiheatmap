@@ -96,7 +96,7 @@ src/main/java/app/
 
 ### UI 테마 (Liquid Glass)
 - `Styles.java`: `isDark()`, `setDark()`, `addThemeListener()`
-- 모든 다이얼로그에 `Styles.styleAlert()` / `Styles.styleDialog()` 적용 필수
+- 모든 팝업은 `ui/Sheet` 사용 (notice / confirm / choose / show / createStage) — OS 기본 Alert·Dialog 쓰지 않음
 - 컴포넌트 빌더: `bgPanel()`, `accentBtn()`, `comboBase()` 등
 
 ## 히트맵 모델
@@ -121,12 +121,12 @@ src/main/java/app/
 - `RadioConfig.FIXED_TX_POWER_DBM = 17.0` (기본 AP 송신전력)
 - `RadioConfig.DEFAULT_ANTENNA_GAIN_DBI = 5.0` (기본 안테나 이득)
 - EIRP = 22.0 dBm (17 + 5)
-- 타겟 RSSI: -65 dBm (AP 추천 기본값)
+- 신호 등급: MetaGeek 기준 강함 ≥ −67 / 보통 ≥ −70 / 약함 ≥ −80 / 사각지대 (`RssiLevel`), AP 추천 목표 = `RssiLevel.TARGET` (−67 dBm)
 - FDTD: λ/15~λ/20 해상도, CFL 0.90, 6000 스텝
 
 ## 작업 규칙
 - 새 컴포넌트는 위 패키지 구조 준수
 - engine/ 패키지에 UI 코드 금지
-- 모든 다이얼로그/팝업에 `Styles.styleAlert()` / `Styles.styleDialog()` 적용
+- 모든 팝업은 `ui/Sheet` 로 만든다
 - 한국어 주석 허용
 - 컴파일 확인: `./gradlew compileJava`

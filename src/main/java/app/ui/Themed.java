@@ -1,7 +1,6 @@
 package app.ui;
 
 import javafx.scene.Node;
-import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 
 import java.util.function.Supplier;
@@ -73,30 +72,12 @@ public final class Themed {
                     + "-fx-font-family:" + Styles.FONT_STACK + ";");
     }
 
-    /** 다이얼로그 헤더 — textMain + FONT_SIZE_HEADING + bold. */
-    public static Label headingLabel(String text) {
-        return styledLabel(text,
-                () -> "-fx-text-fill:" + Styles.textMain() + ";"
-                    + "-fx-font-size:" + Styles.FONT_SIZE_HEADING + "px;"
-                    + "-fx-font-weight:bold;"
-                    + "-fx-font-family:" + Styles.FONT_STACK + ";");
-    }
-
     /** HUD/디버그용 작은 라벨 — textSub + FONT_SIZE_TINY. */
     public static Label tinyLabel(String text) {
         return styledLabel(text,
                 () -> "-fx-text-fill:" + Styles.textSub() + ";"
                     + "-fx-font-size:" + Styles.FONT_SIZE_TINY + "px;"
                     + "-fx-font-family:" + Styles.FONT_STACK + ";");
-    }
-
-    /** 체크박스 — textSub + FONT_SIZE_SUB ("다음부터 안 보기" 같은 작은 옵션용). */
-    public static CheckBox subCheckBox(String text) {
-        CheckBox c = new CheckBox(text);
-        bind(c, () -> "-fx-text-fill:" + Styles.textSub() + ";"
-                    + "-fx-font-size:" + Styles.FONT_SIZE_SUB + "px;"
-                    + "-fx-font-family:" + Styles.FONT_STACK + ";");
-        return c;
     }
 
     // ── 임의 노드 — fallback ──────────────────────────────────────────────

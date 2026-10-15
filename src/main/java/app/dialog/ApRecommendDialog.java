@@ -2,20 +2,27 @@ package app.dialog;
 
 import app.engine.ApRecommender;
 import app.model.Band;
+import app.model.RssiLevel;
 import app.model.Wall;
-import app.ui.Styles;
+import app.ui.Sheet;
+import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Point2D;
 import javafx.geometry.Pos;
+import javafx.scene.Cursor;
+import javafx.scene.Node;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
-import javafx.scene.control.*;
+import javafx.scene.control.Button;
+import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.image.Image;
 import javafx.scene.image.PixelWriter;
 import javafx.scene.image.WritableImage;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
+import javafx.stage.Stage;
 import javafx.stage.Window;
 
 import java.util.ArrayList;
@@ -23,20 +30,18 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * AP 위치 추천 다이얼로그 — Flood Fill 방식.
+ * 공유기 자리 추천 창 — Flood Fill 로 방을 고르고, 대수·확인 방식을 정해 추천을 받는다.
  *
- * 흐름:
- *   1) 도면 위의 "우리 집" 내부를 클릭
- *      → 벽 경계로 Flood Fill → 집 내부만 파란색 오버레이
- *   2) AP 개수 선택 + 빠른/정밀 모드
- *   3) 추천 실행 → 결과 미리보기 → 적용
+ * <p>흐름: ① 도면에서 방 누르기 → ② 공유기 대수 → ③ 빠르게/꼼꼼하게 → [자리 찾기] → 결과 확인 → [적용하기]</p>
+ * <p>모양은 {@link Sheet} (어두운 배경 위 흰 카드, 굵은 제목, 꽉 찬 둥근 버튼).</p>
  */
 public class ApRecommendDialog {
 
-    private static final double PREVIEW_MAX_W = 620;
-    private static final double PREVIEW_MAX_H = 440;
+    private static final double PREVIEW_MAX_W = 600;
+    private static final double PREVIEW_MAX_H = 470;
     private static final int FLOOD_CELL_SIZE = 4;  // 4px/cell
     private static final int FLOOD_WALL_THICK = 2;  // 벽 두께 (셀)
+    private static final double PANEL_W = 300;
 
     public static void show(Window owner, Image floorplanImage,
                             int canvasW, int canvasH,
@@ -46,309 +51,395 @@ public class ApRecommendDialog {
                             Consumer<List<Point2D>> onApply) {
         if (floorplanImage == null) return;
 
-        Dialog<Void> dlg = new Dialog<>();
-        dlg.setTitle("공유기 자리 추천");
-        if (owner != null) dlg.initOwner(owner);
-        dlg.getDialogPane().setPrefSize(880, 640);
-
-        // ── 캔버스 ───────────────────────────────────────────────────────
-        double scaleX = Math.min(1.0, PREVIEW_MAX_W / canvasW);
-        double scaleY = Math.min(1.0, PREVIEW_MAX_H / canvasH);
-        double scale  = Math.min(scaleX, scaleY);
+        // ── 도면 미리보기 ─────────────────────────────────────────────────
+        double scale = Math.min(Math.min(1.0, PREVIEW_MAX_W / canvasW), PREVIEW_MAX_H / canvasH);
         int pvW = (int) Math.round(canvasW * scale);
         int pvH = (int) Math.round(canvasH * scale);
-
         Canvas canvas = new Canvas(pvW, pvH);
-        canvas.setCursor(javafx.scene.Cursor.CROSSHAIR);
-        StackPane previewPane = new StackPane(canvas);
-        Runnable stylePreview = () -> previewPane.setStyle(
-                "-fx-background-color:" + Styles.bgRow() + ";" +
-                "-fx-background-radius:12;");
-        stylePreview.run();
-        Styles.addThemeListener(stylePreview);
-        previewPane.setPadding(new Insets(6));
+        canvas.setCursor(Cursor.CROSSHAIR);
+        StackPane preview = new StackPane(canvas);
+        preview.setPadding(new Insets(12));
+        preview.setStyle("-fx-background-color:" + Sheet.fill() + ";-fx-background-radius:20;");
+        preview.setMinSize(pvW + 24, pvH + 24);
 
         // ── 상태 ─────────────────────────────────────────────────────────
         ApRecommender.Result[] resultRef = {null};
-
-        // 누적 마스크 (복수 클릭으로 합산)
         int maskW = (canvasW + FLOOD_CELL_SIZE - 1) / FLOOD_CELL_SIZE;
         int maskH = (canvasH + FLOOD_CELL_SIZE - 1) / FLOOD_CELL_SIZE;
         boolean[] combinedMask = new boolean[maskW * maskH];
         int[] totalFilledCells = {0};
         int[] clickCount = {0};
-
-        // 오버레이 이미지 (채워진 영역 표시용)
         WritableImage[] overlayRef = {null};
+        int[] apCount = {2};
+        boolean[] precise = {false};
 
-        // ── 설정 패널 ────────────────────────────────────────────────────
-        Label areaTitle = sectionLabel("① 방을 클릭하여 영역 추가");
-        Label areaHint = subLabel("거실, 침실 등 Wi-Fi가 필요한 방을\n하나씩 클릭하세요. 클릭할 때마다\n영역이 추가됩니다.");
-        Label areaStatus = subLabel("클릭 대기 중...");
+        // ── ① 방 고르기 ──────────────────────────────────────────────────
+        Label areaStatus = Sheet.text("도면에서 와이파이가 필요한 방을 눌러 주세요.", 14, Sheet.body(), "400");
+        Button resetArea = textButton("다시 고르기");
+        resetArea.setVisible(false);
+        HBox areaRow = new HBox(8, areaStatus, spacer(), resetArea);
+        areaRow.setAlignment(Pos.CENTER_LEFT);
 
-        Button resetAreaBtn = new Button("영역 초기화");
-        Styles.styleFlatButton(resetAreaBtn);
-
-        // AP 개수
-        Label countTitle = sectionLabel("② 공유기 대수");
+        // ── ② 대수 ───────────────────────────────────────────────────────
         HBox countRow = new HBox(6);
-        countRow.setAlignment(Pos.CENTER_LEFT);
-        ToggleGroup countGroup = new ToggleGroup();
-        ToggleButton[] countBtns = new ToggleButton[5];
-        for (int i = 0; i < 5; i++) {
-            ToggleButton tb = new ToggleButton(String.valueOf(i + 1));
-            tb.setToggleGroup(countGroup);
-            tb.setUserData(i + 1);
-            tb.setPrefWidth(38); tb.setPrefHeight(34);
-            Styles.styleToggle(tb);
-            countBtns[i] = tb;
+        List<Button> countChips = new ArrayList<>();
+        for (int i = 1; i <= 5; i++) {
+            final int n = i;
+            Button chip = new Button(n + "대");
+            chip.setCursor(Cursor.HAND);
+            chip.setPrefHeight(40);
+            chip.setMaxWidth(Double.MAX_VALUE);
+            HBox.setHgrow(chip, Priority.ALWAYS);
+            chip.setOnAction(e -> { apCount[0] = n; refreshChips(countChips, n); });
+            countChips.add(chip);
         }
-        countBtns[1].setSelected(true);
-        countRow.getChildren().addAll(countBtns);
+        refreshChips(countChips, apCount[0]);
+        countRow.getChildren().addAll(countChips);
 
-        // 정밀도
-        Label modeTitle = sectionLabel("③ 추천 방식");
-        ToggleGroup modeGroup = new ToggleGroup();
-        ToggleButton fastBtn = new ToggleButton("빠르게");
-        app.ui.Icons.attach(fastBtn, app.ui.Icons.BOLT, 13);
-        fastBtn.setToggleGroup(modeGroup); fastBtn.setUserData("fast");
-        Styles.styleToggle(fastBtn);
-        ToggleButton preciseBtn = new ToggleButton("정밀");
-        app.ui.Icons.attach(preciseBtn, app.ui.Icons.SEARCH, 13);
-        preciseBtn.setToggleGroup(modeGroup); preciseBtn.setUserData("precise");
-        Styles.styleToggle(preciseBtn);
-        fastBtn.setSelected(true);
-        HBox modeRow = new HBox(6, fastBtn, preciseBtn);
-        modeRow.setAlignment(Pos.CENTER_LEFT);
-        Label modeHint = subLabel("정밀 모드는 파동 시뮬레이션으로\n벽 반사/간섭까지 고려합니다.");
+        // ── ③ 확인 방식 ──────────────────────────────────────────────────
+        VBox fastCard = modeCard("빠르게", "몇 초 · 경로 손실 모델로 계산");
+        VBox preciseCard = modeCard("꼼꼼하게", "2~3분 · 벽 반사·간섭까지 파동으로 확인");
+        Runnable refreshModes = () -> {
+            styleModeCard(fastCard, !precise[0]);
+            styleModeCard(preciseCard, precise[0]);
+        };
+        fastCard.setOnMouseClicked(e -> { precise[0] = false; refreshModes.run(); });
+        preciseCard.setOnMouseClicked(e -> { precise[0] = true; refreshModes.run(); });
+        refreshModes.run();
+        HBox modeRow = new HBox(8, fastCard, preciseCard);
+        HBox.setHgrow(fastCard, Priority.ALWAYS);
+        HBox.setHgrow(preciseCard, Priority.ALWAYS);
 
-        // 실행
-        Button runBtn = new Button("추천 실행");
-        Styles.styleAccentButton(runBtn);
-        runBtn.setMaxWidth(Double.MAX_VALUE); runBtn.setPrefHeight(38);
+        // ── 실행 · 진행 ─────────────────────────────────────────────────
+        Button runBtn = Sheet.primaryButton("자리 찾기");
+        runBtn.setMaxWidth(Double.MAX_VALUE);
         runBtn.setDisable(true);
+        ProgressLine progressLine = new ProgressLine();
+        Label statusLbl = Sheet.text("", 13, Sheet.caption(), "400");
+        VBox runningBox = new VBox(8, progressLine, statusLbl);
+        runningBox.setVisible(false);
+        runningBox.setManaged(false);
 
-        ProgressBar progress = new ProgressBar(0);
-        progress.setMaxWidth(Double.MAX_VALUE); progress.setPrefHeight(5);
-        // 실행 중에만 보인다 — 실행 전부터 빈 막대가 "추천 실행" 아래 두 줄짜리 선처럼 보였다
-        progress.visibleProperty().bind(progress.progressProperty().lessThan(0));
-        progress.managedProperty().bind(progress.visibleProperty());
-        Runnable styleProg = () -> progress.setStyle("-fx-accent:" + Styles.accent() + ";");
-        styleProg.run(); Styles.addThemeListener(styleProg);
+        // ── 결과 ─────────────────────────────────────────────────────────
+        VBox resultBox = new VBox(10);
+        resultBox.setPadding(new Insets(18));
+        resultBox.setStyle("-fx-background-color:" + Sheet.fill() + ";-fx-background-radius:18;");
+        resultBox.setVisible(false);
+        resultBox.setManaged(false);
 
-        Label statusLbl = subLabel("");
-        Label resultTitle = sectionLabel("");
-        Label resultDetail = subLabel("");
+        VBox panel = new VBox(
+                section("와이파이가 필요한 방", areaRow),
+                section("공유기 몇 대를 둘까요?", countRow),
+                section("어떻게 확인할까요?", modeRow),
+                gap(4), runBtn, gap(10), runningBox, resultBox);
+        panel.setPrefWidth(PANEL_W);
+        panel.setMaxWidth(PANEL_W);
+        ScrollPane panelScroll = new ScrollPane(panel);
+        panelScroll.setFitToWidth(true);
+        panelScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        panelScroll.setStyle("-fx-background:transparent;-fx-background-color:transparent;-fx-padding:0;");
+        panelScroll.setPrefViewportWidth(PANEL_W + 8);
+        panelScroll.setPrefViewportHeight(pvH + 24);
 
-        // 패널 조립
-        VBox paramPanel = new VBox(10,
-                areaTitle, areaHint, areaStatus, resetAreaBtn,
-                styledSeparator(),
-                countTitle, countRow,
-                styledSeparator(),
-                modeTitle, modeRow, modeHint,
-                styledSeparator(),
-                runBtn, progress, statusLbl,
-                styledSeparator(),
-                resultTitle, resultDetail
-        );
-        paramPanel.setPadding(new Insets(14));
-        paramPanel.setPrefWidth(240); paramPanel.setMaxWidth(240);
-        Runnable stylePanel = () -> paramPanel.setStyle(
-                "-fx-background-color:" + Styles.bgPanel() + ";" +
-                "-fx-background-radius:12;" +
-                "-fx-border-color:" + Styles.borderSoft() + ";" +
-                "-fx-border-radius:12;-fx-border-width:0.5;");
-        stylePanel.run(); Styles.addThemeListener(stylePanel);
+        HBox body = new HBox(20, preview, panelScroll);
 
-        // ── 렌더 ─────────────────────────────────────────────────────────
-        Runnable redraw = () -> drawPreview(canvas, floorplanImage, pvW, pvH,
-                overlayRef[0],
-                resultRef[0] != null ? resultRef[0].positions() : List.of(),
-                scale);
+        // ── 하단 버튼 ───────────────────────────────────────────────────
+        Button closeBtn = Sheet.secondaryButton("닫기");
+        Button applyBtn = Sheet.primaryButton("적용하기");
+        applyBtn.setDisable(true);
+        closeBtn.setPrefWidth(140);
+        applyBtn.setPrefWidth(180);
+        HBox footer = new HBox(8, spacer(), closeBtn, applyBtn);
+        VBox.setMargin(footer, new Insets(20, 0, 0, 0));
+
+        VBox card = Sheet.card("공유기 자리 추천",
+                "와이파이가 필요한 방을 고르면, 공유기를 어디에 두면 좋을지 알려 드려요.", body, pvW + 24 + 20 + PANEL_W + 56);
+        card.getChildren().add(footer);
+        Stage stage = Sheet.createStage(owner, card, false);
+
+        // ── 그리기 ───────────────────────────────────────────────────────
+        Runnable redraw = () -> drawPreview(canvas, floorplanImage, pvW, pvH, overlayRef[0],
+                resultRef[0] != null ? resultRef[0].positions() : List.of(), scale);
         redraw.run();
 
-        // ── 클릭 → Flood Fill (복수 선택) ────────────────────────────────
-        List<Wall> walls = new ArrayList<>(env.getWalls());
+        Runnable clearResult = () -> {
+            resultRef[0] = null;
+            resultBox.setVisible(false);
+            resultBox.setManaged(false);
+            applyBtn.setDisable(true);
+            runBtn.setText("자리 찾기");
+        };
 
+        // ── 방 클릭 → Flood Fill (여러 곳 누적) ─────────────────────────
+        List<Wall> walls = new ArrayList<>(env.getWalls());
         canvas.setOnMouseClicked(e -> {
             int seedX = (int) (e.getX() / scale);
             int seedY = (int) (e.getY() / scale);
-
-            // 이미 채워진 영역을 클릭하면 무시
-            int checkMx = seedX / FLOOD_CELL_SIZE;
-            int checkMy = seedY / FLOOD_CELL_SIZE;
-            if (checkMx >= 0 && checkMx < maskW && checkMy >= 0 && checkMy < maskH
-                    && combinedMask[checkMy * maskW + checkMx]) {
-                return; // 이미 선택된 영역
-            }
-
-            areaStatus.setText("영역 감지 중...");
+            int mx = seedX / FLOOD_CELL_SIZE, my = seedY / FLOOD_CELL_SIZE;
+            if (mx >= 0 && mx < maskW && my >= 0 && my < maskH && combinedMask[my * maskW + mx]) return;
 
             ApRecommender.FloodResult fr = ApRecommender.floodFill(
-                    walls, canvasW, canvasH,
-                    FLOOD_CELL_SIZE, seedX, seedY, FLOOD_WALL_THICK);
-
+                    walls, canvasW, canvasH, FLOOD_CELL_SIZE, seedX, seedY, FLOOD_WALL_THICK);
             if (fr.filledCells() < 10) {
-                areaStatus.setText("영역이 너무 작습니다.\n다른 곳을 클릭하세요.");
+                areaStatus.setText("여기는 너무 좁아요. 방 안쪽을 눌러 주세요.");
                 return;
             }
-
-            // 새 영역을 누적 마스크에 합산 (OR)
             boolean[] newMask = fr.mask();
             int added = 0;
             for (int i = 0; i < combinedMask.length && i < newMask.length; i++) {
-                if (newMask[i] && !combinedMask[i]) {
-                    combinedMask[i] = true;
-                    added++;
-                }
+                if (newMask[i] && !combinedMask[i]) { combinedMask[i] = true; added++; }
             }
             totalFilledCells[0] += added;
             clickCount[0]++;
-
-            // 누적 마스크로 오버레이 재생성
-            ApRecommender.FloodResult combined = new ApRecommender.FloodResult(
-                    combinedMask, maskW, maskH, totalFilledCells[0]);
-            overlayRef[0] = buildOverlayImage(combined, pvW, pvH, FLOOD_CELL_SIZE, scale);
-
-            // 면적
+            overlayRef[0] = buildOverlayImage(new ApRecommender.FloodResult(
+                    combinedMask, maskW, maskH, totalFilledCells[0]), pvW, pvH, FLOOD_CELL_SIZE, scale);
             double cellM = FLOOD_CELL_SIZE * env.getScaleMPerPx();
-            double areaM2 = totalFilledCells[0] * cellM * cellM;
-            areaStatus.setText(String.format("✓ %d개 영역 선택 (약 %.0f m²)",
-                    clickCount[0], areaM2));
-
+            areaStatus.setText(String.format("%d곳 선택 · 약 %.0f㎡", clickCount[0],
+                    totalFilledCells[0] * cellM * cellM));
+            resetArea.setVisible(true);
             runBtn.setDisable(false);
-            resultRef[0] = null;
-            resultTitle.setText(""); resultDetail.setText("");
+            clearResult.run();
             redraw.run();
         });
 
-        resetAreaBtn.setOnAction(e -> {
+        resetArea.setOnAction(e -> {
             java.util.Arrays.fill(combinedMask, false);
             totalFilledCells[0] = 0;
             clickCount[0] = 0;
-            overlayRef[0] = null; resultRef[0] = null;
+            overlayRef[0] = null;
+            areaStatus.setText("도면에서 와이파이가 필요한 방을 눌러 주세요.");
+            resetArea.setVisible(false);
             runBtn.setDisable(true);
-            areaStatus.setText("클릭 대기 중...");
-            resultTitle.setText(""); resultDetail.setText("");
-            statusLbl.setText("");
-            progress.setProgress(0);
+            clearResult.run();
             redraw.run();
         });
 
-        // ── 실행 로직 ────────────────────────────────────────────────────
+        // ── 실행 ─────────────────────────────────────────────────────────
         Task<?>[] taskRef = {null};
-
         runBtn.setOnAction(e -> {
             if (taskRef[0] != null && taskRef[0].isRunning()) {
-                taskRef[0].cancel(); runBtn.setText("추천 실행"); return;
+                taskRef[0].cancel();
+                return;
             }
-
             if (totalFilledCells[0] < 10) return;
 
-            Toggle selCount = countGroup.getSelectedToggle();
-            int apCount = selCount != null ? (int) selCount.getUserData() : 2;
-            Toggle selMode = modeGroup.getSelectedToggle();
-            boolean precise = selMode != null && "precise".equals(selMode.getUserData());
-
-            // 누적 마스크 복사 (스레드 안전)
             boolean[] maskCopy = java.util.Arrays.copyOf(combinedMask, combinedMask.length);
-
             ApRecommender.Params params = new ApRecommender.Params(
-                    apCount, app.model.RssiLevel.GOOD.minDbm,  // 목표: 전 구역 "양호" 이상
-                    precise ? 20 : 30, precise ? 12 : 20,
-                    precise, 6000, Band.GHZ_5,
+                    apCount[0], RssiLevel.TARGET.minDbm,  // 목표: 고른 방 전부 영상통화·스트리밍 수준
+                    precise[0] ? 20 : 30, precise[0] ? 12 : 20,
+                    precise[0], 6000, Band.GHZ_5,
                     maskCopy, maskW, maskH, FLOOD_CELL_SIZE,
-                    true,    // useDpmEvaluation — 후보 평가 시 DPM 사용 (격자 기반 DPM)
-                    true,    // dpmGreedyEnabled — 가지치기 ON (메모리 효율)
-                    150.0,   // pruningThresholdDb — 표준 임계값
-                    preset   // 선택한 공유기 스펙으로 평가 (EIRP)
-            );
+                    true, true, 150.0, preset);
 
-            runBtn.setText("중지");
-            progress.setProgress(-1);
-            resultTitle.setText(""); resultDetail.setText("");
+            clearResult.run();
+            runBtn.setText("그만하기");
+            progressLine.set(0);
+            statusLbl.setText("준비하는 중");
+            runningBox.setVisible(true);
+            runningBox.setManaged(true);
 
             Task<ApRecommender.Result> task = new Task<>() {
                 @Override protected ApRecommender.Result call() {
+                    String[] step = {""};
+                    double[] pct = {0};
+                    Runnable show = () -> statusLbl.setText(step[0] + " · " + Math.round(pct[0] * 100) + "%");
                     return ApRecommender.recommend(env, canvasW, canvasH, params,
-                            msg -> javafx.application.Platform.runLater(() -> statusLbl.setText(msg)));
+                            msg -> Platform.runLater(() -> { step[0] = msg; show.run(); }),
+                            v -> Platform.runLater(() -> { pct[0] = v; progressLine.set(v); show.run(); }));
                 }
             };
-
             task.setOnSucceeded(ev -> {
+                runningBox.setVisible(false);
+                runningBox.setManaged(false);
                 resultRef[0] = task.getValue();
-                runBtn.setText("다시 실행");
-                progress.setProgress(1.0);
-                ApRecommender.Result r = resultRef[0];
-                resultTitle.setText("추천 결과");
-                statusLbl.setText("");  // "완료! 커버율 …" 이 아래 요약과 중복되므로 비운다
-                StringBuilder sb = new StringBuilder();
-                sb.append(r.summary()).append("\n\n");
-                // 위치는 픽셀 좌표 대신 도면 미리보기의 번호 표시로 보여 준다
-                sb.append(String.format("도면에 표시된 공유기 %d대 위치를 확인하고 [적용]을 누르세요.",
-                        r.positions().size()));
-                if (state.isAdvancedMode()) {
-                    long ex = r.dpmTotalExpanded(), pr = r.dpmTotalPruned();
-                    sb.append(String.format("%n%n[DPM A*] 호출 %d · expanded %,d · pruned %,d (%.1f%%) · %,d ms",
-                            r.dpmCandidateCount(), ex, pr,
-                            (ex + pr) > 0 ? 100.0 * pr / (ex + pr) : 0.0, r.dpmTotalElapsedMs()));
-                }
-                resultDetail.setText(sb.toString().trim());
+                fillResult(resultBox, resultRef[0], state != null && state.isAdvancedMode());
+                resultBox.setVisible(true);
+                resultBox.setManaged(true);
+                runBtn.setText("다시 찾기");
+                applyBtn.setDisable(resultRef[0].positions().isEmpty());
                 redraw.run();
             });
             task.setOnFailed(ev -> {
-                runBtn.setText("추천 실행"); progress.setProgress(0);
+                runBtn.setText("자리 찾기");
                 Throwable ex = task.getException();
-                statusLbl.setText("오류: " + (ex != null ? ex.getMessage() : "알 수 없음"));
+                statusLbl.setText("문제가 생겼어요: " + (ex != null ? ex.getMessage() : "알 수 없는 오류"));
             });
             task.setOnCancelled(ev -> {
-                runBtn.setText("추천 실행"); progress.setProgress(0);
-                statusLbl.setText("취소됨");
+                runBtn.setText("자리 찾기");
+                runningBox.setVisible(false);
+                runningBox.setManaged(false);
             });
-
             taskRef[0] = task;
-            Thread t = new Thread(task, "ap-recommender"); t.setDaemon(true); t.start();
+            Thread t = new Thread(task, "ap-recommender");
+            t.setDaemon(true);
+            t.start();
         });
 
-        // ── 레이아웃 ─────────────────────────────────────────────────────
-        VBox leftBox = new VBox(8, previewPane);
-        leftBox.setAlignment(Pos.TOP_CENTER);
-        VBox.setVgrow(previewPane, Priority.ALWAYS);
-        // 오른쪽 설정 패널은 스크롤 영역으로 — 안내문이 제 높이를 다 차지하고, 추천 후 결과 요약이
-        // 여러 줄 붙으면 고정 크기 창에서 패널이 아래 [닫기/적용] 버튼을 덮었다.
-        ScrollPane paramScroll = new ScrollPane(paramPanel);
-        paramScroll.setFitToWidth(true);
-        paramScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        paramScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        paramScroll.setMinWidth(252);
-        paramScroll.setPrefWidth(252);
-        paramScroll.setStyle("-fx-background:transparent;-fx-background-color:transparent;");
-        HBox content = new HBox(14, leftBox, paramScroll);
-        HBox.setHgrow(leftBox, Priority.ALWAYS);
-        content.setPadding(new Insets(14));
-        content.setStyle("-fx-background-color:transparent;");
-
-        dlg.getDialogPane().setContent(content);
-        ButtonType applyBtn = new ButtonType("적용", ButtonBar.ButtonData.OK_DONE);
-        ButtonType closeBtn = new ButtonType("닫기", ButtonBar.ButtonData.CANCEL_CLOSE);
-        dlg.getDialogPane().getButtonTypes().addAll(applyBtn, closeBtn);
-        Styles.styleDialogPane(dlg.getDialogPane());
-
-        dlg.setResultConverter(bt -> {
-            if (bt == applyBtn) {
-                // 선택한 사용 공간 마스크를 공용 상태에 저장 → 측정 결과가 이 영역으로 스코프됨
-                if (state != null && totalFilledCells[0] > 0) {
-                    state.setCoverageMask(
-                            java.util.Arrays.copyOf(combinedMask, combinedMask.length),
-                            maskW, maskH, FLOOD_CELL_SIZE);
-                }
-                if (resultRef[0] != null && onApply != null)
-                    onApply.accept(resultRef[0].positions());
+        closeBtn.setOnAction(e -> {
+            if (taskRef[0] != null && taskRef[0].isRunning()) taskRef[0].cancel();
+            stage.close();
+        });
+        applyBtn.setOnAction(e -> {
+            // 고른 방 마스크를 공용 상태에 저장 → 결과 카드가 이 영역 기준으로 계산된다
+            if (state != null && totalFilledCells[0] > 0) {
+                state.setCoverageMask(java.util.Arrays.copyOf(combinedMask, combinedMask.length),
+                        maskW, maskH, FLOOD_CELL_SIZE);
             }
-            return null;
+            stage.close();
+            if (resultRef[0] != null && onApply != null) onApply.accept(resultRef[0].positions());
         });
-        dlg.showAndWait();
+
+        stage.showAndWait();
+    }
+
+    // ── 결과 카드 ─────────────────────────────────────────────────────────
+    private static void fillResult(VBox box, ApRecommender.Result r, boolean advanced) {
+        box.getChildren().clear();
+        ApRecommender.SignalStats m = r.mapStats();
+        if (r.positions().isEmpty() || m == null || m.totalPoints() == 0) {
+            box.getChildren().add(Sheet.text(r.summary(), 14, Sheet.body(), "400"));
+            return;
+        }
+        double cover = 100.0 * m.strongCount() / m.totalPoints();
+        Label big = Sheet.text(String.format("%.0f%%", cover), 34, Sheet.title(), "700");
+        Label bigCap = Sheet.text(String.format("고른 방 중 영상통화·스트리밍이 원활한 곳 (%.0f dBm 이상)",
+                RssiLevel.TARGET.minDbm), 13, Sheet.caption(), "400");
+        box.getChildren().addAll(Sheet.text("추천 결과", 14, Sheet.body(), "700"), big, bigCap,
+                levelBar(m), levelLegend(m));
+
+        List<String> lines = new ArrayList<>();
+        lines.add(String.format("평균 %.0f dBm · 가장 약한 곳 %.0f dBm", m.avgRssi(), m.minRssi()));
+        if (r.fdtdCoveragePercent() >= 0) {
+            lines.add(String.format("파동 시뮬레이션으로 다시 확인한 결과 %.0f%%", r.fdtdCoveragePercent()));
+        }
+        if (r.apsForFullCoverage() > 0 && r.apsForFullCoverage() < r.positions().size()) {
+            lines.add(String.format("공유기 %d대만으로도 충분해요. 나머지는 약한 곳을 보강하는 자리예요.",
+                    r.apsForFullCoverage()));
+        }
+        lines.add("도면의 번호 자리를 확인하고 [적용하기]를 눌러 주세요.");
+        for (String l : lines) box.getChildren().add(Sheet.text(l, 13, Sheet.body(), "400"));
+        if (advanced) {
+            long ex = r.dpmTotalExpanded(), pr = r.dpmTotalPruned();
+            box.getChildren().add(Sheet.text(String.format("[DPM] 호출 %d · expanded %,d · pruned %,d (%.1f%%) · %,d ms",
+                    r.dpmCandidateCount(), ex, pr, (ex + pr) > 0 ? 100.0 * pr / (ex + pr) : 0.0,
+                    r.dpmTotalElapsedMs()), 11, Sheet.caption(), "400"));
+        }
+    }
+
+    /** 등급 비율 막대 — 강함부터 사각지대까지 한 줄. */
+    private static Node levelBar(ApRecommender.SignalStats m) {
+        HBox bar = new HBox(2);
+        bar.setPrefHeight(10);
+        bar.setMinHeight(10);
+        int[] counts = {m.strongCount(), m.goodCount(), m.weakCount(), m.deadCount()};
+        RssiLevel[] lv = {RssiLevel.STRONG, RssiLevel.GOOD, RssiLevel.WEAK, RssiLevel.DEAD};
+        for (int i = 0; i < 4; i++) {
+            if (counts[i] == 0) continue;
+            Region seg = new Region();
+            seg.setStyle("-fx-background-color:" + lv[i].hex + ";-fx-background-radius:5;");
+            seg.setPrefWidth(1000.0 * counts[i] / m.totalPoints());
+            seg.setMinWidth(6);
+            HBox.setHgrow(seg, Priority.ALWAYS);
+            bar.getChildren().add(seg);
+        }
+        VBox.setMargin(bar, new Insets(6, 0, 0, 0));
+        return bar;
+    }
+
+    private static Node levelLegend(ApRecommender.SignalStats m) {
+        FlowPane legend = new FlowPane(12, 4);
+        int[] counts = {m.strongCount(), m.goodCount(), m.weakCount(), m.deadCount()};
+        RssiLevel[] lv = {RssiLevel.STRONG, RssiLevel.GOOD, RssiLevel.WEAK, RssiLevel.DEAD};
+        for (int i = 0; i < 4; i++) {
+            Region dot = new Region();
+            dot.setMinSize(8, 8);
+            dot.setMaxSize(8, 8);
+            dot.setStyle("-fx-background-color:" + lv[i].hex + ";-fx-background-radius:4;");
+            Label l = Sheet.text(String.format("%s %.0f%%", lv[i].label, 100.0 * counts[i] / m.totalPoints()),
+                    12, Sheet.caption(), "400");
+            HBox item = new HBox(5, dot, l);
+            item.setAlignment(Pos.CENTER_LEFT);
+            legend.getChildren().add(item);
+        }
+        return legend;
+    }
+
+    // ── 부품 ─────────────────────────────────────────────────────────────
+
+    /** 진행 막대 — 둥근 회색 트랙 위 파란 채움 (기본 ProgressBar 는 얇은 선처럼 보였다). */
+    private static final class ProgressLine extends StackPane {
+        private final Region fillBar = new Region();
+        ProgressLine() {
+            Region track = new Region();
+            track.setStyle("-fx-background-color:" + Sheet.line() + ";-fx-background-radius:4;");
+            fillBar.setStyle("-fx-background-color:" + Sheet.BLUE + ";-fx-background-radius:4;");
+            fillBar.setMaxWidth(0);
+            setAlignment(Pos.CENTER_LEFT);
+            getChildren().addAll(track, fillBar);
+            setMinHeight(8);
+            setPrefHeight(8);
+            setMaxHeight(8);
+        }
+        void set(double v) {
+            double f = Math.max(0, Math.min(1, v));
+            fillBar.maxWidthProperty().unbind();
+            fillBar.maxWidthProperty().bind(widthProperty().multiply(f));
+        }
+    }
+
+    private static VBox section(String titleText, Node content) {
+        Label t = Sheet.text(titleText, 15, Sheet.title(), "700");
+        VBox v = new VBox(10, t, content);
+        v.setPadding(new Insets(0, 0, 22, 0));
+        return v;
+    }
+
+    private static VBox modeCard(String titleText, String sub) {
+        VBox card = new VBox(4, Sheet.text(titleText, 15, Sheet.title(), "700"),
+                Sheet.text(sub, 12, Sheet.caption(), "400"));
+        card.setPadding(new Insets(12, 14, 12, 14));
+        card.setCursor(Cursor.HAND);
+        card.setMaxWidth(Double.MAX_VALUE);
+        return card;
+    }
+
+    private static void styleModeCard(VBox card, boolean selected) {
+        card.setStyle("-fx-background-radius:14;-fx-border-radius:14;-fx-border-width:2;" +
+                "-fx-background-color:" + (selected ? Sheet.BLUE_SOFT : Sheet.fill()) + ";" +
+                "-fx-border-color:" + (selected ? Sheet.BLUE : "transparent") + ";");
+    }
+
+    private static void refreshChips(List<Button> chips, int selected) {
+        for (int i = 0; i < chips.size(); i++) {
+            boolean on = (i + 1) == selected;
+            chips.get(i).setStyle("-fx-background-radius:12;" +
+                    "-fx-background-color:" + (on ? Sheet.BLUE : Sheet.fill()) + ";" +
+                    "-fx-text-fill:" + (on ? "white" : Sheet.body()) + ";" +
+                    "-fx-font-size:14px;-fx-font-weight:700;" +
+                    "-fx-font-family:" + app.ui.Styles.FONT_STACK + ";");
+        }
+    }
+
+    private static Button textButton(String label) {
+        Button b = new Button(label);
+        b.setCursor(Cursor.HAND);
+        b.setStyle("-fx-background-color:transparent;-fx-text-fill:" + Sheet.BLUE + ";" +
+                "-fx-font-size:13px;-fx-font-weight:700;-fx-padding:4 0 4 0;" +
+                "-fx-font-family:" + app.ui.Styles.FONT_STACK + ";");
+        return b;
+    }
+
+    private static Region spacer() {
+        Region r = new Region();
+        HBox.setHgrow(r, Priority.ALWAYS);
+        return r;
+    }
+
+    private static Region gap(double h) {
+        Region r = new Region();
+        r.setMinHeight(h);
+        r.setPrefHeight(h);
+        return r;
     }
 
     // ── 오버레이 이미지 생성 (채워진 영역 = 파랑, 밖 = 어둡게) ──────────────
@@ -374,7 +465,7 @@ public class ApRecommendDialog {
                         && mask[my * mw + mx];
 
                 if (inside) {
-                    pw.setColor(px, py, Color.rgb(52, 120, 246, 0.15));
+                    pw.setColor(px, py, Color.rgb(49, 130, 246, 0.15));
                 } else {
                     pw.setColor(px, py, Color.rgb(0, 0, 0, 0.40));
                 }
@@ -397,7 +488,7 @@ public class ApRecommendDialog {
             g.drawImage(overlay, 0, 0, w, h);
 
             // 채워진 영역 테두리 (파란색 글로우)
-            g.setStroke(Color.rgb(52, 120, 246, 0.6));
+            g.setStroke(Color.rgb(49, 130, 246, 0.6));
             g.setLineWidth(1.0);
         }
 
@@ -406,52 +497,23 @@ public class ApRecommendDialog {
             Point2D p = positions.get(i);
             double cx = p.getX() * scale, cy = p.getY() * scale;
 
-            g.setFill(Color.rgb(52, 120, 246, 0.08));
+            g.setFill(Color.rgb(49, 130, 246, 0.08));
             g.fillOval(cx - 40, cy - 40, 80, 80);
-            g.setFill(Color.rgb(52, 120, 246, 0.22));
+            g.setFill(Color.rgb(49, 130, 246, 0.22));
             g.fillOval(cx - 18, cy - 18, 36, 36);
-            g.setStroke(Color.rgb(52, 120, 246, 0.85));
+            g.setStroke(Color.rgb(49, 130, 246, 0.85));
             g.setLineWidth(2.5);
             g.strokeOval(cx - 13, cy - 13, 26, 26);
-            g.setFill(Color.rgb(52, 120, 246));
+            g.setFill(Color.rgb(49, 130, 246));
             g.fillOval(cx - 6, cy - 6, 12, 12);
             g.setFill(Color.WHITE);
             g.setFont(javafx.scene.text.Font.font("SF Pro Text",
                     javafx.scene.text.FontWeight.BOLD, 10));
             g.fillText(String.valueOf(i + 1), cx - 3, cy + 4);
-            g.setFill(Color.rgb(52, 120, 246));
+            g.setFill(Color.rgb(49, 130, 246));
             g.setFont(javafx.scene.text.Font.font("SF Pro Text",
                     javafx.scene.text.FontWeight.BOLD, 11));
             g.fillText("공유기 " + (i + 1), cx + 16, cy + 4);
         }
-    }
-
-    // ── 스타일 헬퍼 ──────────────────────────────────────────────────────────
-
-    private static Label sectionLabel(String text) {
-        Label l = new Label(text);
-        Runnable r = () -> l.setStyle(
-                "-fx-text-fill:" + Styles.textMain() + ";" +
-                "-fx-font-size:12px;-fx-font-weight:600;" +
-                "-fx-font-family:" + Styles.FONT_STACK + ";");
-        r.run(); Styles.addThemeListener(r);
-        return l;
-    }
-
-    private static Label subLabel(String text) {
-        Label l = new Label(text); l.setWrapText(true);
-        Runnable r = () -> l.setStyle(
-                "-fx-text-fill:" + Styles.textSub() + ";" +
-                "-fx-font-size:11px;" +
-                "-fx-font-family:" + Styles.FONT_STACK + ";");
-        r.run(); Styles.addThemeListener(r);
-        return l;
-    }
-
-    private static Separator styledSeparator() {
-        Separator sep = new Separator();
-        Runnable r = () -> sep.setStyle("-fx-background-color:" + Styles.borderSoft() + ";");
-        r.run(); Styles.addThemeListener(r);
-        return sep;
     }
 }

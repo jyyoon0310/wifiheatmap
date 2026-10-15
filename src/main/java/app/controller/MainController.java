@@ -41,7 +41,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 public class MainController {
     private enum OnboardingStep {
@@ -417,28 +416,20 @@ public class MainController {
     private void openWallMaterialDialog(Wall wall) {
         if (wall == null) return;
 
-        java.util.LinkedHashMap<String, WallMaterial> options = new java.util.LinkedHashMap<>();
-        for (WallMaterial m : WallMaterial.values()) {
-            options.put(m.labelWithAttn(), m);
-        }
-        String current = wall.getMaterial() == null ? WallMaterial.CONCRETE_WALL.labelWithAttn()
-                : wall.getMaterial().labelWithAttn();
-
-        javafx.scene.control.ChoiceDialog<String> dlg =
-                new javafx.scene.control.ChoiceDialog<>(current, options.keySet());
-        dlg.setTitle("벽 재질 선택");
-        dlg.setHeaderText("벽 재질을 선택하세요 (2.4GHz/5GHz 감쇠)");
-        dlg.setContentText("재질");
-        dlg.initOwner(stage);
-        Styles.styleDialog(dlg);
-
-        Optional<String> selected = dlg.showAndWait();
-        selected.ifPresent(key -> {
-            WallMaterial material = options.getOrDefault(key, WallMaterial.CONCRETE_WALL);
-            wall.setMaterial(material);
+        WallMaterial current = (wall.getMaterial() == null) ? WallMaterial.CONCRETE_WALL : wall.getMaterial();
+        WallMaterial picked = app.ui.Sheet.choose(stage,
+                "벽 재질을 골라 주세요",
+                "재질마다 신호가 벽을 지날 때 약해지는 정도가 달라요.",
+                java.util.Arrays.asList(WallMaterial.values()),
+                WallMaterial::labelKo,
+                m -> String.format("2.4 GHz −%.0f dB · 5 GHz −%.0f dB",
+                        m.defaultAttenuation24Db(), m.defaultAttenuation5Db()),
+                current);
+        if (picked != null) {
+            wall.setMaterial(picked);
             scheduleHeatmapRefreshIfVisible();
             render();
-        });
+        }
     }
 
 
@@ -480,33 +471,23 @@ public class MainController {
         if (positions == null || positions.isEmpty()) return;
 
         if (!env.getAps().isEmpty()) {
-            javafx.scene.control.ButtonType replaceBtn = new javafx.scene.control.ButtonType(
-                    "교체", javafx.scene.control.ButtonBar.ButtonData.YES);
-            javafx.scene.control.ButtonType addBtn = new javafx.scene.control.ButtonType(
-                    "추가", javafx.scene.control.ButtonBar.ButtonData.NO);
-            javafx.scene.control.ButtonType cancelBtn = new javafx.scene.control.ButtonType(
-                    "취소", javafx.scene.control.ButtonBar.ButtonData.CANCEL_CLOSE);
-            javafx.scene.control.Alert ask = new javafx.scene.control.Alert(
-                    javafx.scene.control.Alert.AlertType.CONFIRMATION,
-                    String.format("추천은 공유기 %d대만으로 계산한 배치입니다.%n교체하면 기존 %d대를 지웁니다.",
+            String choice = app.ui.Sheet.show(stage,
+                    "지금 있는 공유기는 어떻게 할까요?",
+                    String.format("추천은 공유기 %d대만으로 계산한 배치예요.%n교체하면 지금 놓인 %d대는 지워져요.",
                             positions.size(), env.getAps().size()),
-                    replaceBtn, addBtn, cancelBtn);
-            ask.setTitle("추천 적용");
-            ask.setHeaderText("기존 공유기를 어떻게 할까요?");
-            ask.initOwner(stage);
-            Styles.styleAlert(ask);
-            Optional<javafx.scene.control.ButtonType> res = ask.showAndWait();
-            if (res.isEmpty() || res.get() == cancelBtn) return;
-            if (res.get() == replaceBtn) {
+                    null, 400, true,
+                    app.ui.Sheet.Action.secondary("add", "함께 두기"),
+                    app.ui.Sheet.Action.primary("replace", "교체하기"));
+            if (choice == null) return;
+            if (choice.equals("replace")) {
                 toolsController.clearApSelection();
                 env.getAps().clear();
             }
         }
 
-        int idx = env.getAps().size() + 1;
         for (javafx.geometry.Point2D pos : positions) {
             AP ap = new AP();
-            ap.name = "추천-" + idx++;
+            ap.name = nextApName();  // 직접 놓은 공유기와 같은 "공유기 N" (예전엔 "추천-N")
             ap.resetSsidsFromName();  // 생성자는 "AP-1" 기준 SSID — 이름에 맞춰 중복 방지
             ap.x = pos.getX();
             ap.y = pos.getY();
@@ -520,27 +501,42 @@ public class MainController {
         generateHeatmapNow();
     }
 
+    /** 아직 쓰이지 않은 가장 작은 "공유기 N" 이름. */
+    private String nextApName() {
+        java.util.Set<String> used = new java.util.HashSet<>();
+        for (AP a : env.getAps()) if (a != null && a.name != null) used.add(a.name.trim());
+        int n = 1;
+        while (used.contains("공유기 " + n)) n++;
+        return "공유기 " + n;
+    }
+
     /**
      * 사용 중인 공유기(통신사 프리셋)를 묻는다. 선택한 프리셋은 추천 AP의 RadioConfig에 적용된다.
      * @return 선택한 프리셋, 취소 시 null
      */
     private app.model.ApPreset chooseRouterPreset() {
-        java.util.List<app.model.ApPreset> presets = java.util.Arrays.asList(app.model.ApPreset.values());
-        java.util.List<String> labels = new java.util.ArrayList<>();
-        for (app.model.ApPreset p : presets) labels.add(p.label);
+        return app.ui.Sheet.choose(stage,
+                "어떤 공유기를 쓰고 있나요?",
+                "고른 공유기의 출력과 안테나로 자리를 계산해요.",
+                java.util.Arrays.asList(app.model.ApPreset.values()),
+                p -> p.label,
+                MainController::presetSpec,
+                lastRecommendPreset);
+    }
 
-        javafx.scene.control.ChoiceDialog<String> dlg =
-                new javafx.scene.control.ChoiceDialog<>(lastRecommendPreset.label, labels);
-        dlg.setTitle("공유기 선택");
-        dlg.setHeaderText("사용 중인 공유기를 선택하세요.\n선택한 공유기의 전파 스펙으로 추천 위치를 계산합니다.");
-        dlg.setContentText("공유기:");
-        if (stage != null) dlg.initOwner(stage);
-        Styles.styleDialog(dlg);
-
-        Optional<String> res = dlg.showAndWait();
-        if (res.isEmpty()) return null;
-        int idx = labels.indexOf(res.get());
-        return idx >= 0 ? presets.get(idx) : app.model.ApPreset.CUSTOM;
+    /** 프리셋 한 줄 요약 — 예: "2.4 GHz 20 dBm · 5 dBi / 5 GHz 20 dBm · 6 dBi". */
+    private static String presetSpec(app.model.ApPreset p) {
+        AP probe = new AP();
+        p.applyTo(probe);
+        StringBuilder sb = new StringBuilder();
+        for (Band b : new Band[]{Band.GHZ_24, Band.GHZ_5}) {
+            RadioConfig rc = probe.radios.get(b);
+            if (rc == null || !rc.enabled) continue;
+            if (sb.length() > 0) sb.append("  /  ");
+            sb.append(String.format("%s %.0f dBm · %.0f dBi", b.label, rc.txPowerDbm, rc.antennaGain));
+        }
+        if (p == app.model.ApPreset.CUSTOM) sb.append("  (기본값)");
+        return sb.toString();
     }
 
     /**
@@ -739,7 +735,7 @@ public class MainController {
             }
 
         } catch (Exception ex) {
-            showError("이미지 로드 실패: " + ex.getMessage());
+            showError("평면도를 열지 못했어요", "이미지 파일이 손상됐거나 지원하지 않는 형식이에요.\n" + ex.getMessage());
         }
     }
 
@@ -749,22 +745,11 @@ public class MainController {
             return false;
         }
 
-        javafx.scene.control.ButtonType loadBtn =
-                new javafx.scene.control.ButtonType("프리셋 불러오기", javafx.scene.control.ButtonBar.ButtonData.OK_DONE);
-        javafx.scene.control.ButtonType skipBtn =
-                new javafx.scene.control.ButtonType("건너뛰기", javafx.scene.control.ButtonBar.ButtonData.CANCEL_CLOSE);
-
-        javafx.scene.control.Alert ask = new javafx.scene.control.Alert(
-                javafx.scene.control.Alert.AlertType.CONFIRMATION,
-                "프리셋 파일을 찾았습니다.\n온보딩 전에 불러올까요?\n\n" + preset.getAbsolutePath(),
-                loadBtn, skipBtn
-        );
-        ask.setTitle("프리셋 확인");
-        ask.setHeaderText("미리 설정된 프리셋을 사용할 수 있습니다.");
-        ask.initOwner(stage);
-        Styles.styleAlert(ask);
-        Optional<javafx.scene.control.ButtonType> result = ask.showAndWait();
-        if (result.isEmpty() || result.get() != loadBtn) {
+        boolean load = app.ui.Sheet.confirm(stage,
+                "저장해 둔 작업을 불러올까요?",
+                "이 평면도와 같은 폴더에서 작업 파일을 찾았어요.\n" + preset.getName(),
+                "불러오기", "건너뛰기");
+        if (!load) {
             return false;
         }
 
@@ -873,7 +858,7 @@ public class MainController {
             showToast("저장했습니다 · " + out.getName()
                     + (verbose && floorplanBI != null ? " (평면도 포함)" : ""));
         } catch (Exception ex) {
-            showError("저장 실패: " + ex.getMessage());
+            showError("저장하지 못했어요", ex.getMessage());
         }
     }
 
@@ -902,10 +887,10 @@ public class MainController {
         try {
             snapshot = ProjectFile.read(file);
         } catch (ProjectFile.FormatException ex) {
-            showError(ex.getMessage());
+            showError("작업 파일을 열 수 없어요", ex.getMessage());
             return false;
         } catch (Exception ex) {
-            showError("작업 파일을 열지 못했습니다.\n" + ex.getMessage());
+            showError("작업 파일을 열지 못했어요", ex.getMessage());
             return false;
         }
 
@@ -926,7 +911,8 @@ public class MainController {
             if (floor.exists()) {
                 loadFloorplanFromFile(floor, false);
             } else {
-                showInfo("저장된 평면도 파일을 찾지 못했습니다.\n경로: " + snapshot.floorplanPath());
+                showInfo("평면도 파일을 찾지 못했어요",
+                        "작업은 불러왔지만 평면도 이미지가 원래 자리에 없어요. 평면도를 다시 열어 주세요.\n" + snapshot.floorplanPath());
             }
         }
 
@@ -1131,7 +1117,8 @@ public class MainController {
             window.getLeftPanel().clearMeasurementResult();
             return;
         }
-        double cover = 100.0 * (strong + good) / total;
+        // "충분한 곳" = 자리 추천 목표와 같은 등급(RssiLevel.TARGET) 이상
+        double cover = 100.0 * strong / total;
         // LeftPanel.setMeasurementResult 인자: 좌→우 [약함, 주의, 양호, 강함] 순서
         double[] grade = {
                 dead   / (double) total,
@@ -1622,12 +1609,12 @@ public class MainController {
         panDragged = false;
     }
 
-    private void showError(String msg) {
-        app.ui.Notify.error(stage, msg);
+    private void showError(String title, String body) {
+        app.ui.Notify.error(stage, title, body);
     }
 
-    private void showInfo(String msg) {
-        app.ui.Notify.info(stage, msg);
+    private void showInfo(String title, String body) {
+        app.ui.Notify.info(stage, title, body);
     }
 
     /** 흐름을 막지 않는 짧은 알림 (성공·안내용). 확인이 필요한 경고·오류는 showInfo/showError. */

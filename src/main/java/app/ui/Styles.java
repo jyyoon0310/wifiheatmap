@@ -46,10 +46,10 @@ public class Styles {
     // RSSI 4단계 디스크리트 컬러 (히트맵 colormap과 동일, 좌→우: 약→강)
     // ResultCard / 색바 / BottomBar 등 RSSI 등급 표시에 공통으로 사용.
     // 색 정의는 app.model.RssiLevel 한 곳 — 여기는 UI 코드 편의를 위한 별칭.
-    public static final String RSSI_DEAD_HEX   = app.model.RssiLevel.DEAD.hex;    // 파랑 — 사각지대 (-75 미만)
-    public static final String RSSI_WEAK_HEX   = app.model.RssiLevel.WEAK.hex;    // 초록 — 약함 (-75~-65)
-    public static final String RSSI_GOOD_HEX   = app.model.RssiLevel.GOOD.hex;    // 노랑 — 양호 (-65~-55)
-    public static final String RSSI_STRONG_HEX = app.model.RssiLevel.STRONG.hex;  // 주황 — 강함 (-55 이상)
+    public static final String RSSI_DEAD_HEX   = app.model.RssiLevel.DEAD.hex;    // 파랑 — 사각지대 (-80 미만)
+    public static final String RSSI_WEAK_HEX   = app.model.RssiLevel.WEAK.hex;    // 초록 — 약함 (-80~-70)
+    public static final String RSSI_GOOD_HEX   = app.model.RssiLevel.GOOD.hex;    // 노랑 — 보통 (-70~-67)
+    public static final String RSSI_STRONG_HEX = app.model.RssiLevel.STRONG.hex;  // 주황 — 강함 (-67 이상)
     /** BottomBar 5단계 lerp colormap의 중간 cyan stop. */
     public static final String RSSI_CYAN_HEX   = "#34D1FF";
 
@@ -400,152 +400,5 @@ public class Styles {
             r.run();
             if (registerOnce(lv)) addThemeListener(r);
         }
-    }
-
-    // ── Alert / Dialog ────────────────────────────────────────────────────────
-
-    /**
-     * Core glass styling for any DialogPane.
-     * Called by styleAlert() and styleDialog() — do not call directly unless needed.
-     */
-    public static void styleDialogPane(DialogPane dp) {
-        // 창 크기는 표시 직전에 정해지는데, 아래 글래스 스타일(테두리·여백)은 그 뒤에
-        // runLater 로 입혀진다. 그 차이(실측 3px)만큼 본문 마지막 줄이 "…"로 잘렸다.
-        // 최소 높이를 선호 높이로 묶어 두면 스타일이 바뀌어도 창이 본문을 다 담는다.
-        dp.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
-        Runnable apply = () -> {
-            // Glass background
-            dp.setStyle(
-                    "-fx-background-color:" + glassSpecular() + "," + glassBody() + ";" +
-                    "-fx-background-insets:0,0.5;" +
-                    "-fx-background-radius:20;" +
-                    "-fx-border-color:" + glassBorder() + "," + borderSoft() + ";" +
-                    "-fx-border-insets:0,0.5;" +
-                    "-fx-border-radius:20,19.5;" +
-                    "-fx-border-width:0.5;" +
-                    "-fx-effect:" + (darkMode
-                            ? "dropshadow(gaussian,rgba(0,0,0,0.92),44,0.22,0,14)"
-                            : "dropshadow(gaussian,rgba(0,0,0,0.18),36,0.10,0,10)") + ";" +
-                    "-fx-font-family:" + FONT_STACK + ";");
-            // Header area
-            Platform.runLater(() -> {
-                Node header = dp.lookup(".header-panel");
-                if (header != null) header.setStyle(
-                        "-fx-background-color:transparent;" +
-                        "-fx-border-color:" + borderSoft() + ";" +
-                        "-fx-border-width:0 0 0.5 0;");
-                Node content = dp.lookup(".content");
-                if (content != null) content.setStyle(
-                        "-fx-text-fill:" + textMain() + ";" +
-                        "-fx-font-family:" + FONT_STACK + ";");
-                Node bb = dp.lookup(".button-bar");
-                if (bb != null) bb.setStyle("-fx-background-color:transparent;");
-                dp.lookupAll(".button").forEach(btn -> {
-                    if (btn instanceof Button b) styleFlatButton(b);
-                });
-                dp.lookupAll(".label").forEach(lbl -> {
-                    if (lbl instanceof Label l) {
-                        l.setStyle("-fx-text-fill:" + textMain() + ";-fx-font-family:" + FONT_STACK + ";");
-                        // 긴 안내문이 창 폭에 눌려 "…"로 잘리거나, 줄바꿈된 문장이 세로 공간을
-                        // 덜 받아 겹치지 않도록 한다 (고급 설정·시작 화면에서 실측된 문제).
-                        l.setWrapText(true);
-                        l.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
-                    }
-                });
-                dp.lookupAll(".text-field").forEach(tf -> {
-                    if (tf instanceof TextField t) styleTextField(t);
-                });
-                dp.lookupAll(".combo-box").forEach(cb -> {
-                    if (cb instanceof ComboBox<?> c) {
-                        Runnable r = () -> c.setStyle(comboBase());
-                        r.run();
-                        if (registerOnce(c)) addThemeListener(r);
-                        installComboPopupStyle(c);
-                    }
-                });
-                dp.lookupAll(".spinner").forEach(sp -> {
-                    if (sp instanceof Spinner<?> s) styleSpinner(s);
-                });
-                // Choice dialog list
-                Node lv = dp.lookup(".list-view");
-                if (lv instanceof ListView<?> listView) styleListView(listView);
-                // Tab pane
-                Node tp = dp.lookup(".tab-pane");
-                if (tp instanceof TabPane tabPane) styleTabPane(tabPane);
-                // 창은 이 스타일들이 입혀지기 전 크기로 열렸다 — 바뀐 내용 크기에 다시 맞춘다.
-                if (dp.getScene() != null && dp.getScene().getWindow() != null) {
-                    dp.getScene().getWindow().sizeToScene();
-                }
-            });
-        };
-        dp.sceneProperty().addListener((obs, oldScene, newScene) -> {
-            if (newScene != null) {
-                // 대화상자는 별도 창(Scene)이라 메인 창의 glass.css 가 적용되지 않는다 —
-                // 스크롤바·목록 셀이 기본 회색 화살표형으로 나오던 것을 맞춘다.
-                java.net.URL css = Styles.class.getResource("/glass.css");
-                if (css != null && !newScene.getStylesheets().contains(css.toExternalForm())) {
-                    newScene.getStylesheets().add(css.toExternalForm());
-                }
-                Platform.runLater(apply);
-            }
-        });
-        apply.run();
-        if (registerOnce(dp)) addThemeListener(apply);
-    }
-
-    /**
-     * Glass styling for an Alert dialog.
-     */
-    public static void styleAlert(Alert alert) {
-        styleDialogPane(alert.getDialogPane());
-    }
-
-    /**
-     * Glass styling for any generic Dialog (ChoiceDialog, TextInputDialog, etc.).
-     */
-    public static void styleDialog(Dialog<?> dialog) {
-        styleDialogPane(dialog.getDialogPane());
-    }
-
-    // ── ListView ─────────────────────────────────────────────────────────────
-
-    /** Applies glass background + transparent border to a ListView. */
-    public static void styleListView(ListView<?> lv) {
-        Runnable apply = () -> lv.setStyle(
-                "-fx-background-color:transparent;" +
-                "-fx-border-color:transparent;");
-        apply.run();
-        if (registerOnce(lv)) addThemeListener(apply);
-    }
-
-    // ── TabPane ──────────────────────────────────────────────────────────────
-
-    /** Styles a TabPane header to match the glass design system. */
-    public static void styleTabPane(TabPane tp) {
-        Runnable apply = () -> {
-            tp.setStyle(
-                    "-fx-background-color:transparent;" +
-                    "-fx-border-color:transparent;");
-            // Tab header area
-            Node header = tp.lookup(".tab-header-area");
-            if (header != null) header.setStyle(
-                    "-fx-background-color:" + bgTabBar() + ";" +
-                    "-fx-background-radius:10 10 0 0;" +
-                    "-fx-border-color:transparent;");
-            // Individual tabs
-            tp.lookupAll(".tab").forEach(tabNode -> tabNode.setStyle(
-                    "-fx-background-color:transparent;" +
-                    "-fx-border-color:transparent;"));
-            tp.lookupAll(".tab-label").forEach(lbl -> {
-                if (lbl instanceof Label l)
-                    l.setStyle("-fx-text-fill:" + textMain() + ";-fx-font-family:" + FONT_STACK + ";");
-            });
-            tp.lookupAll(".tab:selected").forEach(tabNode -> tabNode.setStyle(
-                    "-fx-background-color:" + accent() + ";" +
-                    "-fx-border-color:transparent;" +
-                    "-fx-background-radius:8;"));
-        };
-        apply.run();
-        if (registerOnce(tp)) addThemeListener(apply);
     }
 }

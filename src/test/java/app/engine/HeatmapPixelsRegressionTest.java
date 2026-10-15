@@ -19,28 +19,28 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  *
  * <p>⚠️ 색 기준({@code RssiLevel})이나 신호 계산을 <b>의도적으로</b> 바꿨다면 기준 해시를 다시 뽑아
  * 갱신할 것. 리팩터링(동작 보존)이라면 해시가 그대로여야 한다.
- * (마지막 갱신: DPM 문헌 보정 — 대역폭 보정 제거·상태별 지수·수신 장비 손실, docs/dpm-calibration.md)</p>
+ * (마지막 갱신: 신호 등급을 업계 기준(MetaGeek −67/−70/−80 dBm)으로 바꾸며 색 정지점 이동)</p>
  */
 class HeatmapPixelsRegressionTest {
 
     @Test void simpleAllBands()  { check(GoldenDump.scenario(), 200, 200, 16, null,
-            "6e538ae416d6452b2c6c4ae2ffaba548fc759fe8d3d2fb9ec70b5aabbf943f11", false); }
+            "2b4dddc5ef4f2eed8831740c074f82c822d7cccaedadfbfb1ca9390cf19216f1", false); }
     @Test void simple24()        { check(GoldenDump.scenario(), 200, 200, 16, Band.GHZ_24,
-            "6e538ae416d6452b2c6c4ae2ffaba548fc759fe8d3d2fb9ec70b5aabbf943f11", false); }
+            "2b4dddc5ef4f2eed8831740c074f82c822d7cccaedadfbfb1ca9390cf19216f1", false); }
     @Test void simple5()         { check(GoldenDump.scenario(), 200, 200, 16, Band.GHZ_5,
-            "5863bd689818ed188ab2b9b0e0a761df45ef7b4598cfb38a6b8cd873f572380b", false); }
+            "a084ea1339d5ea8307992e0d2485006510bddf920cc1f2c109c80504a81f9e2c", false); }
     @Test void simple6()         { check(GoldenDump.scenario(), 200, 200, 16, Band.GHZ_6,
-            "73b255e39af833b492a6e766c04fc483eb96be625959e8a05168a9460af43e19", false); }
+            "a39e3f54282a0d0c904ab187989beb14e6100172a4b71fecc1076515724f016a", false); }
 
     // 복합 평면도는 외벽이 닫혀 있어 건물 마스크가 적용된다
     @Test void complexAllBands() { check(GoldenDump.scenarioComplex(), 420, 300, 12, null,
-            "8cc2178606dd61f71cc63775f76453143bf2f2f97581a9594b964a9125577022", true); }
+            "93890587539bf4d9cd7651b1984d9827b3271f0951a885280181f401364887c9", true); }
     @Test void complex24()       { check(GoldenDump.scenarioComplex(), 420, 300, 12, Band.GHZ_24,
-            "8cc2178606dd61f71cc63775f76453143bf2f2f97581a9594b964a9125577022", true); }
+            "93890587539bf4d9cd7651b1984d9827b3271f0951a885280181f401364887c9", true); }
     @Test void complex5()        { check(GoldenDump.scenarioComplex(), 420, 300, 12, Band.GHZ_5,
-            "4e2e8da07559b6430e5b768ebdd5a2e7ce6b6a59a30766544654b1626bfe0a53", true); }
+            "2141f205c4d4c5167abbdf5dcb5d06a623404b5011cb293e945081c2f494064f", true); }
     @Test void complex6()        { check(GoldenDump.scenarioComplex(), 420, 300, 12, Band.GHZ_6,
-            "836189d2f5d0d4482f23cbfb98b9c1bd3fab2dd855487ca73d4b5746325a6ac3", true); }
+            "0514153aeb1fee52f85998dedb54f70916e7f35bd808f610362bd5f87daba017", true); }
 
     private static void check(WifiEnvironment env, int w, int h, int step, Band band,
                               String expectedSha256, boolean expectMask) {

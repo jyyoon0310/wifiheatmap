@@ -3,7 +3,12 @@ package app.model;
 import javafx.scene.paint.Color;
 
 /**
- * 신호 세기 등급 — 히트맵 색, 하단 범례, 결과 카드, 호버 표시가 모두 이 정의를 따른다.
+ * 신호 세기 등급 — 히트맵 색, 하단 범례, 결과 카드, 호버 표시, 자리 추천 목표가 모두 이 정의를 따른다.
+ *
+ * <p>기준값은 MetaGeek "Understanding RSSI" 표 (업계에서 널리 쓰는 무선랜 설계 기준):
+ * −67 dBm 이상 = 영상통화·스트리밍(VoIP/streaming video) 최소, −70 = 웹·메일 안정 최소,
+ * −80 = 기본 연결 최소(그 아래는 사실상 쓸 수 없음). 색은 열지도 관례대로 강할수록 빨강, 약할수록 초록·파랑.
+ * (2026-10 이전 기준은 −55/−65/−75 dBm 이었다.)</p>
  *
  * <p>예전엔 세 곳이 각자 하드코딩되어 있어서, 결과 카드는 "-55 dBm 이상 = 주황(강함)"인데
  * 히트맵은 -96~-10 dBm 에 그라데이션을 고르게 펴서 -55 dBm 을 초록으로 칠했다.
@@ -13,20 +18,26 @@ import javafx.scene.paint.Color;
  * 구간 안의 값은 그 등급 색으로 보이고, 경계에서만 이웃 색과 섞인다.</p>
  */
 public enum RssiLevel {
-    STRONG("강함",     -55.0,                    "#F0632D"),
-    GOOD  ("양호",     -65.0,                    "#F6D32D"),
-    WEAK  ("약함",     -75.0,                    "#2FD44A"),
-    DEAD  ("사각지대", Double.NEGATIVE_INFINITY, "#2D6CF6");
+    STRONG("강함",     -67.0,                    "#F0632D", "영상통화·스트리밍이 원활해요"),
+    GOOD  ("보통",     -70.0,                    "#F6D32D", "웹·메일은 무리 없어요"),
+    WEAK  ("약함",     -80.0,                    "#2FD44A", "연결이 느리거나 끊길 수 있어요"),
+    DEAD  ("사각지대", Double.NEGATIVE_INFINITY, "#2D6CF6", "거의 연결되지 않아요");
+
+    /** 자리 추천의 목표이자 결과 카드의 "충분한 곳" 기준 — 영상통화·스트리밍이 되는 수준. */
+    public static final RssiLevel TARGET = STRONG;
 
     public final String label;
     /** 이 등급의 하한 [dBm] (이상이면 이 등급). */
     public final double minDbm;
     public final String hex;
+    /** 쉬운 말 설명 (예: "영상통화·스트리밍이 원활해요"). */
+    public final String meaning;
 
-    RssiLevel(String label, double minDbm, String hex) {
+    RssiLevel(String label, double minDbm, String hex, String meaning) {
         this.label = label;
         this.minDbm = minDbm;
         this.hex = hex;
+        this.meaning = meaning;
     }
 
     public Color color() { return Color.web(hex); }
@@ -41,14 +52,14 @@ public enum RssiLevel {
     }
 
     // ── 범례 범위 (하단 범례 바가 보여주는 구간) ─────────────────────────
-    public static final double LEGEND_MIN_DBM = -90.0;
-    public static final double LEGEND_MAX_DBM = -30.0;
+    public static final double LEGEND_MIN_DBM = -95.0;
+    public static final double LEGEND_MAX_DBM = -35.0;
 
     // ── 연속 그라데이션 정지점 [dBm, 색] — 각 등급 구간 중앙에 등급 색 ──────
-    // 사각지대(-90 기준) → 하늘(경계 완충) → 약함(-70) → 양호(-60) → 강함(-50) → 강함 심화(-35)
-    // 마지막 정지점은 같은 "강함" 등급 안의 농도 변화다. 한 대로 집 전체가 강함인 경우(DPM 에서 흔함)
-    // 지도 전체가 단색 주황이 되어 AP 주변과 먼 곳의 차이가 안 보이던 문제를 막는다.
-    private static final double[] STOP_DBM = { -90.0,     -80.0,     -70.0,      -60.0,      -50.0,      -35.0 };
+    // 사각지대(-92) → 하늘(경계 완충, -84) → 약함(-75, 구간 중앙) → 보통(-68.5) → 강함(-62) → 강함 심화(-42)
+    // "강함" 구간(-67 이상)이 넓어 집 대부분이 여기에 든다 — 그 안에서도 공유기에 가까울수록 진한 빨강이 되도록
+    // 마지막 정지점까지 농도를 바꿔, 지도 전체가 단색으로 보이지 않게 한다.
+    private static final double[] STOP_DBM = { -92.0,     -84.0,     -75.0,      -68.5,      -62.0,      -42.0 };
     private static final String[] STOP_HEX = { DEAD.hex, "#34D1FF", WEAK.hex,   GOOD.hex,   STRONG.hex, "#C9262B" };
     private static final Color[]  STOP_COLOR = new Color[STOP_HEX.length];
     static {

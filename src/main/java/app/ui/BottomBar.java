@@ -88,9 +88,11 @@ public class BottomBar {
         legend.setPrefWidth(LEGEND_WIDTH);
         legend.setMaxWidth(LEGEND_WIDTH);
         Tooltip.install(legend, new Tooltip(String.format(
-                "강함 %.0f dBm 이상 · 양호 %.0f ~ %.0f · 약함 %.0f ~ %.0f · 사각지대 %.0f dBm 미만",
-                RssiLevel.STRONG.minDbm, RssiLevel.GOOD.minDbm, RssiLevel.STRONG.minDbm,
-                RssiLevel.WEAK.minDbm, RssiLevel.GOOD.minDbm, RssiLevel.WEAK.minDbm)));
+                "%s %.0f dBm 이상 — %s%n%s %.0f ~ %.0f — %s%n%s %.0f ~ %.0f — %s%n%s %.0f dBm 미만 — %s%n(기준: MetaGeek 무선랜 신호 세기 가이드)",
+                RssiLevel.STRONG.label, RssiLevel.STRONG.minDbm, RssiLevel.STRONG.meaning,
+                RssiLevel.GOOD.label, RssiLevel.GOOD.minDbm, RssiLevel.STRONG.minDbm, RssiLevel.GOOD.meaning,
+                RssiLevel.WEAK.label, RssiLevel.WEAK.minDbm, RssiLevel.GOOD.minDbm, RssiLevel.WEAK.meaning,
+                RssiLevel.DEAD.label, RssiLevel.WEAK.minDbm, RssiLevel.DEAD.meaning)));
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
