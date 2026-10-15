@@ -55,6 +55,23 @@ public class ApRecommender {
      */
     private static final double WEAK_FRACTION = 0.20;
 
+    /**
+     * 추천 과정 알림 — 추천 창이 "어떻게 자리를 찾는지"를 미리보기로 보여 주는 데 쓴다.
+     * 계산 스레드(여러 개)에서 불리므로 구현은 스레드 안전해야 한다. 모든 좌표는 평면도 px.
+     */
+    public interface Listener {
+        /** 자리 후보 전체 (한 번). */
+        default void onCandidates(List<Point2D> candidates) {}
+        /** apIndex 번째 공유기 자리를 찾는 중 — 후보 하나의 점수가 나왔다 (클수록 좋음, 단위 없음). */
+        default void onCandidateScored(int apIndex, Point2D candidate, double score) {}
+        /** apIndex 번째 공유기 자리를 정했다. */
+        default void onApChosen(int apIndex, Point2D position) {}
+        /** 정밀 확인 라운드(0 = 처음 확인)에서 검사하는 배치. */
+        default void onValidating(int round, List<Point2D> positions) {}
+        /** 최종 배치. */
+        default void onFinished(List<Point2D> positions) {}
+    }
+
     // ── 결과 ─────────────────────────────────────────────────────────────────
     public record Result(
             List<Point2D> positions,
@@ -173,7 +190,16 @@ public class ApRecommender {
     public static Result recommend(WifiEnvironment env, int canvasW, int canvasH,
                                    Params params, Consumer<String> statusCallback,
                                    java.util.function.DoubleConsumer progressCallback) {
+        return recommend(env, canvasW, canvasH, params, statusCallback, progressCallback, null);
+    }
+
+    /** @param listener 과정 알림 (null 가능) — 미리보기용 */
+    public static Result recommend(WifiEnvironment env, int canvasW, int canvasH,
+                                   Params params, Consumer<String> statusCallback,
+                                   java.util.function.DoubleConsumer progressCallback,
+                                   Listener listener) {
         if (statusCallback == null) statusCallback = s -> {};
+        final Listener events = (listener == null) ? new Listener() {} : listener;
         final java.util.function.DoubleConsumer progress = (progressCallback == null) ? v -> {} : progressCallback;
         // 진행률 구간: 후보 준비 0~2% · 자리 찾기(그리디) ~P_GREEDY · 정밀 확인(최대 4회) ~97% · 마무리 100%
         final double pGreedyEnd = params.useFdtd ? 0.55 : 0.95;
@@ -202,6 +228,7 @@ public class ApRecommender {
                 params.sampleStepPx, mask, mw, mh, cellSize);
 
         progress.accept(0.02);
+        events.onCandidates(List.copyOf(candidates));
 
         // ── 2. Phase 1: 그리디 Ray-cast ──────────────────────────────────────
         List<Point2D> chosen = new ArrayList<>();
@@ -260,10 +287,14 @@ public class ApRecommender {
             CandidateScore best = evaluateCandidatesParallel(
                     tempEnv, availableCandidates, measurePoints, params, coveredSet, bestRssi,
                     dpmRadio, canvasW, canvasH, walls, dpmExp, dpmPru, dpmMs, dpmCnt,
-                    () -> progress.accept(segStart + segLen * evaluated.incrementAndGet() / total));
+                    cs -> {
+                        progress.accept(segStart + segLen * evaluated.incrementAndGet() / total);
+                        if (cs != null) events.onCandidateScored(apNum - 1, new Point2D(cs.px, cs.py), cs.score);
+                    });
 
             if (best == null) break;
             chosen.add(new Point2D(best.px, best.py));
+            events.onApChosen(apIdx, chosen.get(chosen.size() - 1));
 
             // ── DPM 기반 커버리지 업데이트 (평가 모델과 일관성 유지) ──────────
             // Legacy sampleRssiAt 대신 DPM Dijkstra를 사용해 커버된 포인트를 정확히 추적.
@@ -306,6 +337,7 @@ public class ApRecommender {
                         : String.format("자리를 다듬는 중 (%d/%d)", round, maxRefinements);
                 statusCallback.accept(label);
 
+                events.onValidating(round, List.copyOf(chosen));
                 final double rStart = pGreedyEnd + (0.97 - pGreedyEnd) * round / (maxRefinements + 1);
                 final double rLen = (0.97 - pGreedyEnd) / (maxRefinements + 1);
                 FdtdValidationResult vr = runFdtdValidation(env, chosen, templateAp,
@@ -355,6 +387,7 @@ public class ApRecommender {
                     apsForFullCoverage, app.model.RssiLevel.TARGET.label, chosen.size() - apsForFullCoverage);
         }
         progress.accept(1.0);
+        events.onFinished(List.copyOf(chosen));
         statusCallback.accept("다 됐어요");
 
         // wall-clock 시간 (실제 체감, 병렬 이득 포함)
@@ -434,7 +467,7 @@ public class ApRecommender {
             java.util.concurrent.atomic.AtomicLong dpmPru,
             java.util.concurrent.atomic.AtomicLong dpmMs,
             java.util.concurrent.atomic.AtomicInteger dpmCnt,
-            Runnable onEvaluated) {
+            Consumer<CandidateScore> onEvaluated) {
 
         ForkJoinPool pool = ForkJoinPool.commonPool();
         List<ForkJoinTask<CandidateScore>> tasks = new ArrayList<>();
@@ -443,6 +476,7 @@ public class ApRecommender {
 
         for (Point2D cand : candidates) {
             tasks.add(pool.submit(() -> {
+                CandidateScore[] out = {null};
                 try {
                     AP testAp = new AP();
                     testAp.x = cand.getX();
@@ -495,7 +529,7 @@ public class ApRecommender {
                         for (int i = 0; i < k; i++) weakSum += combined[i];
                         // 약한 구역 평균이 우선(×1e4). 전체 평균은 약한 구역 평균이 사실상 같을 때만 순위를 가른다.
                         double score = (weakSum / k) * 1.0e4 + allSum / n;
-                        return new CandidateScore((int) cand.getX(), (int) cand.getY(), score);
+                        return out[0] = new CandidateScore((int) cand.getX(), (int) cand.getY(), score);
                     }
     
                     int newCovered = 0;
@@ -521,7 +555,7 @@ public class ApRecommender {
                     }
     
                     if (uncoveredCount == 0) {
-                        return new CandidateScore((int) cand.getX(), (int) cand.getY(), 0);
+                        return out[0] = new CandidateScore((int) cand.getX(), (int) cand.getY(), 0);
                     }
     
                     double avgRssi = rssiSum / uncoveredCount;
@@ -540,9 +574,9 @@ public class ApRecommender {
                             + uniformBonus * 5.0 // 균일도 (×5 가중)
                             + avgRssi;           // 평균은 미세 조정용
     
-                    return new CandidateScore((int) cand.getX(), (int) cand.getY(), score);
+                    return out[0] = new CandidateScore((int) cand.getX(), (int) cand.getY(), score);
                 } finally {
-                    onEvaluated.run();
+                    onEvaluated.accept(out[0]);
                 }
             }));
         }

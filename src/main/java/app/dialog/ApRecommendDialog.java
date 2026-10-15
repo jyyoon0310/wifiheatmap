@@ -172,12 +172,33 @@ public class ApRecommendDialog {
         Stage stage = Sheet.createStage(owner, card, false);
 
         // ── 그리기 ───────────────────────────────────────────────────────
-        Runnable redraw = () -> drawPreview(canvas, floorplanImage, pvW, pvH, overlayRef[0],
-                resultRef[0] != null ? resultRef[0].positions() : List.of(), scale);
+        Live live = new Live();
+        WritableImage[] heatRef = {null};
+        Node heatLegend = heatLegend();
+        heatLegend.setVisible(false);
+        preview.getChildren().add(heatLegend);
+        StackPane.setAlignment(heatLegend, Pos.BOTTOM_LEFT);
+        StackPane.setMargin(heatLegend, new Insets(0, 0, 4, 4));
+        Runnable redraw = () -> drawPreview(canvas, floorplanImage, pvW, pvH, overlayRef[0], heatRef[0], live,
+                resultRef[0] != null ? resultRef[0].positions() : List.copyOf(live.picked), scale);
         redraw.run();
+        // 계산 중에는 알림이 여러 스레드에서 쏟아지므로, 화면은 1초에 20번까지만 다시 그린다
+        javafx.animation.AnimationTimer liveTimer = new javafx.animation.AnimationTimer() {
+            long last = 0;
+            @Override public void handle(long now) {
+                if (live.dirty && now - last > 50_000_000L) {
+                    live.dirty = false;
+                    last = now;
+                    redraw.run();
+                }
+            }
+        };
 
         Runnable clearResult = () -> {
             resultRef[0] = null;
+            heatRef[0] = null;
+            heatLegend.setVisible(false);
+            live.reset();
             resultBox.setVisible(false);
             resultBox.setManaged(false);
             applyBtn.setDisable(true);
@@ -252,20 +273,36 @@ public class ApRecommendDialog {
             runningBox.setVisible(true);
             runningBox.setManaged(true);
 
-            Task<ApRecommender.Result> task = new Task<>() {
-                @Override protected ApRecommender.Result call() {
+            Task<Outcome> task = new Task<>() {
+                @Override protected Outcome call() {
                     String[] step = {""};
                     double[] pct = {0};
                     Runnable show = () -> statusLbl.setText(step[0] + " · " + Math.round(pct[0] * 100) + "%");
-                    return ApRecommender.recommend(env, canvasW, canvasH, params,
+                    ApRecommender.Result r = ApRecommender.recommend(env, canvasW, canvasH, params,
                             msg -> Platform.runLater(() -> { step[0] = msg; show.run(); }),
-                            v -> Platform.runLater(() -> { pct[0] = v; progressLine.set(v); show.run(); }));
+                            v -> Platform.runLater(() -> { pct[0] = v; progressLine.set(v); show.run(); }),
+                            live.listener(this::isCancelled));
+                    if (isCancelled() || r.positions().isEmpty()) return new Outcome(r, null);
+                    Platform.runLater(() -> statusLbl.setText("추천 배치의 신호 지도를 그리는 중"));
+                    return new Outcome(r, recommendedHeatmap(env, r.positions(), preset, canvasW, canvasH,
+                            maskCopy, maskW, FLOOD_CELL_SIZE));
                 }
             };
+            live.reset();
+            liveTimer.start();
             task.setOnSucceeded(ev -> {
+                liveTimer.stop();
                 runningBox.setVisible(false);
                 runningBox.setManaged(false);
-                resultRef[0] = task.getValue();
+                resultRef[0] = task.getValue().result();
+                int[] argb = task.getValue().heatArgb();
+                if (argb != null) {
+                    WritableImage img = new WritableImage(canvasW, canvasH);
+                    img.getPixelWriter().setPixels(0, 0, canvasW, canvasH,
+                            javafx.scene.image.PixelFormat.getIntArgbInstance(), argb, 0, canvasW);
+                    heatRef[0] = app.engine.WifiMath.boxBlur(img, 4);
+                    heatLegend.setVisible(true);
+                }
                 fillResult(resultBox, resultRef[0], state != null && state.isAdvancedMode());
                 resultBox.setVisible(true);
                 resultBox.setManaged(true);
@@ -276,11 +313,15 @@ public class ApRecommendDialog {
                 redraw.run();
             });
             task.setOnFailed(ev -> {
+                liveTimer.stop();
                 runBtn.setText("자리 찾기");
                 Throwable ex = task.getException();
                 statusLbl.setText("문제가 생겼어요: " + (ex != null ? ex.getMessage() : "알 수 없는 오류"));
             });
             task.setOnCancelled(ev -> {
+                liveTimer.stop();
+                live.reset();
+                redraw.run();
                 runBtn.setText("자리 찾기");
                 runningBox.setVisible(false);
                 runningBox.setManaged(false);
@@ -493,43 +534,204 @@ public class ApRecommendDialog {
     // ── 캔버스 렌더링 ────────────────────────────────────────────────────────
 
     private static void drawPreview(Canvas canvas, Image bgImage, int w, int h,
-                                    WritableImage overlay, List<Point2D> positions,
-                                    double scale) {
+                                    WritableImage overlay, WritableImage heat, Live live,
+                                    List<Point2D> positions, double scale) {
         GraphicsContext g = canvas.getGraphicsContext2D();
         g.clearRect(0, 0, w, h);
         g.drawImage(bgImage, 0, 0, w, h);
 
-        // 오버레이
-        if (overlay != null) {
-            g.drawImage(overlay, 0, 0, w, h);
+        // 고른 방 밖은 어둡게
+        if (overlay != null) g.drawImage(overlay, 0, 0, w, h);
+        // 결과 신호 지도 (고른 방 안만)
+        if (heat != null) g.drawImage(heat, 0, 0, w, h);
 
-            // 채워진 영역 테두리 (파란색 글로우)
-            g.setStroke(Color.rgb(49, 130, 246, 0.6));
-            g.setLineWidth(1.0);
+        // ── 계산 중: 후보 자리 점수 (파랄수록·클수록 좋은 자리) ──
+        if (heat == null && live != null) {
+            java.util.Map<Point2D, Double> scores = new java.util.HashMap<>(live.scores);
+            double min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
+            for (double v : scores.values()) { min = Math.min(min, v); max = Math.max(max, v); }
+            double span = (max > min) ? max - min : 1.0;
+            for (Point2D c : live.candidates) {
+                double cx = c.getX() * scale, cy = c.getY() * scale;
+                Double v = scores.get(c);
+                if (v == null) {
+                    g.setFill(Color.rgb(120, 130, 145, 0.35));
+                    g.fillOval(cx - 1.5, cy - 1.5, 3, 3);
+                } else {
+                    double t = (v - min) / span;
+                    double r = 2.5 + 3.5 * t;
+                    g.setFill(Color.rgb(180, 190, 205, 0.5).interpolate(Color.rgb(49, 130, 246, 0.95), t));
+                    g.fillOval(cx - r, cy - r, 2 * r, 2 * r);
+                }
+            }
+            Point2D best = live.best;
+            if (best != null) {
+                double cx = best.getX() * scale, cy = best.getY() * scale;
+                g.setStroke(Color.WHITE);
+                g.setLineWidth(4);
+                g.strokeOval(cx - 11, cy - 11, 22, 22);
+                g.setStroke(Color.rgb(49, 130, 246));
+                g.setLineWidth(2.5);
+                g.strokeOval(cx - 11, cy - 11, 22, 22);
+                pill(g, "지금까지 가장 좋은 자리", cx + 15, cy - 8);
+            }
         }
 
-        // AP 마커
+        // ── 정한 자리 (번호 마커) ──
         for (int i = 0; i < positions.size(); i++) {
             Point2D p = positions.get(i);
             double cx = p.getX() * scale, cy = p.getY() * scale;
-
-            g.setFill(Color.rgb(49, 130, 246, 0.08));
-            g.fillOval(cx - 40, cy - 40, 80, 80);
-            g.setFill(Color.rgb(49, 130, 246, 0.22));
-            g.fillOval(cx - 18, cy - 18, 36, 36);
-            g.setStroke(Color.rgb(49, 130, 246, 0.85));
-            g.setLineWidth(2.5);
-            g.strokeOval(cx - 13, cy - 13, 26, 26);
-            g.setFill(Color.rgb(49, 130, 246));
-            g.fillOval(cx - 6, cy - 6, 12, 12);
+            g.setFill(Color.rgb(49, 130, 246, 0.16));
+            g.fillOval(cx - 20, cy - 20, 40, 40);
             g.setFill(Color.WHITE);
-            g.setFont(javafx.scene.text.Font.font("SF Pro Text",
-                    javafx.scene.text.FontWeight.BOLD, 10));
-            g.fillText(String.valueOf(i + 1), cx - 3, cy + 4);
+            g.fillOval(cx - 12, cy - 12, 24, 24);
             g.setFill(Color.rgb(49, 130, 246));
-            g.setFont(javafx.scene.text.Font.font("SF Pro Text",
-                    javafx.scene.text.FontWeight.BOLD, 11));
-            g.fillText("공유기 " + (i + 1), cx + 16, cy + 4);
+            g.fillOval(cx - 10, cy - 10, 20, 20);
+            g.setFill(Color.WHITE);
+            g.setFont(javafx.scene.text.Font.font("System", javafx.scene.text.FontWeight.BOLD, 11));
+            g.setTextAlign(javafx.scene.text.TextAlignment.CENTER);
+            g.fillText(String.valueOf(i + 1), cx, cy + 4);
+            g.setTextAlign(javafx.scene.text.TextAlignment.LEFT);
+            pill(g, "공유기 " + (i + 1), cx + 16, cy - 8);
+        }
+    }
+
+    /** 흰 바탕 이름표 (지도 위 글자가 묻히지 않게). */
+    private static void pill(GraphicsContext g, String text, double x, double y) {
+        javafx.scene.text.Font f = javafx.scene.text.Font.font("System", javafx.scene.text.FontWeight.BOLD, 11);
+        javafx.scene.text.Text t = new javafx.scene.text.Text(text);
+        t.setFont(f);
+        double tw = t.getLayoutBounds().getWidth();
+        g.setFill(Color.rgb(255, 255, 255, 0.92));
+        g.fillRoundRect(x, y, tw + 12, 18, 9, 9);
+        g.setFill(Color.web("#191F28"));
+        g.setFont(f);
+        g.fillText(text, x + 6, y + 13);
+    }
+
+    /** 결과 신호 지도 아래 작은 범례 (강함 빨강 → 사각지대 파랑). */
+    private static Node heatLegend() {
+        HBox box = new HBox(10);
+        box.setAlignment(Pos.CENTER_LEFT);
+        box.setPadding(new Insets(6, 10, 6, 10));
+        box.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
+        box.setStyle("-fx-background-color:rgba(255,255,255,0.92);-fx-background-radius:10;");
+        box.getChildren().add(Sheet.text("추천 배치의 신호", 11, "#191F28", "700"));
+        for (RssiLevel lv : RssiLevel.values()) {
+            Region dot = new Region();
+            dot.setMinSize(8, 8);
+            dot.setMaxSize(8, 8);
+            dot.setStyle("-fx-background-color:" + lv.hex + ";-fx-background-radius:4;");
+            HBox item = new HBox(4, dot, Sheet.text(lv.label, 11, "#4E5968", "400"));
+            item.setAlignment(Pos.CENTER_LEFT);
+            box.getChildren().add(item);
+        }
+        return box;
+    }
+
+    /**
+     * 추천 배치로 만든 신호 지도 (ARGB) — 메인 화면과 같은 생성기·같은 공유기 설정.
+     * 고른 방 밖은 투명하게 비운다.
+     */
+    private static int[] recommendedHeatmap(app.model.WifiEnvironment env, List<Point2D> positions,
+                                            app.model.ApPreset preset, int w, int h,
+                                            boolean[] mask, int maskW, int cell) {
+        app.model.WifiEnvironment copy = new app.model.WifiEnvironment();
+        copy.setScaleMPerPx(env.getScaleMPerPx());
+        copy.getWalls().setAll(env.getWalls());
+        for (int i = 0; i < positions.size(); i++) {
+            app.model.AP ap = new app.model.AP();
+            ap.name = "공유기 " + (i + 1);
+            ap.x = positions.get(i).getX();
+            ap.y = positions.get(i).getY();
+            ap.heightM = 2.5;
+            ap.useDualBandDefaults();
+            if (preset != null) preset.applyTo(ap);
+            copy.getAps().add(ap);
+        }
+        int[] argb = new app.engine.HeatmapGenerator(copy, null).generate(w, h, 6, 0, null).argbPixels;
+        for (int y = 0; y < h; y++) {
+            int my = y / cell;
+            for (int x = 0; x < w; x++) {
+                int idx = my * maskW + x / cell;
+                if (idx < 0 || idx >= mask.length || !mask[idx]) argb[y * w + x] = 0;
+            }
+        }
+        return argb;
+    }
+
+    /** 계산 결과 + 결과 신호 지도. */
+    private record Outcome(ApRecommender.Result result, int[] heatArgb) {}
+
+    /** 계산 과정 미리보기 상태 — 계산 스레드가 쓰고 FX 스레드가 읽는다. */
+    private static final class Live {
+        volatile List<Point2D> candidates = List.of();
+        final java.util.concurrent.ConcurrentHashMap<Point2D, Double> scores = new java.util.concurrent.ConcurrentHashMap<>();
+        final java.util.concurrent.CopyOnWriteArrayList<Point2D> picked = new java.util.concurrent.CopyOnWriteArrayList<>();
+        volatile Point2D best;
+        volatile double bestScore = Double.NEGATIVE_INFINITY;
+        volatile int currentAp = -1;
+        volatile boolean dirty;
+
+        void reset() {
+            candidates = List.of();
+            scores.clear();
+            picked.clear();
+            best = null;
+            bestScore = Double.NEGATIVE_INFINITY;
+            currentAp = -1;
+            dirty = true;
+        }
+
+        /** @param cancelled 취소된 뒤 늦게 오는 알림은 버린다 */
+        ApRecommender.Listener listener(java.util.function.BooleanSupplier cancelled) {
+            return new ApRecommender.Listener() {
+                @Override public void onCandidates(List<Point2D> c) {
+                    if (cancelled.getAsBoolean()) return;
+                    candidates = c;
+                    dirty = true;
+                }
+                @Override public void onCandidateScored(int apIndex, Point2D p, double score) {
+                    if (cancelled.getAsBoolean()) return;
+                    if (apIndex != currentAp) {
+                        synchronized (Live.this) {
+                            if (apIndex != currentAp) {
+                                currentAp = apIndex;
+                                scores.clear();
+                                best = null;
+                                bestScore = Double.NEGATIVE_INFINITY;
+                            }
+                        }
+                    }
+                    scores.put(p, score);
+                    synchronized (Live.this) {
+                        if (score > bestScore) { bestScore = score; best = p; }
+                    }
+                    dirty = true;
+                }
+                @Override public void onApChosen(int apIndex, Point2D position) {
+                    if (cancelled.getAsBoolean()) return;
+                    picked.add(position);
+                    synchronized (Live.this) {
+                        scores.clear();
+                        best = null;
+                        bestScore = Double.NEGATIVE_INFINITY;
+                    }
+                    dirty = true;
+                }
+                @Override public void onValidating(int round, List<Point2D> positions) {
+                    if (cancelled.getAsBoolean()) return;
+                    picked.clear();
+                    picked.addAll(positions);
+                    dirty = true;
+                }
+                @Override public void onFinished(List<Point2D> positions) {
+                    if (cancelled.getAsBoolean()) return;
+                    picked.clear();
+                    picked.addAll(positions);
+                    dirty = true;
+                }
+            };
         }
     }
 }
