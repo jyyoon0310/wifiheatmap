@@ -577,7 +577,7 @@ public final class DpmPathGrid {
      *   FSPL [dB] = 20·log₁₀(4π · l [m] · f [Hz] / c)
      *             = 20·log₁₀(l) + 20·log₁₀(f_GHz) + 32.45  (f in GHz 근사)
      */
-    private static double fspl(double lengthM, double freqGhz) {
+    static double fspl(double lengthM, double freqGhz) {
         double l = Math.max(0.01, lengthM);
         return 20.0 * Math.log10(4.0 * Math.PI * l * freqGhz * 1.0e9 / C_MPS);
     }

@@ -233,6 +233,13 @@ public class FdtdWaveSimulator {
     public int gridNx() { return nx; }
     public int gridNy() { return ny; }
 
+    /** 평면도 px 좌표 → Ez 격자 인덱스 (재질 격자와 같은 변환 — dx 는 파장 기준이라 cellPx 와 다르다). */
+    public int toGridX(double px) { return grid.toGridX(px); }
+    public int toGridY(double py) { return grid.toGridY(py); }
+
+    /** 기준 주파수 [GHz] — 격자 해상도(dx)를 정한 주파수. */
+    public double refFreqGhz() { return refFreqGhz; }
+
     /** FDTD power EMA 격자 직접 접근 (AP추천 FDTD 검증용). */
     public double getPowerAt(int gx, int gy) {
         if (gx < 0 || gx >= nx || gy < 0 || gy >= ny) return 0.0;

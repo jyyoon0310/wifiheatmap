@@ -270,12 +270,17 @@ public class ApRecommender {
 
         // ── 3. Phase 2: FDTD 검증 + 피드백 루프 ──────────────────────────────
         // 조건: 커버율 80% 이상 AND 균일도 50% 이상이면 수용
+        // 위치를 옮긴 결과가 더 나쁠 수 있으므로, 검증한 배치 중 가장 좋은 것(커버율, 같으면 균일도)을 남긴다.
+        // (예전엔 마지막으로 옮긴 배치를 그대로 냈다 — FDTD 검증이 늘 후하게 나와 피드백이 실제로 돌지 않아 드러나지 않았다.)
         double fdtdCoverage = -1;
         FdtdSignalStats finalStats = null;
         if (params.useFdtd && !chosen.isEmpty()) {
             int maxRefinements = 3;
             double acceptableCoverageRatio = 0.80;
             double acceptableUniformity = 50.0;
+            List<Point2D> bestPositions = chosen;
+            double bestCoverage = -1, bestUniformity = -1;
+            FdtdSignalStats bestStats = null;
 
             for (int round = 0; round <= maxRefinements; round++) {
                 String label = round == 0 ? "파동 시뮬레이션으로 검증 중..."
@@ -288,6 +293,15 @@ public class ApRecommender {
                 finalStats = vr.stats;
 
                 if (fdtdCoverage < 0) break;
+
+                double uniformity = (finalStats == null) ? 0.0 : finalStats.uniformityPercent();
+                if (fdtdCoverage > bestCoverage
+                        || (fdtdCoverage == bestCoverage && uniformity > bestUniformity)) {
+                    bestPositions = chosen;
+                    bestCoverage = fdtdCoverage;
+                    bestUniformity = uniformity;
+                    bestStats = finalStats;
+                }
 
                 boolean coverageOk = fdtdCoverage >= rayCoverage * acceptableCoverageRatio;
                 boolean uniformityOk = finalStats == null
@@ -305,6 +319,12 @@ public class ApRecommender {
                 List<Integer> weakIndices = collectWeakIndices(vr, finalStats);
                 chosen = refineApPositions(chosen, measurePoints, weakIndices,
                         mask, mw, mh, cellSize, walls, params.gridStepPx);
+            }
+
+            if (bestCoverage >= 0) {
+                chosen = bestPositions;
+                fdtdCoverage = bestCoverage;
+                finalStats = bestStats;
             }
         }
 
@@ -525,7 +545,6 @@ public class ApRecommender {
             FdtdWaveSimulator sim = new FdtdWaveSimulator(
                     fdtdEnv, canvasW, canvasH, cellPx, params.fdtdBand);
             try {
-
                 int totalSteps = params.fdtdSteps;
                 int batchSize = 100;
                 for (int s = 0; s < totalSteps; s += batchSize) {
@@ -534,25 +553,12 @@ public class ApRecommender {
                             (int) (100.0 * Math.min(s + batchSize, totalSteps) / totalSteps)));
                 }
 
-                int pml = sim.pmlCells();
-                int gNx = sim.gridNx(), gNy = sim.gridNy();
-
-                // 신호 지도와 같은 링크 버짓(LinkBudget)으로 RSSI 를 낸다.
-                // ⚠️ FDTD 의 경로 손실은 AP 바로 옆 전력을 0dB 로 둔 상대값이라 절대 크기로는 후하다
-                //    (기준 거리 손실 미포함, 2D 파동은 1/r 감쇠). 정밀 검증 판정을 쓸 땐 이 한계를 감안.
+                // FDTD 전력장 → 절대 경로 손실 (자유공간 몫은 3D 해석식, 벽·회절 몫은 FDTD) → 신호 지도와
+                // 같은 링크 버짓으로 RSSI. (예전엔 공유기 옆 전력을 0dB 로 둔 상대값에 EIRP 를 더해 수십 dB 후했고,
+                // 도면 좌표를 px/cellPx 로 격자에 옮겨 실제 격자(dx 는 파장 기준)와 다른 칸을 읽었다.)
                 RadioConfig radio = templateAp.radios.get(params.fdtdBand);
-
-                // AP 근처에서 기준 전력(refPower) 측정
-                double refPower = 1.0e-20;
-                for (Point2D ap : apPositions) {
-                    int gx = (int) (ap.getX() / cellPx) + pml;
-                    int gy = (int) (ap.getY() / cellPx) + pml;
-                    for (int dx = -3; dx <= 3; dx++)
-                        for (int dy = -3; dy <= 3; dy++) {
-                            double p = sim.getPowerAt(gx + dx, gy + dy);
-                            if (p > refPower) refPower = p;
-                        }
-                }
+                double freqGhz = (radio != null) ? radio.centerFreqGhz() : params.fdtdBand.freqGhz;
+                FdtdPathLoss pathLoss = new FdtdPathLoss(sim, apPositions, env.getScaleMPerPx(), freqGhz);
 
                 // 각 측정점에서 RSSI 수집 + 커버 판정
                 int covered = 0;
@@ -561,16 +567,7 @@ public class ApRecommender {
 
                 for (int i = 0; i < measurePoints.size(); i++) {
                     Point2D mp = measurePoints.get(i);
-                    int gx = (int) (mp.getX() / cellPx) + pml;
-                    int gy = (int) (mp.getY() / cellPx) + pml;
-                    if (gx < 0 || gx >= gNx || gy < 0 || gy >= gNy) {
-                        uncovered.add(i);
-                        allRssi.add(-100.0);
-                        continue;
-                    }
-                    double pathLossDb = 10.0 * Math.log10(
-                            Math.max(sim.getPowerAt(gx, gy), 1e-30) / refPower);
-                    double rssiDbm = LinkBudget.rssiDbm(radio, -pathLossDb);
+                    double rssiDbm = LinkBudget.rssiDbm(radio, pathLoss.pathLossDb(mp.getX(), mp.getY()));
                     allRssi.add(rssiDbm);
 
                     if (rssiDbm >= params.targetRssiDbm) {
@@ -613,7 +610,7 @@ public class ApRecommender {
     }
 
     // ── FDTD 피드백: 약신호 영역 방향으로 AP 위치 미세조정 ─────────────────
-    private static List<Point2D> refineApPositions(List<Point2D> currentPositions,
+    static List<Point2D> refineApPositions(List<Point2D> currentPositions,
                                                     List<Point2D> measurePoints,
                                                     List<Integer> uncoveredIndices,
                                                     boolean[] mask, int mw, int mh, int cellSize,
@@ -630,12 +627,26 @@ public class ApRecommender {
 
         List<Point2D> refined = new ArrayList<>(currentPositions);
 
+        // 약한 지점을 가장 가까운 공유기에 나눠 맡긴다 — 각 공유기는 자기 몫으로만 끌려간다.
+        // (예전엔 모든 공유기가 전체 약한 지점의 중심으로 끌려가 서로 한곳에 모였다.)
+        List<List<Point2D>> assigned = new ArrayList<>();
+        for (int i = 0; i < refined.size(); i++) assigned.add(new ArrayList<>());
+        for (Point2D uc : uncoveredPts) {
+            int nearest = 0;
+            double bestD = Double.MAX_VALUE;
+            for (int i = 0; i < refined.size(); i++) {
+                double d = refined.get(i).distance(uc);
+                if (d < bestD) { bestD = d; nearest = i; }
+            }
+            assigned.get(nearest).add(uc);
+        }
+
         for (int apIdx = 0; apIdx < refined.size(); apIdx++) {
             Point2D ap = refined.get(apIdx);
 
-            // 이 AP에 가장 가까운 미커버 포인트들의 가중 중심 계산
+            // 이 AP가 맡은 약한 지점들의 가중 중심 (가까울수록 큰 가중치)
             double pullX = 0, pullY = 0, totalWeight = 0;
-            for (Point2D uc : uncoveredPts) {
+            for (Point2D uc : assigned.get(apIdx)) {
                 double dist = ap.distance(uc);
                 double weight = 1.0 / (dist + 1.0); // 가까울수록 높은 가중치
                 pullX += (uc.getX() - ap.getX()) * weight;

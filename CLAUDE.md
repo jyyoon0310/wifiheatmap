@@ -41,6 +41,7 @@ src/main/java/app/
 │   ├── DpmPathGrid.java          # DPM 지배경로 Dijkstra
 │   ├── BuildingMask.java         # 건물 안쪽 마스크 (히트맵을 건물 안에만 칠함)
 │   ├── FdtdWaveSimulator.java    # FDTD 실시간 시각화 + AP추천 검증용
+│   ├── FdtdPathLoss.java         # 2D FDTD 전력 → 3D 절대 경로손실 (정밀 검증)
 │   ├── ApRecommender.java        # AP 위치 추천 (그리디 + FDTD 피드백 루프)
 │   ├── WifiMath.java             # 기하학 계산, 경로손실 공식
 │   ├── LinkBudget.java           # 수신 신호 세기 공식 (EIRP − 경로손실 − 수신 장비 손실) — 단일 출처
@@ -112,9 +113,8 @@ src/main/java/app/
 3. Phase 1: 그리디 Ray-cast (ForkJoinPool 병렬)
    - 매 AP마다 "새로 커버되는 측정점 수" 최대화
 4. Phase 2: FDTD 검증 + 피드백 루프 (정밀 모드)
-   - 6000 스텝 FDTD 시뮬레이션
-   - EIRP = txPowerDbm + antennaGain 기반 RSSI 판정
-   - 커버율 < 80%이면 미커버 영역 방향으로 AP 이동 → 재검증 (최대 3회)
+   - 6000 스텝 FDTD 시뮬레이션 → FdtdPathLoss 로 3D 절대 경로손실 → LinkBudget 으로 RSSI 판정
+   - 커버율 < 80%이면 각 AP가 맡은 약신호 지점 방향으로 이동 → 재검증 (최대 3회), 가장 좋은 배치 유지
 ```
 
 ## 주요 물리 상수
