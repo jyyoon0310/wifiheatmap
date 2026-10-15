@@ -43,7 +43,7 @@ src/main/java/app/
 │   ├── FdtdWaveSimulator.java    # FDTD 실시간 시각화 + AP추천 검증용
 │   ├── ApRecommender.java        # AP 위치 추천 (그리디 + FDTD 피드백 루프)
 │   ├── WifiMath.java             # 기하학 계산, 경로손실 공식
-│   ├── LinkBudget.java           # 수신 신호 세기 공식 (EIRP − 경로손실 − 대역폭 보정) — 단일 출처
+│   ├── LinkBudget.java           # 수신 신호 세기 공식 (EIRP − 경로손실 − 수신 장비 손실) — 단일 출처
 │   └── fdtd/                     # FDTD 재질 격자·설정 (솔버는 FdtdWaveSimulator / GPU)
 │       ├── FdtdConfig.java       # FDTD 파라미터 (dx, dt, PML 등)
 │       ├── FdtdMaterialGrid.java
@@ -101,7 +101,7 @@ src/main/java/app/
 ## 히트맵 모델
 | 모델 | 클래스 | 특성 |
 |------|--------|------|
-| DPM (히트맵 유일 모델) | `DpmPathGrid` → `HeatmapGenerator.generateDpm` | 지배경로 Dijkstra, 빠름 (1~2초) |
+| DPM (히트맵 유일 모델) | `DpmPathGrid` → `HeatmapGenerator.generate` | 지배경로 Dijkstra, 빠름 (1~2초). 상태별 지수(LOS 2.1/OLOS 2.3/NLOS 2.5)·수신 장비 손실 7.39 dB — 근거는 `docs/dpm-calibration.md` |
 | FDTD | `FdtdWaveSimulator`(CPU) / `AparapiGpuWaveSolver`(GPU) | 전자기파 수치 시뮬레이션. "전파 흐름 보기" 실시간 표시 + AP 추천 정밀 검증 |
 | Legacy (화면 비노출) | `WifiEnvironment.sampleRssiAt` | 경로손실 n + 반사/회절. 발표 비교 기준선(`presentation/MeasureHarness`)·골든 테스트용으로만 유지 |
 

@@ -27,14 +27,6 @@ public class RadioConfig {
         return centerFreqGhz(band, channel);
     }
 
-    /**
-     * 대역폭 증가에 따른 수신 난이도(노이즈 대역 증가)를 간단히 dB 패널티로 반영.
-     * 20MHz를 기준으로 10*log10(BW/20).
-     */
-    public double bandwidthPenaltyDb() {
-        double bw = Math.max(20.0, channelWidth);
-        return 10.0 * Math.log10(bw / 20.0);
-    }
 
     public static double centerFreqGhz(Band band, int channel) {
         if (band == null) return 2.4;

@@ -20,8 +20,10 @@ import java.util.PriorityQueue;
  *
  * ─── 경로 손실 수식 ───────────────────────────────────────────────────────────
  *
- *   PL [dB] = FSPL(l, f) + Σⱼ tⱼ + Σᵢ f(φᵢ) − Ω
+ *   PL [dB] = FSPL(l, f) + 10·(p−2)·log₁₀(l) + Σⱼ tⱼ + Σᵢ f(φᵢ) − Ω
  *
+ *   p : 전파 상태별 경로 손실 지수 — LOS 2.1 · OLOS 2.3 · NLOS 2.5
+ *       (Wölfle 2005 상태별 지수 + Altair WinProp 권장표 "가구 있는 건물")
  *   FSPL(l, f) = 20·log₁₀(4π · l · f / c)
  *     l : 지배 경로(Dominant Path)의 총 길이 [m]  ← Euclidean 직선이 아님
  *     f : 반송 주파수 [Hz]
@@ -85,22 +87,30 @@ public final class DpmPathGrid {
     /** 손실을 적용할 최소 전환 각도 [°] — 격자 노이즈 제거 */
     private static final double MIN_BEND_DEG  = 10.0;
 
-    // ── 실내 산란 보정 ──────────────────────────────────────────────────────
+    // ── 전파 상태별 경로 손실 지수 ──────────────────────────────────────────
     /**
-     * Plets 2012 Eq.1 권장값: n = 2 (자유공간 지수 고정).
+     * 경로 손실 지수 p 를 지배 경로의 전파 상태(LOS / OLOS / NLOS)에 따라 바꾼다.
      *
-     * "A first limitation we impose ourselves is the use of the free-space loss model
-     *  for the distance loss (n=2, PL₀=40 dB, d₀=1m), because we aim to use a general
-     *  model, avoiding fitting and tuning." — Plets et al., EURASIP JWCN 2012:123
+     * Wölfle et al. 2005 (GeMiC, DPM 원논문): "the factor is adapted to the current state of the
+     * propagating wave, thus different factors for LOS, OLOS and NLOS areas can be realized."
+     * 값은 Altair WinProp Indoor DPM 문서의 권장표 중 "가구가 있는 건물(filled)" 열 —
+     * 가정집은 도면에 없는 가구·가전이 많다:  LOS 2.1 · OLOS 2.3 · NLOS 2.5  (빈 건물: 2.0/2.1/2.2)
      *
-     * 본 시뮬레이터는 특정 환경 교정 없이 다양한 평면도에 범용 적용하는 것이 목적이므로
-     * 단일 측정점 역산값 대신 논문 표준값(n=2, INDOOR_N_EXTRA=0)을 사용한다.
-     * 절대 오차(±10 dBm)보다 AP 위치별 상대 비교의 정확도가 우선.
+     * 상태 판정(지배 경로 기준 — WinProp 정의가 공개돼 있지 않아 이 앱의 해석):
+     *   LOS  = 꺾임 없음 + 벽 관통 없음
+     *   OLOS = 꺾임 없음 + 벽 관통 있음 (직진하지만 가려짐)
+     *   NLOS = 꺾임 있음 (모서리를 돌아감)
+     * "꺾임 없음"은 누적 방향전환 손실 < NLOS_BEND_DB — 열린 공간에서 22.5° 한 번 꺾을 때(0.5dB) 미만,
+     * 즉 격자 지그재그 수준만 허용한다.
      *
-     * 물리 PL에만 적용; 경로 선택(selCost)에는 미반영 (Dijkstra 단조성 유지).
+     * 자유공간(n=2)을 넘는 몫 10·(p−2)·log10(l) 을 물리 PL 에만 더한다.
+     * 경로 선택(selCost)에는 미반영 (Dijkstra 단조성 유지).
+     * (예전 INDOOR_N_EXTRA 는 Plets 2012 를 따라 n=2 고정이었다.)
      */
-    private static final double INDOOR_N_EXTRA_24  = 0.0;  // n_eff = 2.0 (Plets 2012)
-    private static final double INDOOR_N_EXTRA_5   = 0.0;  // n_eff = 2.0 (Plets 2012)
+    private static final double P_LOS  = 2.1;
+    private static final double P_OLOS = 2.3;
+    private static final double P_NLOS = 2.5;
+    private static final double NLOS_BEND_DB = 0.5;
 
     // ── 도파로 효과 (WinProp ProMan DPM 근사) ───────────────────────────────
     /** 복도 판정 최대 폭 [m] — 양쪽 벽까지 거리 합 기준 */
@@ -370,9 +380,10 @@ public final class DpmPathGrid {
                         (detourRatio - MAX_DETOUR_RATIO) * DETOUR_PENALTY_DB);
 
                 // ⑥ 물리 경로 손실 (출력) & 선택 비용 (LI·LW 가중, 경로 탐색용)
-                // 밴드별 실내 산란 보정: 2.4GHz n_eff=3.0, 5GHz/6GHz n_eff=2.0
-                double nExtra = (freqGhz < 3.5) ? INDOOR_N_EXTRA_24 : INDOOR_N_EXTRA_5;
-                double indoorScatter = 10.0 * nExtra
+                // 전파 상태별 지수: 자유공간(n=2)을 넘는 몫만 더한다
+                double pState = (newInteractDb >= NLOS_BEND_DB) ? P_NLOS
+                        : (newWallDb > 0.0) ? P_OLOS : P_LOS;
+                double indoorScatter = 10.0 * (pState - 2.0)
                         * Math.log10(Math.max(1.0, newLenM));
                 // Fix 3: 물리 PL 우회 패널티 (detourRatio > 1.3 부터 선형 증가)
                 double physDetour = Math.max(0.0,

@@ -537,11 +537,10 @@ public class ApRecommender {
                 int pml = sim.pmlCells();
                 int gNx = sim.gridNx(), gNy = sim.gridNy();
 
-                // AP의 실제 EIRP 사용 (txPower + antennaGain)
-                // ⚠️ 신호 지도(LinkBudget.rssiDbm)와 달리 대역폭 보정을 빼지 않는다 — 5GHz 80MHz 면
-                //    지도보다 6dB 후하게 판정한다. 바꾸면 추천 결과가 달라지므로 보정 모델을 정할 때 함께 정리.
+                // 신호 지도와 같은 링크 버짓(LinkBudget)으로 RSSI 를 낸다.
+                // ⚠️ FDTD 의 경로 손실은 AP 바로 옆 전력을 0dB 로 둔 상대값이라 절대 크기로는 후하다
+                //    (기준 거리 손실 미포함, 2D 파동은 1/r 감쇠). 정밀 검증 판정을 쓸 땐 이 한계를 감안.
                 RadioConfig radio = templateAp.radios.get(params.fdtdBand);
-                double eirpDbm = LinkBudget.eirpDbm(radio);
 
                 // AP 근처에서 기준 전력(refPower) 측정
                 double refPower = 1.0e-20;
@@ -571,7 +570,7 @@ public class ApRecommender {
                     }
                     double pathLossDb = 10.0 * Math.log10(
                             Math.max(sim.getPowerAt(gx, gy), 1e-30) / refPower);
-                    double rssiDbm = eirpDbm + pathLossDb;
+                    double rssiDbm = LinkBudget.rssiDbm(radio, -pathLossDb);
                     allRssi.add(rssiDbm);
 
                     if (rssiDbm >= params.targetRssiDbm) {

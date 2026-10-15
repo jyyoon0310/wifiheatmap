@@ -15,7 +15,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * 공유기 자리 추천 회귀 테스트 — 복합 평면도에서 그리디(DPM) 추천 위치·커버율이 기준과 같은지.
  *
  * <p>FDTD 정밀 검증은 끈다 (느리고, 검증 단계는 위치를 옮기는 피드백만 한다).
- * 기준값은 리팩터링 1단계 직전 커밋(d1071ce)의 결과로, 같은 입력을 여러 번 돌려도 같게 나오는 것을 확인했다.</p>
+ * 기준값은 DPM 문헌 보정(docs/dpm-calibration.md) 적용 후의 결과로, 같은 입력을 여러 번 돌려도
+ * 같게 나오는 것을 확인했다.</p>
  *
  * <p>⚠️ 추천 알고리즘이나 신호 계산(LinkBudget·DPM)을 <b>의도적으로</b> 바꿨다면 기준값을 갱신할 것.</p>
  */
@@ -26,17 +27,17 @@ class ApRecommenderRegressionTest {
     }
 
     @Test void customTarget50_one() {
-        check(ApPreset.CUSTOM, -50.0, 1, 99.1903, pts(270, 150));
+        check(ApPreset.CUSTOM, -50.0, 1, 78.5425, pts(270, 150));
     }
 
-    @Test void customTarget45_two() {
+    @Test void customTarget55_two() {
         // 1대로는 89% — 두 번째 공유기가 미커버 구역 쪽으로 가는지
-        check(ApPreset.CUSTOM, -45.0, 2, 100.0, pts(270, 150, 300, 30));
+        check(ApPreset.CUSTOM, -55.0, 2, 100.0, pts(270, 150, 330, 30));
     }
 
     @Test void wifi7Target45_three() {
-        // 프리셋(EIRP 가 더 큼)이 평가에 반영되는지 — CUSTOM 과 다른 자리가 나온다
-        check(ApPreset.LGU_WIFI7, -45.0, 3, 100.0, pts(270, 150, 360, 60, 150, 90));
+        // 프리셋(EIRP 가 더 큼)이 평가에 반영되는지 — 같은 목표에서 CUSTOM(90%, 세 번째 자리 150,240)과 다르다
+        check(ApPreset.LGU_WIFI7, -45.0, 3, 100.0, pts(270, 150, 180, 60, 30, 240));
     }
 
     private static void check(ApPreset preset, double targetDbm, int count,
