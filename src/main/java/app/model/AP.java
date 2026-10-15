@@ -37,6 +37,16 @@ public class AP {
         if (r6  != null) r6.ssid  = name + "_6G";
     }
 
+    /**
+     * 화면에서 새로 놓는 공유기의 기본 구성 — 2.4/5 GHz 듀얼밴드 (6 GHz 끔).
+     * 집에서 쓰는 공유기는 대부분 듀얼밴드이고, 6 GHz 는 Wi-Fi 6E/7 프리셋을 고르면 켜진다.
+     * (생성자 기본값은 엔진 테스트 시나리오가 세 밴드를 모두 쓰므로 그대로 둔다.)
+     */
+    public void useDualBandDefaults() {
+        RadioConfig r6 = radios.get(Band.GHZ_6);
+        if (r6 != null) r6.enabled = false;
+    }
+
     @Override
     public String toString() {
         // 리스트에서 보이기: 켜진 밴드만 요약

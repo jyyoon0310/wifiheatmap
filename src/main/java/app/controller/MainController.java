@@ -493,7 +493,8 @@ public class MainController {
             ap.y = pos.getY();
             ap.heightM = 2.5;
             ap.enabled = true;
-            preset.applyTo(ap);  // 선택한 공유기 스펙을 추천 AP에 적용
+            ap.useDualBandDefaults();
+            preset.applyTo(ap);  // 선택한 공유기 스펙을 추천 AP에 적용 (Wi-Fi 6E/7 프리셋이면 6 GHz 를 다시 켠다)
             env.getAps().add(ap);
         }
         render();

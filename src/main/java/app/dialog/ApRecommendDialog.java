@@ -77,7 +77,12 @@ public class ApRecommendDialog {
         Label areaStatus = Sheet.text("도면에서 와이파이가 필요한 방을 눌러 주세요.", 14, Sheet.body(), "400");
         Button resetArea = textButton("다시 고르기");
         resetArea.setVisible(false);
-        HBox areaRow = new HBox(8, areaStatus, spacer(), resetArea);
+        resetArea.managedProperty().bind(resetArea.visibleProperty());  // 숨었을 때는 자리도 비운다
+        resetArea.setMinWidth(Region.USE_PREF_SIZE);
+        // 안내문이 남은 폭을 다 쓰도록 — 예전엔 버튼 옆에서 좁게 눌려 세 줄로 접혔다
+        areaStatus.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(areaStatus, Priority.ALWAYS);
+        HBox areaRow = new HBox(8, areaStatus, resetArea);
         areaRow.setAlignment(Pos.CENTER_LEFT);
 
         // ── ② 대수 ───────────────────────────────────────────────────────
@@ -97,8 +102,8 @@ public class ApRecommendDialog {
         countRow.getChildren().addAll(countChips);
 
         // ── ③ 확인 방식 ──────────────────────────────────────────────────
-        VBox fastCard = modeCard("빠르게", "몇 초 · 경로 손실 모델로 계산");
-        VBox preciseCard = modeCard("꼼꼼하게", "2~3분 · 벽 반사·간섭까지 파동으로 확인");
+        VBox fastCard = modeCard("빠르게", "1분 안팎 · 경로 손실 모델로 계산");
+        VBox preciseCard = modeCard("꼼꼼하게", "2~4분 · 벽 반사·간섭까지 파동으로 확인");
         Runnable refreshModes = () -> {
             styleModeCard(fastCard, !precise[0]);
             styleModeCard(preciseCard, precise[0]);
@@ -139,7 +144,16 @@ public class ApRecommendDialog {
         panelScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         panelScroll.setStyle("-fx-background:transparent;-fx-background-color:transparent;-fx-padding:0;");
         panelScroll.setPrefViewportWidth(PANEL_W + 8);
-        panelScroll.setPrefViewportHeight(pvH + 24);
+        // 결과까지 한눈에 보이도록 미리보기보다 조금 길게 (작은 화면에서는 스크롤)
+        panelScroll.setPrefViewportHeight(Math.max(pvH + 24, 560));
+        // 결과가 붙어 패널 높이가 바뀐 뒤에 맨 아래로 내린다 (바뀌기 전에 내리면 효과가 없다)
+        boolean[] scrollToEnd = {false};
+        panel.heightProperty().addListener((o, oldH, newH) -> {
+            if (scrollToEnd[0]) {
+                scrollToEnd[0] = false;
+                Platform.runLater(() -> panelScroll.setVvalue(1.0));
+            }
+        });
 
         HBox body = new HBox(20, preview, panelScroll);
 
@@ -255,6 +269,8 @@ public class ApRecommendDialog {
                 fillResult(resultBox, resultRef[0], state != null && state.isAdvancedMode());
                 resultBox.setVisible(true);
                 resultBox.setManaged(true);
+                // 결과는 패널 맨 아래에 붙는다 — 보이도록 끝까지 내린다 (예전엔 스크롤해야 보였다)
+                scrollToEnd[0] = true;
                 runBtn.setText("다시 찾기");
                 applyBtn.setDisable(resultRef[0].positions().isEmpty());
                 redraw.run();

@@ -143,6 +143,7 @@ public class ApController {
         ap.enabled = true;
 
         ap.resetSsidsFromName();
+        ap.useDualBandDefaults();
 
         env.getAps().add(ap);
         return ap;
